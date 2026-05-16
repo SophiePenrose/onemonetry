@@ -70,7 +70,15 @@ export default function ShortlistTable({ companies = [], onSelectCompany }) {
             <tr
               key={
                 company.id ??
-                `${company.name ?? 'company'}-${company.rank ?? company.score ?? 'item'}`
+                [
+                  company.name,
+                  company.rank,
+                  company.score,
+                  company.product_motion,
+                  company.explanation,
+                ]
+                  .filter(Boolean)
+                  .join('::') || 'company'
               }
               onClick={canSelect ? () => handleSelect(company) : undefined}
               style={canSelect ? { cursor: 'pointer' } : undefined}
@@ -93,9 +101,7 @@ export default function ShortlistTable({ companies = [], onSelectCompany }) {
                 )}
               </td>
               <td style={styles.cell}>{company.score ?? '—'}</td>
-              <td style={styles.cell}>
-                {company.productMotion ?? company.product_motion ?? '—'}
-              </td>
+              <td style={styles.cell}>{company.product_motion ?? '—'}</td>
               <td style={styles.cell}>{company.explanation ?? '—'}</td>
             </tr>
           ))}
