@@ -19,6 +19,7 @@ Use the outline as the main instruction file and the supplementary context as su
 ## Project focus
 
 The current design focuses on:
+
 - product-fit scoring,
 - weekly ranking and workspace flow,
 - exclusions and closed-won suppression,
