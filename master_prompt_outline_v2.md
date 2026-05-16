@@ -183,7 +183,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Companies can be imported, fetched, and transitioned without manual DB edits.
 6. **Test cases**
    - Valid import creates records and rejects malformed records.
-   - Invalid state transition is blocked (for example closed won back to new candidate without explicit reopen rule).
+   - Invalid state transition is blocked (for example closed-won back to new candidate without explicit reopen rule).
    - Workflow history appends, never overwrites prior transitions.
 7. **Risks or ambiguities from the spec**
    - Transition rules are implied but not fully enumerated; implementation needs explicit state-machine policy.
@@ -220,6 +220,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
 6. **Test cases**
    - Strong FX evidence yields stronger FX than forwards when hedgeable exposure is missing.
    - Merchant-spend-only evidence does not create merchant fit without base relevance.
+   - Merchant-spend boost is applied only after merchant relevance passes the fit gate.
    - Missing evidence lowers confidence instead of forcing high-confidence conclusions.
 7. **Risks or ambiguities from the spec**
    - Rubric thresholds (strong/medium/weak numeric boundaries) are not finalized.
@@ -255,7 +256,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Score explanation maps directly to evidence and layer math.
 6. **Test cases**
    - Warm but weak-fit account remains below fit-qualified accounts.
-   - Closed-won or prohibited account is suppressed regardless of high raw score.
+   - Closed-won, prohibited, or held-for-ownership account is suppressed regardless of high raw score.
    - Recompute on same inputs returns identical ranking order.
 7. **Risks or ambiguities from the spec**
    - Exact commercial weighting by motion remains an open tuning choice.
