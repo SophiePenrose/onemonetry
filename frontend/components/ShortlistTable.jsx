@@ -68,7 +68,10 @@ export default function ShortlistTable({ companies = [], onSelectCompany }) {
         <tbody>
           {companies.map((company, index) => (
             <tr
-              key={company.id ?? company.name ?? index}
+              key={
+                company.id ??
+                `${company.name ?? 'company'}-${company.rank ?? company.score ?? 'item'}`
+              }
               onClick={canSelect ? () => handleSelect(company) : undefined}
               style={canSelect ? { cursor: 'pointer' } : undefined}
             >
