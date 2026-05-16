@@ -148,3 +148,186 @@ The application should own the final weighting, gating, sorting, and state manag
 Some details still need tuning, including exact weights, exact thresholds, exact cadence behaviour, and exact handling of ownership conflicts or revisit timing.
 
 Those gaps are acceptable at this stage. The important thing is to preserve the layered structure so future changes do not flatten the design.
+
+## 19. Execution-ready implementation checklist (MVP build order)
+
+### Phase 1 — Core data model and workflow-state backbone
+
+1. **Exact tasks in build order**
+   1. Define canonical entities and enums from this outline: `Company`, `Evidence`, `MotionScore`, `AccountScore`, `WorkflowState`, `WeeklyReport`.
+   2. Define workflow-state transition rules for: new candidate, shortlisted, selected for outreach, in cadence, active opportunity, closed won, closed lost, revisit later, held for ownership review.
+   3. Implement persistence schema and migration for company profile, scoring snapshots, and state history.
+   4. Add seed loader for a small MVP mock universe.
+   5. Add read/write APIs for company records and state transitions.
+2. **File-by-file purpose**
+   - `README.md`: keep project-level scope and point implementers to this section as implementation sequence.
+   - `master_prompt_outline_v2.md`: source-of-truth structure for data entities, states, and sequence.
+   - `revolut_prospecting_app_supplementary_context.md`: rationale for why layered entities and state continuity are required.
+3. **Input/output contract for each API**
+   - `POST /companies/import`
+     - Input: list of companies with minimum identity fields.
+     - Output: `{ importedCount, skippedCount, errors[] }`.
+   - `GET /companies/{companyId}`
+     - Input: path `companyId`.
+     - Output: company profile plus latest workflow state and latest score summary if present.
+   - `POST /companies/{companyId}/state-transition`
+     - Input: `{ fromState, toState, reason, actor, occurredAt }`.
+     - Output: `{ companyId, previousState, newState, transitionRecorded: true }`.
+4. **Mock data shape**
+   - `Company`: `{ companyId, name, companyNumber, turnover, employeeCount, industry, segment }`.
+   - `WorkflowHistory`: `{ companyId, state, changedAt, reason, actor }[]`.
+   - Include examples covering eligible, prohibited, closed won, and held-for-ownership records.
+5. **Definition of done**
+   - Data model exists for all required entities and states in sections 11–14.
+   - All state changes are persisted with timestamped history.
+   - Companies can be imported, fetched, and transitioned without manual DB edits.
+6. **Test cases**
+   - Valid import creates records and rejects malformed records.
+   - Invalid state transition is blocked (for example closed won back to new candidate without explicit reopen rule).
+   - Workflow history appends, never overwrites prior transitions.
+7. **Risks or ambiguities from the spec**
+   - Transition rules are implied but not fully enumerated; implementation needs explicit state-machine policy.
+   - Ownership-review timing and release logic are intentionally open (section 18).
+
+### Phase 2 — Evidence extraction and motion-level scoring
+
+1. **Exact tasks in build order**
+   1. Define rubric schema per product motion (plans, FX/forwards, cards, spend management, API, acquiring, Revolut Pay).
+   2. Implement evidence-ingestion contract from source documents/news/filings into normalized snippets.
+   3. Implement motion-level fit scoring with confidence and evidence references.
+   4. Enforce product-fit gate before downstream prioritisation.
+   5. Store per-motion score snapshots for auditability.
+2. **File-by-file purpose**
+   - `master_prompt_outline_v2.md`: rubric boundaries, gating rule, and motion list (sections 5, 7, 17).
+   - `revolut_prospecting_app_supplementary_context.md`: motion-by-motion nuance and confidence handling rationale.
+   - `README.md`: no new behavior; remains orientation to source-of-truth files.
+3. **Input/output contract for each API**
+   - `POST /evidence/extract`
+     - Input: `{ companyId, sourceType, sourceUrlOrText, extractedAt }`.
+     - Output: `{ companyId, evidenceItems:[{ evidenceId, motionTags[], snippet, sourceRef, confidence }] }`.
+   - `POST /scores/motion-fit`
+     - Input: `{ companyId, evidenceIds[] }`.
+     - Output: `{ companyId, motionScores:[{ motion, fitLevel, fitScore, confidence, evidenceIds[] }], fitGatePassed }`.
+   - `GET /scores/{companyId}/motion-fit/latest`
+     - Output: latest motion-fit snapshot with timestamp.
+4. **Mock data shape**
+   - `EvidenceItem`: `{ evidenceId, companyId, sourceType, sourceRef, snippet, motionTags, extractedSignals, confidence }`.
+   - `MotionScore`: `{ motion, fitLevel: strong|medium|weak|absent, fitScore, confidence, explanation, evidenceIds }`.
+5. **Definition of done**
+   - Every scored company has per-motion fit scores and explanation data.
+   - Weak/absent fit cannot pass gate into top-priority ranking.
+   - Snapshot history allows “why did this score change” comparisons.
+6. **Test cases**
+   - Strong FX evidence yields stronger FX than forwards when hedgeable exposure is missing.
+   - Merchant-spend-only evidence does not create merchant fit without base relevance.
+   - Missing evidence lowers confidence instead of forcing high-confidence conclusions.
+7. **Risks or ambiguities from the spec**
+   - Rubric thresholds (strong/medium/weak numeric boundaries) are not finalized.
+   - Source-trust weighting for extracted evidence is not explicitly defined.
+
+### Phase 3 — Layered final scoring and prioritisation
+
+1. **Exact tasks in build order**
+   1. Implement score layers: product fit, commercial value, pain strength, response propensity, competitor context, proprietary boosts, workflow suppression.
+   2. Implement deterministic weighting and final-score composition in app logic (not LLM).
+   3. Apply segment calibration overlays with Mid-Market default.
+   4. Apply conditional merchant-spend boost only for merchant-relevant motions after fit gate.
+   5. Persist full score breakdown and explanation text.
+2. **File-by-file purpose**
+   - `master_prompt_outline_v2.md`: authoritative layering and ranking constraints (sections 4, 6, 8–10, 16–17).
+   - `revolut_prospecting_app_supplementary_context.md`: rationale for commercial layer boundaries and meta-layer response propensity.
+   - `README.md`: continue as high-level project framing.
+3. **Input/output contract for each API**
+   - `POST /scores/finalize`
+     - Input: `{ companyId, motionFitSnapshotId, commercialInputs, painInputs, propensityInputs, competitorInputs, proprietaryInputs, segment }`.
+     - Output: `{ companyId, finalScore, layerBreakdown, rankingEligible, reasons[] }`.
+   - `GET /scores/{companyId}/final/latest`
+     - Output: latest final score with all layer components and confidence.
+   - `POST /rankings/recompute`
+     - Input: `{ asOfDate }`.
+     - Output: `{ rankedCompanies:[{ companyId, finalScore, rank, rankingEligible }] }`.
+4. **Mock data shape**
+   - `LayerBreakdown`: `{ productFit, commercialValue, painStrength, responsePropensity, competitorContext, proprietaryBoost, workflowSuppression }`.
+   - `FinalScoreRecord`: `{ companyId, finalScore, rankingEligible, fitGatePassed, segment, layerBreakdown, generatedAt }`.
+5. **Definition of done**
+   - Final score is deterministic and reproducible from saved inputs.
+   - Ranking excludes ineligible/suppressed states and weak-fit records.
+   - Score explanation maps directly to evidence and layer math.
+6. **Test cases**
+   - Warm but weak-fit account remains below fit-qualified accounts.
+   - Closed-won or prohibited account is suppressed regardless of high raw score.
+   - Recompute on same inputs returns identical ranking order.
+7. **Risks or ambiguities from the spec**
+   - Exact commercial weighting by motion remains an open tuning choice.
+   - Competitor-context scoring rubric can drift without strict definitions of “weak/strong incumbent.”
+
+### Phase 4 — Weekly report generation and live workspace
+
+1. **Exact tasks in build order**
+   1. Implement Monday weekly-report job selecting top 100 ranking-eligible accounts.
+   2. Persist weekly snapshot including selected, manually ruled-out, in-cadence, and returning accounts.
+   3. Build live workspace query that shows current status versus weekly snapshot.
+   4. Implement company-detail retrieval with required fields and score explanation.
+   5. Add report-to-live comparison view contract for historical auditing.
+2. **File-by-file purpose**
+   - `master_prompt_outline_v2.md`: definitive weekly behavior and company/home-screen requirements (sections 13–15).
+   - `revolut_prospecting_app_supplementary_context.md`: continuity rationale (“prospecting memory system”).
+   - `README.md`: keep repository navigation and intended usage.
+3. **Input/output contract for each API**
+   - `POST /reports/weekly/generate`
+     - Input: `{ weekOfDate }`.
+     - Output: `{ reportId, generatedAt, top100Count, selectedCount, ruledOutCount, inCadenceCount, returningCount }`.
+   - `GET /reports/weekly/{reportId}`
+     - Output: report snapshot with ordered shortlist and per-company score/explanation summary.
+   - `GET /workspace/live`
+     - Input (optional filters): `{ state[], segment[], minScore }`.
+     - Output: current active prospects with latest score and state.
+   - `GET /companies/{companyId}/detail`
+     - Output: required company detail fields from section 14 including evidence snippets and communication history.
+4. **Mock data shape**
+   - `WeeklyReport`: `{ reportId, weekOfDate, generatedAt, rankedAccounts:[{ companyId, rank, finalScore, stateAtSnapshot, includedReason }] }`.
+   - `WorkspaceRow`: `{ companyId, companyName, finalScore, currentState, topMotion, confidence, lastUpdatedAt }`.
+5. **Definition of done**
+   - Monday run generates and stores a retrievable top-100 snapshot.
+   - Historical report remains immutable while live workspace reflects current state.
+   - Company detail endpoint returns all fields listed in section 14 (or explicit null when unknown).
+6. **Test cases**
+   - Weekly generation on Monday stores exactly one report per requested week.
+   - Manual ruled-out accounts appear in report metadata but are excluded from selected outreach list.
+   - Company moved from shortlisted to in-cadence after report appears correctly in live view while historical report remains unchanged.
+7. **Risks or ambiguities from the spec**
+   - Timezone definition for “Monday” is not explicitly stated.
+   - Manual ruled-out semantics and actor permissions are not fully defined.
+
+### Phase 5 — MVP hardening, tuning hooks, and release criteria
+
+1. **Exact tasks in build order**
+   1. Add configuration points for weights/thresholds without changing architecture.
+   2. Add audit logging around score recomputation and weekly report generation.
+   3. Execute end-to-end dry run on mock data for at least two weekly cycles.
+   4. Validate unresolved open-question defaults and document temporary decisions.
+   5. Freeze MVP scope and publish release readiness checklist.
+2. **File-by-file purpose**
+   - `master_prompt_outline_v2.md`: preserve architectural constraints while allowing tuning.
+   - `revolut_prospecting_app_supplementary_context.md`: maintain rationale so tuning does not flatten model logic.
+   - `README.md`: implementation handoff entry point.
+3. **Input/output contract for each API**
+   - No net-new product APIs in this phase.
+   - Reuse existing APIs from phases 1–4 to run replay and tuning validation:
+     - `POST /rankings/recompute`
+     - `POST /reports/weekly/generate`
+     - `GET /reports/weekly/{reportId}`
+4. **Mock data shape**
+   - `ReplayScenario`: `{ runId, weekOfDate, inputSnapshotRefs, expectedTop100CompanyIds[] }`.
+   - `TuningSnapshot`: `{ weightsByLayer, thresholdsByMotion, generatedReportId, top100CompanyIds[] }`.
+5. **Definition of done**
+   - MVP can run end-to-end from import to weekly report to live state tracking.
+   - Tuning can be tested by config changes and replaying existing ranking/report flows.
+   - Known ambiguities are captured with explicit default behavior.
+6. **Test cases**
+   - Weight/threshold change updates ranking outputs only after explicit recompute.
+   - Replay run produces auditable before/after rank deltas for changed accounts.
+   - Two-week replay preserves state continuity and suppression behavior.
+7. **Risks or ambiguities from the spec**
+   - Open questions in section 18 may materially change tuning defaults.
+   - Data freshness and source availability expectations are not yet defined.
