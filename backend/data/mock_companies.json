@@ -1,0 +1,102 @@
+[
+  {
+    "id": "c1",
+    "name": "Acme Widgets Ltd",
+    "company_number": "12345678",
+    "industry": "Manufacturing",
+    "turnover": 5000000,
+    "employee_count": 50,
+    "latest_annual_report_url": "https://example.com/report1.pdf",
+    "motions": ["FX", "Cards", "Spend Management"],
+    "evidence": {
+      "FX": {
+        "international_activity": true,
+        "hedgeable_exposure": false
+      },
+      "Cards": {
+        "team_structure": "multi-department",
+        "finance_stack": "fragmented"
+      },
+      "Spend Management": {
+        "spend_complexity": "high",
+        "system_fragmentation": true
+      }
+    }
+  },
+  {
+    "id": "c2",
+    "name": "Beta Retail PLC",
+    "company_number": "23456789",
+    "industry": "Retail",
+    "turnover": 12000000,
+    "employee_count": 120,
+    "latest_annual_report_url": "https://example.com/report2.pdf",
+    "motions": ["FX", "Cards"],
+    "evidence": {
+      "FX": {
+        "international_activity": false,
+        "hedgeable_exposure": false
+      },
+      "Cards": {
+        "team_structure": "single-department",
+        "finance_stack": "integrated"
+      }
+    }
+  },
+  {
+    "id": "c3",
+    "name": "Gamma Consulting LLP",
+    "company_number": "34567890",
+    "industry": "Consulting",
+    "turnover": 3000000,
+    "employee_count": 30,
+    "latest_annual_report_url": "https://example.com/report3.pdf",
+    "motions": ["Spend Management"],
+    "evidence": {
+      "Spend Management": {
+        "spend_complexity": "low",
+        "system_fragmentation": false
+      }
+    }
+  },
+  {
+    "id": "c4",
+    "name": "Delta Exports Ltd",
+    "company_number": "45678901",
+    "industry": "Export/Import",
+    "turnover": 8000000,
+    "employee_count": 70,
+    "latest_annual_report_url": "https://example.com/report4.pdf",
+    "motions": ["FX", "Spend Management"],
+    "evidence": {
+      "FX": {
+        "international_activity": true,
+        "hedgeable_exposure": true
+      },
+      "Spend Management": {
+        "spend_complexity": "high",
+        "system_fragmentation": true
+      }
+    }
+  },
+  {
+    "id": "c5",
+    "name": "Epsilon Tech Ltd",
+    "company_number": "56789012",
+    "industry": "Technology",
+    "turnover": 15000000,
+    "employee_count": 200,
+    "latest_annual_report_url": "https://example.com/report5.pdf",
+    "motions": ["Cards", "Spend Management"],
+    "evidence": {
+      "Cards": {
+        "team_structure": "multi-department",
+        "finance_stack": "fragmented"
+      },
+      "Spend Management": {
+        "spend_complexity": "high",
+        "system_fragmentation": false
+      }
+    }
+  }
+]
