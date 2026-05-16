@@ -219,7 +219,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Snapshot history allows “why did this score change” comparisons.
 6. **Test cases**
    - Strong FX evidence yields stronger FX than forwards when hedgeable exposure is missing.
-   - Merchant-spend-only evidence does not create merchant fit without base relevance.
+   - Merchant-spend evidence alone (without merchant relevance evidence) does not create merchant fit.
    - Merchant-spend boost is applied only after merchant relevance passes the fit gate.
    - Missing evidence lowers confidence instead of forcing high-confidence conclusions.
 7. **Risks or ambiguities from the spec**
@@ -232,7 +232,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    1. Implement score layers: product fit, commercial value, pain strength, response propensity, competitor context, proprietary boosts, workflow suppression.
    2. Implement deterministic weighting and final-score composition in app logic (not LLM).
    3. Apply segment calibration overlays with Mid-Market default.
-   4. Apply conditional merchant-spend boost only for merchant-relevant motions after fit gate.
+   4. Apply conditional merchant-spend boost only for merchant-relevant motions defined in section 9, and only after fit gate.
    5. Persist full score breakdown and explanation text.
 2. **File-by-file purpose**
    - `master_prompt_outline_v2.md`: authoritative layering and ranking constraints (sections 4, 6, 8–10, 16–17).
@@ -260,7 +260,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Recompute on same inputs returns identical ranking order.
 7. **Risks or ambiguities from the spec**
    - Exact commercial weighting by motion remains an open tuning choice.
-   - Competitor-context scoring rubric can drift without strict definitions of incumbent-strength categories under section 10.
+   - Competitor-context scoring can become inconsistent across implementers without strict incumbent-strength category definitions under section 10.
 
 ### Phase 4 — Weekly report generation and live workspace
 
@@ -298,7 +298,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Company moved from shortlisted to in-cadence after report appears correctly in live view while historical report remains unchanged.
 7. **Risks or ambiguities from the spec**
    - Timezone definition for “Monday” is not explicitly stated.
-   - Manual ruled-out semantics and actor permissions are not fully defined.
+   - Manual ruled-out semantics and actor permissions are not fully defined; MVP default should assume a single-actor model until ownership rules are finalized.
 
 ### Phase 5 — MVP hardening, tuning hooks, and release criteria
 
