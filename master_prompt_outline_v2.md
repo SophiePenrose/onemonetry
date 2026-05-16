@@ -155,7 +155,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
 
 1. **Exact tasks in build order**
    1. Define canonical entities and enums from this outline: `Company`, `Evidence`, `MotionScore`, `AccountScore`, `WorkflowState`, `WeeklyReport`.
-   2. Define workflow-state transition rules for: new candidate, shortlisted, selected for outreach, in cadence, active opportunity, closed won, closed lost, revisit later, held for ownership review.
+   2. Define workflow-state transition rules for all states listed in section 12.
    3. Implement persistence schema and migration for company profile, scoring snapshots, and state history.
    4. Add seed loader for a small MVP mock universe.
    5. Add read/write APIs for company records and state transitions.
@@ -192,7 +192,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
 ### Phase 2 — Evidence extraction and motion-level scoring
 
 1. **Exact tasks in build order**
-   1. Define rubric schema per product motion (plans, FX/forwards, cards, spend management, API, acquiring, Revolut Pay).
+   1. Define rubric schema per product motion using the canonical list in section 5.
    2. Implement evidence-ingestion contract from source documents/news/filings into normalized snippets.
    3. Implement motion-level fit scoring with confidence and evidence references.
    4. Enforce product-fit gate before downstream prioritisation.
@@ -259,7 +259,7 @@ Those gaps are acceptable at this stage. The important thing is to preserve the 
    - Recompute on same inputs returns identical ranking order.
 7. **Risks or ambiguities from the spec**
    - Exact commercial weighting by motion remains an open tuning choice.
-   - Competitor-context scoring rubric can drift without strict definitions of “weak/strong incumbent.”
+   - Competitor-context scoring rubric can drift without strict definitions of incumbent-strength categories under section 10.
 
 ### Phase 4 — Weekly report generation and live workspace
 
