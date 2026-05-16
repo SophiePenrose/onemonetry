@@ -61,7 +61,7 @@ export default function ShortlistTable({ companies = [], onSelectCompany }) {
             <th style={styles.headCell}>Rank</th>
             <th style={styles.headCell}>Name</th>
             <th style={styles.headCell}>Score</th>
-            <th style={styles.headCell}>Product motion</th>
+            <th style={styles.headCell}>Product Motion</th>
             <th style={styles.headCell}>Explanation</th>
           </tr>
         </thead>
@@ -90,7 +90,9 @@ export default function ShortlistTable({ companies = [], onSelectCompany }) {
                 )}
               </td>
               <td style={styles.cell}>{company.score ?? '—'}</td>
-              <td style={styles.cell}>{company.product_motion ?? '—'}</td>
+              <td style={styles.cell}>
+                {company.productMotion ?? company.product_motion ?? '—'}
+              </td>
               <td style={styles.cell}>{company.explanation ?? '—'}</td>
             </tr>
           ))}
