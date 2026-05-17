@@ -29,6 +29,37 @@ function Badge({ text, bg }) {
 
 Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
 
+const SEGMENT_COLORS = { SMB: "#6b7280", "Mid-Market": "#0075EB", Enterprise: "#6f42c1" };
+
+function SegmentBadge({ segment }) {
+  return (
+    <span style={{
+      display: "inline-block", padding: "2px 8px", borderRadius: 10,
+      fontSize: 11, fontWeight: 600, color: "#fff",
+      background: SEGMENT_COLORS[segment] || "#888",
+      whiteSpace: "nowrap",
+    }}>
+      {segment === "Mid-Market" ? "MM" : segment === "Enterprise" ? "ENT" : "SMB"}
+    </span>
+  );
+}
+
+SegmentBadge.propTypes = { segment: PropTypes.string };
+
+const WARMTH_META = {
+  hot: { label: "🔥", color: "#dc2626", title: "Hot — likely to respond now" },
+  warm: { label: "☀️", color: "#ea580c", title: "Warm — engaged, some signals" },
+  cool: { label: "🌤", color: "#6b7280", title: "Cool — limited signals" },
+  cold: { label: "❄️", color: "#94a3b8", title: "Cold — no engagement signals" },
+};
+
+function WarmthIndicator({ warmth }) {
+  const wm = WARMTH_META[warmth] || WARMTH_META.cold;
+  return <span title={wm.title} style={{ fontSize: 16, cursor: "default" }}>{wm.label}</span>;
+}
+
+WarmthIndicator.propTypes = { warmth: PropTypes.string };
+
 function MotionChip({ motion, score, fitLevel }) {
   return (
     <span style={{
@@ -154,8 +185,9 @@ export default function Shortlist({ onSelectCompany }) {
               <th style={{ padding: "10px 14px" }}>#</th>
               <th style={{ padding: "10px 14px" }}>Company</th>
               <th style={{ padding: "10px 14px" }}>Industry</th>
-              <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>Warmth</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
               <th style={{ padding: "10px 14px" }}>Motions</th>
             </tr>
@@ -183,9 +215,14 @@ export default function Shortlist({ onSelectCompany }) {
                     </a>
                   </td>
                   <td style={{ padding: "10px 14px", color: "#666", fontSize: 13 }}>{c.industry}</td>
-                  <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 13 }}>{formatTurnover(c.turnover)}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                    <SegmentBadge segment={c.segment} />
+                  </td>
                   <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>
                     {c.combined_score.toFixed(2)}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                    <WarmthIndicator warmth={c.propensity_warmth} />
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />

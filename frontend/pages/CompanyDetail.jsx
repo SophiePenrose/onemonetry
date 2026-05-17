@@ -99,6 +99,15 @@ export default function CompanyDetail({ companyId }) {
         <Field label="Annual Report">
           <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB" }}>View report →</a>
         </Field>
+        <Field label="Segment">
+          <span style={{
+            display: "inline-block", padding: "2px 10px", borderRadius: 10,
+            fontSize: 12, fontWeight: 600, color: "#fff",
+            background: company.segment === "Enterprise" ? "#6f42c1" : company.segment === "Mid-Market" ? "#0075EB" : "#6b7280",
+          }}>
+            {company.segment}
+          </span>
+        </Field>
         <Field label="Eligible Motions">
           <span style={{ fontWeight: 600 }}>{company.all_motion_scores?.length || 0}</span>
           <span style={{ color: "#888", marginLeft: 8 }}>
@@ -106,6 +115,38 @@ export default function CompanyDetail({ companyId }) {
           </span>
         </Field>
       </div>
+
+      {company.propensity && (
+        <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ fontSize: 16, margin: 0 }}>Response Propensity</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 24 }}>
+                {company.propensity.warmth === "hot" ? "🔥" : company.propensity.warmth === "warm" ? "☀️" : company.propensity.warmth === "cool" ? "🌤" : "❄️"}
+              </span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: company.propensity.score >= 0.7 ? "#0a8754" : company.propensity.score >= 0.5 ? "#c27b00" : "#6b7280" }}>
+                  {(company.propensity.score * 100).toFixed(0)}%
+                </div>
+                <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>{company.propensity.warmth}</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
+            Base score: {company.base_score?.toFixed(2)} · Propensity adjustment: {company.propensity.score >= 0.5 ? "+" : ""}{((company.combined_score - company.base_score) * 100).toFixed(0)}bps → Final: {company.combined_score?.toFixed(2)}
+          </div>
+          {company.propensity.signals?.length > 0 && (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Signals</div>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {company.propensity.signals.map((s, idx) => (
+                  <li key={idx} style={{ fontSize: 13, color: "#555", marginBottom: 3 }}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <MotionScoresPanel
         motionScores={company.all_motion_scores || []}

@@ -143,7 +143,16 @@
         "summary": "Call with Finance Manager. Discussed current FX pain points.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.6,
+      "warmth": "warm",
+      "signals": [
+        "CFO mentioned FX costs in board report",
+        "Finance Manager engaged on call"
+      ]
+    }
   },
   {
     "id": "c2",
@@ -288,7 +297,17 @@
         "summary": "Sent proposal with acquiring rates comparison.",
         "outcome": "opened"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.75,
+      "warmth": "hot",
+      "signals": [
+        "Head of Digital replied to outreach",
+        "PSP contract renewal in Q3",
+        "Actively trialling payment methods"
+      ]
+    }
   },
   {
     "id": "c3",
@@ -380,7 +399,16 @@
         "notes": "Driving expense modernisation initiative. Key decision maker."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.7,
+      "warmth": "warm",
+      "signals": [
+        "New managing partner driving change",
+        "Actively evaluating spend solutions"
+      ]
+    }
   },
   {
     "id": "c4",
@@ -577,7 +605,17 @@
         "summary": "Proposal sent. Awaiting internal review.",
         "outcome": "pending"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.85,
+      "warmth": "hot",
+      "signals": [
+        "New CFO reviewing treasury",
+        "Proposal sent and under review",
+        "Multiple positive meetings completed"
+      ]
+    }
   },
   {
     "id": "c5",
@@ -704,7 +742,16 @@
         "summary": "API capability overview sent to CTO.",
         "outcome": "replied"
       }
-    ]
+    ],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.8,
+      "warmth": "hot",
+      "signals": [
+        "Active project to add banking rail this quarter",
+        "CTO replied to outreach"
+      ]
+    }
   },
   {
     "id": "c6",
@@ -830,7 +877,16 @@
         "notes": "Publicly cited lack of spend visibility as key concern."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.55,
+      "warmth": "cool",
+      "signals": [
+        "New COO reviewing efficiency",
+        "No direct contact yet"
+      ]
+    }
   },
   {
     "id": "c7",
@@ -1015,7 +1071,17 @@
         "summary": "Custom rates proposal sent.",
         "outcome": "opened"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.8,
+      "warmth": "hot",
+      "signals": [
+        "CFO replied",
+        "VP Engineering engaged on technical deep-dive",
+        "Custom rates proposal sent"
+      ]
+    }
   },
   {
     "id": "c8",
@@ -1141,7 +1207,16 @@
         "notes": "Manages site-level purchasing across 12 projects."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "Enterprise",
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Operational review underway but cards not top priority",
+        "No direct contact initiated"
+      ]
+    }
   },
   {
     "id": "c9",
@@ -1255,7 +1330,16 @@
         "notes": "Handles quarterly royalty payments in multiple currencies."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.4,
+      "warmth": "cold",
+      "signals": [
+        "No outreach attempted",
+        "Expanding into Asian markets may create future need"
+      ]
+    }
   },
   {
     "id": "c10",
@@ -1354,7 +1438,16 @@
         "summary": "Intro call after audit finding. Very interested.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.72,
+      "warmth": "warm",
+      "signals": [
+        "Audit flagged spend controls",
+        "Intro call was very positive"
+      ]
+    }
   },
   {
     "id": "c11",
@@ -1527,7 +1620,17 @@
         "summary": "Treasury review discussion. Strong interest in FX and forwards.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "Enterprise",
+    "response_propensity": {
+      "score": 0.7,
+      "warmth": "warm",
+      "signals": [
+        "Group Treasurer actively reviewing providers",
+        "Positive treasury review meeting",
+        "Board-mandated hedging review"
+      ]
+    }
   },
   {
     "id": "c12",
@@ -1619,7 +1722,17 @@
         "notes": "Small agency. Founder makes all financial decisions."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.25,
+      "warmth": "cold",
+      "signals": [
+        "Very small agency",
+        "No engagement attempted",
+        "Low commercial value"
+      ]
+    }
   },
   {
     "id": "c13",
@@ -1780,7 +1893,16 @@
         "summary": "FX cost comparison sent to Operations Director.",
         "outcome": "opened"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.45,
+      "warmth": "cool",
+      "signals": [
+        "Email opened but no reply",
+        "Operations Director may be reachable"
+      ]
+    }
   },
   {
     "id": "c14",
@@ -1894,7 +2016,16 @@
         "notes": "Manages FX on receivables from ME and Africa projects."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "SMB",
+    "response_propensity": {
+      "score": 0.35,
+      "warmth": "cold",
+      "signals": [
+        "No outreach attempted",
+        "Expanding into new markets may create opportunity"
+      ]
+    }
   },
   {
     "id": "c15",
@@ -2113,7 +2244,17 @@
         "summary": "Follow-up with Head of Digital on Revolut Pay.",
         "outcome": "neutral"
       }
-    ]
+    ],
+    "segment": "Enterprise",
+    "response_propensity": {
+      "score": 0.65,
+      "warmth": "warm",
+      "signals": [
+        "CFO replied to multi-product intro",
+        "Positive initial meeting",
+        "Head of Digital meeting was neutral"
+      ]
+    }
   },
   {
     "id": "c16",
@@ -2252,7 +2393,17 @@
         "summary": "Technical deep-dive on API capabilities.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.85,
+      "warmth": "hot",
+      "signals": [
+        "Feature on this quarter roadmap",
+        "CTO replied and booked technical deep-dive",
+        "Active provider evaluation"
+      ]
+    }
   },
   {
     "id": "c17",
@@ -2425,7 +2576,17 @@
         "summary": "Demo of Revolut Pay checkout integration.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.72,
+      "warmth": "warm",
+      "signals": [
+        "Digital Director replied to Revolut Pay pitch",
+        "Positive demo meeting",
+        "A/B testing checkout actively"
+      ]
+    }
   },
   {
     "id": "c18",
@@ -2684,7 +2845,18 @@
         "summary": "Revised pricing and implementation timeline sent.",
         "outcome": "pending"
       }
-    ]
+    ],
+    "segment": "Enterprise",
+    "response_propensity": {
+      "score": 0.9,
+      "warmth": "hot",
+      "signals": [
+        "Group Treasurer leading modernisation programme",
+        "CFO and Treasurer reviewed proposal positively",
+        "Revised pricing sent",
+        "Multiple positive meetings over 3 months"
+      ]
+    }
   },
   {
     "id": "c19",
@@ -2804,7 +2976,16 @@
         "notes": "Hands-on MD. Finance team wants better controls on ad-hoc spend."
       }
     ],
-    "cadence_history": []
+    "cadence_history": [],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.35,
+      "warmth": "cold",
+      "signals": [
+        "No outreach attempted",
+        "Finance team wants better controls but no champion identified"
+      ]
+    }
   },
   {
     "id": "c20",
@@ -2949,6 +3130,16 @@
         "summary": "Discovery call with CFO and School Business Manager.",
         "outcome": "positive"
       }
-    ]
+    ],
+    "segment": "Mid-Market",
+    "response_propensity": {
+      "score": 0.75,
+      "warmth": "hot",
+      "signals": [
+        "Board resolution to implement controls by year-end",
+        "CFO replied via referral",
+        "Positive discovery call with CFO"
+      ]
+    }
   }
 ]

@@ -82,17 +82,43 @@ function isSuppressed(companyId) {
   return { suppressed: false };
 }
 
-// --- Scoring weights (configurable) ---
+// --- Scoring weights (segment-aware) ---
+
+const VALID_SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 
 const LAYER_NAMES = ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"];
 
-const DEFAULT_WEIGHTS = {
-  product_fit: 0.35,
-  commercial_value: 0.20,
-  pain_strength: 0.20,
-  urgency: 0.15,
-  competitor_context: 0.10,
+const SEGMENT_WEIGHTS = {
+  SMB: {
+    product_fit: 0.35,
+    commercial_value: 0.15,
+    pain_strength: 0.25,
+    urgency: 0.15,
+    competitor_context: 0.10,
+  },
+  "Mid-Market": {
+    product_fit: 0.30,
+    commercial_value: 0.22,
+    pain_strength: 0.20,
+    urgency: 0.15,
+    competitor_context: 0.13,
+  },
+  Enterprise: {
+    product_fit: 0.28,
+    commercial_value: 0.25,
+    pain_strength: 0.18,
+    urgency: 0.14,
+    competitor_context: 0.15,
+  },
 };
+
+const DEFAULT_WEIGHTS = SEGMENT_WEIGHTS["Mid-Market"];
+
+const PROPENSITY_WEIGHT = 0.15;
+
+function getWeightsForSegment(segment) {
+  return SEGMENT_WEIGHTS[segment] || DEFAULT_WEIGHTS;
+}
 
 function computeCompositeScore(layers, weights = DEFAULT_WEIGHTS) {
   let total = 0;
@@ -147,12 +173,16 @@ function getCompanyState(companyId) {
 // --- Unified multi-motion scoring ---
 
 function computeCompanyProfile(company) {
+  const segment = company.segment || "Mid-Market";
+  const weights = getWeightsForSegment(segment);
+  const propensity = company.response_propensity || { score: 0.5, warmth: "cold", signals: [] };
+
   const motionScores = [];
   for (const motion of company.motions) {
     const fit = company.product_fit[motion];
     if (!fit?.eligible) continue;
     const layers = fit.layers || {};
-    const score = computeCompositeScore(layers);
+    const score = computeCompositeScore(layers, weights);
     motionScores.push({
       motion,
       score,
@@ -167,12 +197,19 @@ function computeCompanyProfile(company) {
   const avgScore = motionScores.length > 0
     ? Math.round((motionScores.reduce((s, m) => s + m.score, 0) / motionScores.length) * 100) / 100
     : 0;
-  const combinedScore = Math.round((bestScore * 0.6 + avgScore * 0.4) * 100) / 100;
+
+  const baseScore = bestScore * 0.6 + avgScore * 0.4;
+  const adjustedScore = baseScore * (1 - PROPENSITY_WEIGHT) + propensity.score * PROPENSITY_WEIGHT;
+  const combinedScore = Math.round(adjustedScore * 100) / 100;
 
   return {
+    segment,
+    weights_used: weights,
     motion_scores: motionScores,
     best_motion: motionScores[0] || null,
     combined_score: combinedScore,
+    base_score: Math.round(baseScore * 100) / 100,
+    propensity,
     eligible_motion_count: motionScores.length,
   };
 }
@@ -211,7 +248,13 @@ app.get("/api/workflow-states", (_req, res) => {
 });
 
 app.get("/api/scoring-weights", (_req, res) => {
-  res.json({ weights: DEFAULT_WEIGHTS, layers: LAYER_NAMES });
+  res.json({
+    default_weights: DEFAULT_WEIGHTS,
+    segment_weights: SEGMENT_WEIGHTS,
+    layers: LAYER_NAMES,
+    segments: VALID_SEGMENTS,
+    propensity_weight: PROPENSITY_WEIGHT,
+  });
 });
 
 app.get("/api/exclusions", (_req, res) => {
@@ -334,7 +377,11 @@ app.get("/api/unified-shortlist", (req, res) => {
       industry: company.industry,
       turnover: company.turnover,
       employee_count: company.employee_count,
+      segment: profile.segment,
       combined_score: profile.combined_score,
+      base_score: profile.base_score,
+      propensity_score: profile.propensity.score,
+      propensity_warmth: profile.propensity.warmth,
       best_motion: profile.best_motion?.motion || null,
       best_score: profile.best_motion?.score || 0,
       best_fit_level: profile.best_motion?.fit_level || null,
@@ -469,6 +516,10 @@ app.get("/api/company/:id", (req, res) => {
         cadence_history: company.cadence_history || [],
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
+        base_score: profile.base_score,
+        segment: profile.segment,
+        segment_weights: profile.weights_used,
+        propensity: profile.propensity,
       },
     });
   } else {
@@ -482,6 +533,10 @@ app.get("/api/company/:id", (req, res) => {
         employee_count: company.employee_count,
         latest_annual_report_url: company.latest_annual_report_url,
         combined_score: profile.combined_score,
+        base_score: profile.base_score,
+        segment: profile.segment,
+        segment_weights: profile.weights_used,
+        propensity: profile.propensity,
         best_motion: profile.best_motion,
         all_motion_scores: profile.motion_scores,
         workflow_state: ws.state,
