@@ -6,6 +6,8 @@ import CompetitorPanel from "../components/CompetitorPanel";
 import StakeholderPanel from "../components/StakeholderPanel";
 import CadenceLog from "../components/CadenceLog";
 import EvidencePanel from "../components/EvidencePanel";
+import MerchantSpendPanel from "../components/MerchantSpendPanel";
+import { DetailSkeleton } from "../components/LoadingSkeleton";
 
 function formatTurnover(value) {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
@@ -69,7 +71,7 @@ export default function CompanyDetail({ companyId }) {
   }
 
   if (!companyId) return <div>Missing company ID.</div>;
-  if (loading) return <div style={{ color: "#888" }}>Loading…</div>;
+  if (loading) return <DetailSkeleton />;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
   if (!company) return null;
 
@@ -158,6 +160,8 @@ export default function CompanyDetail({ companyId }) {
         <CompetitorPanel competitors={company.competitors} />
         <StakeholderPanel stakeholders={company.stakeholders} />
       </div>
+
+      <MerchantSpendPanel merchantSpend={company.merchant_spend} />
 
       <EvidencePanel
         companyId={companyId}

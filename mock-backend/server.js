@@ -109,6 +109,18 @@ const DEFAULT_WEIGHTS = SEGMENT_WEIGHTS["Mid-Market"];
 
 const PROPENSITY_WEIGHT = 0.15;
 
+const MERCHANT_MOTIONS = ["Merchant Acquiring", "Revolut Pay"];
+const MERCHANT_BOOST_MAX = 0.08;
+
+function computeMerchantBoost(merchantSpend, motion) {
+  if (!merchantSpend || !MERCHANT_MOTIONS.includes(motion)) return 0;
+  const volume = merchantSpend.annual_card_volume || 0;
+  const growth = merchantSpend.growth_rate || 0;
+  const volumeScore = Math.min(volume / 20_000_000, 1);
+  const growthScore = Math.min(growth / 0.25, 1);
+  return Math.round((volumeScore * 0.6 + growthScore * 0.4) * MERCHANT_BOOST_MAX * 100) / 100;
+}
+
 function getWeightsForSegment(segment) {
   return SEGMENT_WEIGHTS[segment] || DEFAULT_WEIGHTS;
 }
@@ -151,15 +163,20 @@ function computeCompanyProfile(company) {
   const weights = getWeightsForSegment(segment);
   const propensity = company.response_propensity || { score: 0.5, warmth: "cold", signals: [] };
 
+  const merchantSpend = company.merchant_spend || null;
   const motionScores = [];
   for (const motion of company.motions) {
     const fit = company.product_fit[motion];
     if (!fit?.eligible) continue;
     const layers = fit.layers || {};
-    const score = computeCompositeScore(layers, weights);
+    const baseScore = computeCompositeScore(layers, weights);
+    const mBoost = computeMerchantBoost(merchantSpend, motion);
+    const score = Math.round(Math.min(baseScore + mBoost, 1) * 100) / 100;
     motionScores.push({
       motion,
       score,
+      base_motion_score: baseScore,
+      merchant_boost: mBoost,
       fit_level: fit.fit_level,
       explanation: fit.explanation,
       score_breakdown: buildScoreBreakdown(layers),
@@ -184,6 +201,7 @@ function computeCompanyProfile(company) {
     combined_score: combinedScore,
     base_score: Math.round(baseScore * 100) / 100,
     propensity,
+    merchant_spend: merchantSpend,
     eligible_motion_count: motionScores.length,
   };
 }
@@ -351,6 +369,7 @@ app.get("/api/unified-shortlist", (req, res) => {
         fit_level: m.fit_level,
       })),
       motion_count: profile.eligible_motion_count,
+      has_merchant_spend: !!profile.merchant_spend,
       workflow_state: ws.state,
       suppressed: supp.suppressed,
       suppression_reason: supp.reason || null,
@@ -480,6 +499,7 @@ app.get("/api/company/:id", (req, res) => {
         segment: profile.segment,
         segment_weights: profile.weights_used,
         propensity: profile.propensity,
+        merchant_spend: profile.merchant_spend,
       },
     });
   } else {
@@ -497,6 +517,7 @@ app.get("/api/company/:id", (req, res) => {
         segment: profile.segment,
         segment_weights: profile.weights_used,
         propensity: profile.propensity,
+        merchant_spend: profile.merchant_spend,
         best_motion: profile.best_motion,
         all_motion_scores: profile.motion_scores,
         workflow_state: ws.state,

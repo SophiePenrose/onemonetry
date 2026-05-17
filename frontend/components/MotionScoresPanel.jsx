@@ -32,6 +32,11 @@ function MotionCard({ motionScore, isExpanded, onToggle }) {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {motionScore.merchant_boost > 0 && (
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#0a8754", background: "#d1fae5", padding: "2px 6px", borderRadius: 6 }}>
+              +{(motionScore.merchant_boost * 100).toFixed(0)}bps merchant
+            </span>
+          )}
           <span style={{ fontWeight: 700, fontSize: 16, fontVariantNumeric: "tabular-nums", color: "#0075EB" }}>
             {motionScore.score.toFixed(2)}
           </span>

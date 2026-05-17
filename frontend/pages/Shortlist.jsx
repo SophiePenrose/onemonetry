@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
+import { TableSkeleton } from "../components/LoadingSkeleton";
 
 const STATE_META = {
   new_candidate: { label: "New", color: "#6c757d" },
@@ -165,7 +166,7 @@ export default function Shortlist({ onSelectCompany }) {
         </div>
       )}
 
-      {loading && <div style={{ color: "#888" }}>Loading…</div>}
+      {loading && <TableSkeleton rows={8} />}
       {error && <div style={{ color: "#c0392b" }}>Error: {error}</div>}
 
       {!loading && !error && filtered.length === 0 && (

@@ -307,6 +307,13 @@
         "PSP contract renewal in Q3",
         "Actively trialling payment methods"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 7200000,
+      "avg_transaction": 42,
+      "online_share": 0.35,
+      "growth_rate": 0.12,
+      "wallet_opportunity": "High \u2014 \u00a37.2M processing volume with room to capture online growth"
     }
   },
   {
@@ -1081,6 +1088,13 @@
         "VP Engineering engaged on technical deep-dive",
         "Custom rates proposal sent"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 18000000,
+      "avg_transaction": 65,
+      "online_share": 1.0,
+      "growth_rate": 0.22,
+      "wallet_opportunity": "Very high \u2014 \u00a318M pure online with 22% YoY growth. Largest acquiring opportunity in pipeline"
     }
   },
   {
@@ -1902,6 +1916,13 @@
         "Email opened but no reply",
         "Operations Director may be reachable"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 850000,
+      "avg_transaction": 28,
+      "online_share": 0.15,
+      "growth_rate": 0.08,
+      "wallet_opportunity": "Low \u2014 \u00a3850K mostly trade counter. Retail is secondary to B2B distribution"
     }
   },
   {
@@ -2254,6 +2275,13 @@
         "Positive initial meeting",
         "Head of Digital meeting was neutral"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 25000000,
+      "avg_transaction": 180,
+      "online_share": 0.6,
+      "growth_rate": 0.15,
+      "wallet_opportunity": "Very high \u2014 \u00a325M travel bookings with high avg transaction. Premium processing volume"
     }
   },
   {
@@ -2586,6 +2614,13 @@
         "Positive demo meeting",
         "A/B testing checkout actively"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 12000000,
+      "avg_transaction": 55,
+      "online_share": 0.45,
+      "growth_rate": 0.18,
+      "wallet_opportunity": "High \u2014 \u00a312M split between 12 stores and e-commerce. Growing online channel"
     }
   },
   {
@@ -2985,6 +3020,13 @@
         "No outreach attempted",
         "Finance team wants better controls but no champion identified"
       ]
+    },
+    "merchant_spend": {
+      "annual_card_volume": 420000,
+      "avg_transaction": 35,
+      "online_share": 0.1,
+      "growth_rate": 0.05,
+      "wallet_opportunity": "Low \u2014 \u00a3420K mostly trade counter transactions. Limited card payment adoption"
     }
   },
   {
