@@ -126,6 +126,80 @@ app.get("/api/scoring-weights", (_req, res) => {
   res.json({ weights: DEFAULT_WEIGHTS, layers: LAYER_NAMES });
 });
 
+app.get("/api/dashboard", (_req, res) => {
+  const COMPANIES = loadCompanies();
+
+  const pipeline = {};
+  for (const s of WORKFLOW_STATES) {
+    pipeline[s.id] = { count: 0, label: s.label, color: s.color };
+  }
+
+  const motionSummary = {};
+  for (const motion of VALID_MOTIONS) {
+    motionSummary[motion] = { total: 0, avg_score: 0, top_company: null };
+  }
+
+  const activeProspects = [];
+  const activeStates = ["shortlisted", "selected_for_outreach", "in_cadence", "active_opportunity"];
+
+  for (const company of COMPANIES) {
+    const ws = getCompanyState(company.id);
+    if (pipeline[ws.state]) pipeline[ws.state].count++;
+
+    for (const motion of company.motions) {
+      const fit = company.product_fit[motion];
+      if (!fit?.eligible) continue;
+      const layers = fit.layers || {};
+      const score = computeCompositeScore(layers);
+      motionSummary[motion].total++;
+      motionSummary[motion].avg_score += score;
+      if (!motionSummary[motion].top_company || score > motionSummary[motion].top_company.score) {
+        motionSummary[motion].top_company = { id: company.id, name: company.name, score };
+      }
+    }
+
+    if (activeStates.includes(ws.state)) {
+      const bestMotion = company.motions.reduce((best, motion) => {
+        const fit = company.product_fit[motion];
+        if (!fit?.eligible) return best;
+        const score = computeCompositeScore(fit.layers || {});
+        return !best || score > best.score ? { motion, score, fit_level: fit.fit_level } : best;
+      }, null);
+
+      if (bestMotion) {
+        activeProspects.push({
+          id: company.id,
+          name: company.name,
+          industry: company.industry,
+          turnover: company.turnover,
+          workflow_state: ws.state,
+          best_motion: bestMotion.motion,
+          best_score: bestMotion.score,
+          best_fit_level: bestMotion.fit_level,
+          motion_count: company.motions.filter((m) => company.product_fit[m]?.eligible).length,
+          last_activity: ws.history?.length > 0
+            ? ws.history[ws.history.length - 1].timestamp
+            : null,
+        });
+      }
+    }
+  }
+
+  for (const motion of VALID_MOTIONS) {
+    const s = motionSummary[motion];
+    if (s.total > 0) s.avg_score = Math.round((s.avg_score / s.total) * 100) / 100;
+  }
+
+  activeProspects.sort((a, b) => b.best_score - a.best_score);
+
+  res.json({
+    total_companies: COMPANIES.length,
+    pipeline,
+    motion_summary: motionSummary,
+    active_prospects: activeProspects,
+  });
+});
+
 app.get("/api/shortlist", (req, res) => {
   const { product_motion, state_filter } = req.query;
   if (!product_motion || !VALID_MOTIONS.includes(product_motion)) {
