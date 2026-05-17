@@ -12,7 +12,7 @@ export default function Shortlist({ productMotion }) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    setSelectedCompanyId(null); // Clear selection when motion changes
+    setSelectedCompanyId(null);
     fetch(`/api/shortlist?product_motion=${encodeURIComponent(productMotion)}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch shortlist");
@@ -28,28 +28,43 @@ export default function Shortlist({ productMotion }) {
       });
   }, [productMotion]);
 
+  if (selectedCompanyId) {
+    return (
+      <div>
+        <button
+          onClick={() => setSelectedCompanyId(null)}
+          style={{
+            padding: "8px 16px",
+            border: "1px solid #ddd",
+            borderRadius: 6,
+            background: "#fff",
+            cursor: "pointer",
+            fontSize: 14,
+            marginBottom: 16,
+          }}
+        >
+          ← Back to Shortlist
+        </button>
+        <CompanyDetail companyId={selectedCompanyId} productMotion={productMotion} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <h1>Shortlist</h1>
-      {loading && <div>Loading...</div>}
-      {error && <div style={{ color: "red" }}>Error: {error}</div>}
-      {!loading && !error && companies.length === 0 && <div>No companies found.</div>}
-      {!loading && !error && companies.length > 0 && !selectedCompanyId && (
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist — {productMotion}</h2>
+        {!loading && !error && (
+          <span style={{ color: "#888", fontSize: 14 }}>{companies.length} {companies.length === 1 ? "company" : "companies"}</span>
+        )}
+      </div>
+      {loading && <div style={{ color: "#888" }}>Loading…</div>}
+      {error && <div style={{ color: "#c0392b" }}>Error: {error}</div>}
+      {!loading && !error && (
         <ShortlistTable
           companies={companies}
           onSelectCompany={(company) => setSelectedCompanyId(company.id)}
         />
-      )}
-      {selectedCompanyId && (
-        <div style={{ marginTop: 24 }}>
-          <button onClick={() => setSelectedCompanyId(null)}>
-            &larr; Back to Shortlist
-          </button>
-          <CompanyDetail
-            companyId={selectedCompanyId}
-            productMotion={productMotion}
-          />
-        </div>
       )}
     </div>
   );

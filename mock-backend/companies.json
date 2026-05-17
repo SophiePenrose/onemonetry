@@ -7,10 +7,11 @@
     "turnover": 5000000,
     "employee_count": 50,
     "latest_annual_report_url": "https://example.com/report1.pdf",
-    "motions": ["FX", "Cards"],
+    "motions": ["FX", "Cards", "Spend Management"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 1.0, "explanation": "International activity." },
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 1.0, "explanation": "Multi-department, fragmented." }
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.92, "explanation": "Imports raw materials from 4 countries; 30% revenue from EU exports. Clear multi-currency treasury need." },
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "50 employees across 3 departments with travel and procurement spend, but no sign of current card programme pain." },
+      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Growing headcount and multi-site operations suggest fragmented approval workflows." }
     }
   },
   {
@@ -21,9 +22,11 @@
     "turnover": 12000000,
     "employee_count": 120,
     "latest_annual_report_url": "https://example.com/report2.pdf",
-    "motions": ["FX"],
+    "motions": ["Merchant Acquiring", "Revolut Pay", "Cards"],
     "product_fit": {
-      "FX": { "eligible": false, "fit_level": "weak", "score_contribution": 0.0, "explanation": "No international activity." }
+      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.95, "explanation": "Consumer-facing retailer with 8 stores and online checkout. Annual report cites payment processing costs as margin pressure." },
+      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "E-commerce channel growing 40% YoY; checkout conversion is a stated priority." },
+      "Cards": { "eligible": true, "fit_level": "weak", "score_contribution": 0.30, "explanation": "Corporate card need is limited to a small head-office team." }
     }
   },
   {
@@ -34,9 +37,273 @@
     "turnover": 3000000,
     "employee_count": 30,
     "latest_annual_report_url": "https://example.com/report3.pdf",
-    "motions": ["Cards"],
+    "motions": ["Cards", "Spend Management"],
     "product_fit": {
-      "Cards": { "eligible": false, "fit_level": "weak", "score_contribution": 0.0, "explanation": "Not multi-department." }
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Consultant travel and client entertainment spend across 30 staff; currently using personal cards for reimbursement." },
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.82, "explanation": "Manual expense process with no centralised approval; partner mentioned 'spend visibility' as a concern in interview." }
+    }
+  },
+  {
+    "id": "c4",
+    "name": "Delta Logistics Group",
+    "company_number": "45678901",
+    "industry": "Logistics",
+    "turnover": 28000000,
+    "employee_count": 310,
+    "latest_annual_report_url": "https://example.com/report4.pdf",
+    "motions": ["FX", "FX Forwards", "API Integrations", "Cards"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.97, "explanation": "Operates in 12 countries; 65% of revenue in non-GBP currencies. Significant FX exposure on both payables and receivables." },
+      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "Quarterly hedging programme mentioned in annual report; recurring fuel and freight contracts denominated in USD and EUR." },
+      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Uses SAP for ERP; API integration could automate payment flows, but no current sign of build-vs-buy appetite." },
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "310 staff with driver and warehouse teams; fleet card and per-diem use cases are plausible." }
+    }
+  },
+  {
+    "id": "c5",
+    "name": "Epsilon Fintech Ltd",
+    "company_number": "56789012",
+    "industry": "Financial Services",
+    "turnover": 8000000,
+    "employee_count": 75,
+    "latest_annual_report_url": "https://example.com/report5.pdf",
+    "motions": ["API Integrations", "FX", "Monthly Plans"],
+    "product_fit": {
+      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.93, "explanation": "Platform business with developer team; already consumes banking APIs from two providers. Strong integration appetite." },
+      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Some cross-border client settlements, but FX volumes appear modest relative to core business." },
+      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.50, "explanation": "Current Revolut Business user on a basic plan; usage patterns suggest upgrade potential." }
+    }
+  },
+  {
+    "id": "c6",
+    "name": "Zeta Healthcare Services",
+    "company_number": "67890123",
+    "industry": "Healthcare",
+    "turnover": 15000000,
+    "employee_count": 200,
+    "latest_annual_report_url": "https://example.com/report6.pdf",
+    "motions": ["Cards", "Spend Management", "Monthly Plans"],
+    "product_fit": {
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.87, "explanation": "200 staff across 5 care facilities; procurement, travel, and site-level purchasing all done via personal reimbursement." },
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "Multi-site, multi-budget structure with no centralised spend controls. Finance director cited 'lack of visibility' in trade press." },
+      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Scale and headcount justify a custom plan, but no current Revolut relationship." }
+    }
+  },
+  {
+    "id": "c7",
+    "name": "Eta E-Commerce Group",
+    "company_number": "78901234",
+    "industry": "E-Commerce",
+    "turnover": 22000000,
+    "employee_count": 95,
+    "latest_annual_report_url": "https://example.com/report7.pdf",
+    "motions": ["Merchant Acquiring", "Revolut Pay", "FX", "API Integrations"],
+    "product_fit": {
+      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.91, "explanation": "Pure-play online retailer processing £18M in card payments annually. Cited PSP fees as top-3 cost line." },
+      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.94, "explanation": "Checkout conversion optimisation is a board-level priority; trialling alternative payment methods." },
+      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.68, "explanation": "Ships to EU and US; supplier payments in EUR and CNY. Moderate but real FX need." },
+      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.63, "explanation": "In-house engineering team; already integrated with Stripe API. Could migrate or add Revolut as secondary." }
+    }
+  },
+  {
+    "id": "c8",
+    "name": "Theta Construction Holdings",
+    "company_number": "89012345",
+    "industry": "Construction",
+    "turnover": 45000000,
+    "employee_count": 500,
+    "latest_annual_report_url": "https://example.com/report8.pdf",
+    "motions": ["Cards", "Spend Management", "FX"],
+    "product_fit": {
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "500 staff across 12 active project sites; materials purchasing, fuel, and per-diem cards needed at site level." },
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.91, "explanation": "Project-based budgeting with no real-time spend tracking; finance team manually reconciles monthly." },
+      "FX": { "eligible": true, "fit_level": "weak", "score_contribution": 0.25, "explanation": "Primarily domestic operations; occasional materials import from EU but volumes are small." }
+    }
+  },
+  {
+    "id": "c9",
+    "name": "Iota Media Ltd",
+    "company_number": "90123456",
+    "industry": "Media & Entertainment",
+    "turnover": 6000000,
+    "employee_count": 45,
+    "latest_annual_report_url": "https://example.com/report9.pdf",
+    "motions": ["FX", "Cards", "Monthly Plans"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.80, "explanation": "Licenses content internationally; pays royalties in USD, EUR, and JPY quarterly." },
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Small team but high per-head ad-hoc spend on production, travel, and subscriptions." },
+      "Monthly Plans": { "eligible": true, "fit_level": "weak", "score_contribution": 0.35, "explanation": "Existing Revolut user but low transaction volume; plan upgrade value is marginal." }
+    }
+  },
+  {
+    "id": "c10",
+    "name": "Kappa Property Management",
+    "company_number": "01234567",
+    "industry": "Real Estate",
+    "turnover": 9000000,
+    "employee_count": 65,
+    "latest_annual_report_url": "https://example.com/report10.pdf",
+    "motions": ["Spend Management", "Cards"],
+    "product_fit": {
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.84, "explanation": "Manages 40+ properties with per-property maintenance budgets; no centralised procurement system." },
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.81, "explanation": "Property managers make frequent ad-hoc purchases for maintenance and supplies; currently using shared company credit card." }
+    }
+  },
+  {
+    "id": "c11",
+    "name": "Lambda Pharma International",
+    "company_number": "11223344",
+    "industry": "Pharmaceuticals",
+    "turnover": 38000000,
+    "employee_count": 420,
+    "latest_annual_report_url": "https://example.com/report11.pdf",
+    "motions": ["FX", "FX Forwards", "API Integrations", "Monthly Plans"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.95, "explanation": "Exports to 20+ countries; 70% of revenue denominated in USD and EUR. Multi-entity structure with cross-border intercompany flows." },
+      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.92, "explanation": "12-month supply contracts priced in foreign currencies; board report mentions hedging policy review." },
+      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.78, "explanation": "Enterprise-grade ERP (Oracle); treasury team has expressed interest in automated reconciliation." },
+      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.75, "explanation": "High transaction volumes and multi-entity needs strongly justify a custom enterprise plan." }
+    }
+  },
+  {
+    "id": "c12",
+    "name": "Mu Digital Agency",
+    "company_number": "22334455",
+    "industry": "Marketing & Advertising",
+    "turnover": 2500000,
+    "employee_count": 25,
+    "latest_annual_report_url": "https://example.com/report12.pdf",
+    "motions": ["Cards", "FX"],
+    "product_fit": {
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Ad spend on Google/Meta platforms and SaaS subscriptions; some need for virtual cards for campaign budgets." },
+      "FX": { "eligible": true, "fit_level": "weak", "score_contribution": 0.30, "explanation": "A few overseas freelancers paid in USD, but volumes are minimal." }
+    }
+  },
+  {
+    "id": "c13",
+    "name": "Nu Foods Distribution",
+    "company_number": "33445566",
+    "industry": "Food & Beverage",
+    "turnover": 18000000,
+    "employee_count": 150,
+    "latest_annual_report_url": "https://example.com/report13.pdf",
+    "motions": ["FX", "Merchant Acquiring", "Cards", "Spend Management"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Imports speciality ingredients from 6 countries; pays suppliers in EUR, USD, and THB." },
+      "Merchant Acquiring": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Operates 3 retail outlets alongside B2B distribution; card payment volumes are growing but still secondary to wholesale." },
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "Delivery drivers and warehouse staff need fuel and supplies purchasing; currently using petty cash." },
+      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "Multi-depot operation with decentralised purchasing; no approval workflow beyond email sign-off." }
+    }
+  },
+  {
+    "id": "c14",
+    "name": "Xi Engineering Solutions",
+    "company_number": "44556677",
+    "industry": "Engineering",
+    "turnover": 7500000,
+    "employee_count": 85,
+    "latest_annual_report_url": "https://example.com/report14.pdf",
+    "motions": ["FX", "FX Forwards", "Cards"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "Project-based work for Middle East and African clients; invoices in USD and AED with 60-90 day payment terms." },
+      "FX Forwards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "Long project timelines create some hedgeable exposure, but no formal hedging programme exists yet." },
+      "Cards": { "eligible": true, "fit_level": "weak", "score_contribution": 0.35, "explanation": "Mostly office-based staff; limited ad-hoc purchasing beyond occasional site visits." }
+    }
+  },
+  {
+    "id": "c15",
+    "name": "Omicron Travel Group",
+    "company_number": "55667788",
+    "industry": "Travel & Hospitality",
+    "turnover": 32000000,
+    "employee_count": 280,
+    "latest_annual_report_url": "https://example.com/report15.pdf",
+    "motions": ["FX", "Merchant Acquiring", "Revolut Pay", "Cards", "Spend Management"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.93, "explanation": "Pays hotels and ground operators in 15+ currencies; receivables from international tour operators in USD and EUR." },
+      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.89, "explanation": "Consumer-facing bookings via website and call centre; processes £25M+ in card payments annually." },
+      "Revolut Pay": { "eligible": true, "fit_level": "medium", "score_contribution": 0.70, "explanation": "Online booking flow could benefit from alternative payment methods, but conversion is not currently flagged as an issue." },
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.83, "explanation": "280 staff including field reps and tour guides with frequent travel, accommodation, and incidental expenses." },
+      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.68, "explanation": "Multi-department structure but existing Concur deployment handles most approval workflows." }
+    }
+  },
+  {
+    "id": "c16",
+    "name": "Pi Software Ltd",
+    "company_number": "66778899",
+    "industry": "Technology",
+    "turnover": 11000000,
+    "employee_count": 90,
+    "latest_annual_report_url": "https://example.com/report16.pdf",
+    "motions": ["API Integrations", "Monthly Plans", "FX"],
+    "product_fit": {
+      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "B2B SaaS platform with embedded payments feature on roadmap; engineering team already evaluated banking APIs." },
+      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.72, "explanation": "Growing transaction volume and team size; current basic plan is limiting multi-user admin features." },
+      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.52, "explanation": "US and EU client base with some invoicing in USD and EUR, but treasury is not complex." }
+    }
+  },
+  {
+    "id": "c17",
+    "name": "Rho Fashion Brands",
+    "company_number": "77889900",
+    "industry": "Fashion & Apparel",
+    "turnover": 20000000,
+    "employee_count": 170,
+    "latest_annual_report_url": "https://example.com/report17.pdf",
+    "motions": ["FX", "Merchant Acquiring", "Revolut Pay", "Spend Management"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.86, "explanation": "Sources garments from Turkey, Bangladesh, and China; pays in USD, EUR, and BDT. Seasonal bulk orders create lumpy FX flows." },
+      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "12 retail stores plus flagship e-commerce; payment acceptance is core to the business." },
+      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Online sales are 45% of revenue; actively testing new checkout flows to reduce basket abandonment." },
+      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Seasonal buying cycles mean large procurement spikes; some budget control need but existing processes work." }
+    }
+  },
+  {
+    "id": "c18",
+    "name": "Sigma Renewable Energy",
+    "company_number": "88990011",
+    "industry": "Energy",
+    "turnover": 55000000,
+    "employee_count": 600,
+    "latest_annual_report_url": "https://example.com/report18.pdf",
+    "motions": ["FX", "FX Forwards", "API Integrations", "Cards", "Spend Management", "Monthly Plans"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.96, "explanation": "Multi-national operations in 8 countries; EUR, USD, SEK, and NOK payment flows. Treasury team manages £40M+ in annual FX." },
+      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.94, "explanation": "Long-term infrastructure contracts with known future FX obligations; formal hedging policy in place." },
+      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "SAP-based treasury; automation interest exists but IT priorities are focused on operational systems." },
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.82, "explanation": "600 staff across multiple sites and countries; significant travel, fuel, and field procurement needs." },
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.87, "explanation": "Multi-entity, multi-country structure with per-project budgets; finance team struggles with consolidation." },
+      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.80, "explanation": "Enterprise-scale usage justifies custom pricing; currently on standard plan with workarounds for multi-entity access." }
+    }
+  },
+  {
+    "id": "c19",
+    "name": "Tau Automotive Parts",
+    "company_number": "99001122",
+    "industry": "Automotive",
+    "turnover": 14000000,
+    "employee_count": 110,
+    "latest_annual_report_url": "https://example.com/report19.pdf",
+    "motions": ["FX", "Merchant Acquiring", "Cards"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.70, "explanation": "Imports components from Germany and Japan; moderate FX volumes but growing as EU sourcing increases." },
+      "Merchant Acquiring": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Operates a trade counter and small online catalogue; card payments are a minority of revenue but growing." },
+      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Field sales team and warehouse operatives with purchasing needs; ad-hoc spending is poorly controlled." }
+    }
+  },
+  {
+    "id": "c20",
+    "name": "Upsilon Education Trust",
+    "company_number": "00112233",
+    "industry": "Education",
+    "turnover": 10000000,
+    "employee_count": 180,
+    "latest_annual_report_url": "https://example.com/report20.pdf",
+    "motions": ["Cards", "Spend Management", "Monthly Plans"],
+    "product_fit": {
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.79, "explanation": "Multi-academy trust with 6 schools; each school has departmental purchasing needs currently handled via purchase orders and petty cash." },
+      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.86, "explanation": "Complex budget delegation across schools and departments; trustees want real-time visibility into spending against allocated budgets." },
+      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.50, "explanation": "Transaction volumes and user count justify a plan upgrade, but procurement process for financial services is slow." }
     }
   }
 ]
