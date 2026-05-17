@@ -46,6 +46,33 @@ db.exec(`
     outcome TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS import_jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    total_items INTEGER DEFAULT 0,
+    processed_items INTEGER DEFAULT 0,
+    imported_items INTEGER DEFAULT 0,
+    skipped_items INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS import_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    company_number TEXT,
+    company_name TEXT,
+    action TEXT NOT NULL,
+    detail TEXT,
+    turnover REAL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (job_id) REFERENCES import_jobs(id)
+  );
 `);
 
 // --- Workflow State ---
@@ -151,6 +178,47 @@ export function addCadenceEntry(companyId, date, type, summary, outcome) {
   db.prepare(
     "INSERT INTO cadence_log (company_id, date, type, summary, outcome) VALUES (?, ?, ?, ?, ?)"
   ).run(companyId, date, type, summary, outcome || null);
+}
+
+// --- Import Jobs ---
+
+export function createImportJob(id, type, totalItems, metadata) {
+  db.prepare(
+    "INSERT INTO import_jobs (id, type, status, total_items, started_at, metadata) VALUES (?, ?, 'running', ?, datetime('now'), ?)"
+  ).run(id, type, totalItems, JSON.stringify(metadata || {}));
+}
+
+export function updateImportJob(id, updates) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(updates)) {
+    sets.push(`${k} = ?`);
+    vals.push(v);
+  }
+  vals.push(id);
+  db.prepare(`UPDATE import_jobs SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+}
+
+export function getImportJob(id) {
+  const row = db.prepare("SELECT * FROM import_jobs WHERE id = ?").get(id);
+  if (!row) return null;
+  return { ...row, metadata: JSON.parse(row.metadata || "{}") };
+}
+
+export function listImportJobs() {
+  return db.prepare("SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 50").all().map((r) => ({
+    ...r, metadata: JSON.parse(r.metadata || "{}"),
+  }));
+}
+
+export function addImportLogEntry(jobId, companyNumber, companyName, action, detail, turnover) {
+  db.prepare(
+    "INSERT INTO import_log (job_id, company_number, company_name, action, detail, turnover) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(jobId, companyNumber, companyName || null, action, detail || null, turnover || null);
+}
+
+export function getImportLogs(jobId, limit = 100) {
+  return db.prepare("SELECT * FROM import_log WHERE job_id = ? ORDER BY timestamp DESC LIMIT ?").all(jobId, limit);
 }
 
 export function closeDb() {

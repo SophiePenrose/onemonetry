@@ -4,6 +4,7 @@ import Shortlist from "./pages/Shortlist";
 import CompanyDetail from "./pages/CompanyDetail";
 import Reports from "./pages/Reports";
 import AddCompany from "./pages/AddCompany";
+import Import from "./pages/Import";
 
 export default function App() {
   const [view, setView] = useState("home");
@@ -57,6 +58,7 @@ export default function App() {
           { id: "home", label: "⌂ Workspace", action: navigateHome },
           { id: "shortlist", label: "📋 Shortlist", action: navigateShortlist },
           { id: "reports", label: "📊 Reports", action: navigateReports },
+          { id: "import", label: "📥 Import", action: () => { setView("import"); setSelectedCompanyId(null); setReturnView(null); } },
         ].map((tab) => {
           const isActive = view === tab.id || (view === "company_detail" && returnView === tab.id) || (view === "add_company" && tab.id === "shortlist");
           return (
@@ -94,6 +96,7 @@ export default function App() {
             onCancel={navigateShortlist}
           />
         )}
+        {view === "import" && <Import />}
         {view === "reports" && (
           <Reports onNavigateToCompany={(id) => navigateToCompany(id, "reports")} />
         )}

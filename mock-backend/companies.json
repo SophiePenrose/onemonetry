@@ -3424,5 +3424,101 @@
         "Newly added — no engagement data yet"
       ]
     }
+  },
+  {
+    "id": "ch-00445790",
+    "name": "Tesco PLC",
+    "company_number": "00445790",
+    "industry": "Retail",
+    "segment": "Enterprise",
+    "turnover": 65000000000,
+    "employee_count": 300000,
+    "latest_annual_report_url": "https://find-and-update.company-information.service.gov.uk/company/00445790/filing-history",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.3,
+      "warmth": "cold",
+      "signals": [
+        "Imported from CSV — no engagement data"
+      ]
+    },
+    "source": "mock",
+    "imported_at": "2026-05-17T22:24:03.093Z"
+  },
+  {
+    "id": "ch-02400871",
+    "name": "JD Sports Fashion Plc",
+    "company_number": "02400871",
+    "industry": "Retail",
+    "segment": "Enterprise",
+    "turnover": 10000000000,
+    "employee_count": 60000,
+    "latest_annual_report_url": "https://find-and-update.company-information.service.gov.uk/company/02400871/filing-history",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.3,
+      "warmth": "cold",
+      "signals": [
+        "Imported from CSV — no engagement data"
+      ]
+    },
+    "source": "mock",
+    "imported_at": "2026-05-17T22:24:03.093Z"
+  },
+  {
+    "id": "ch-03824658",
+    "name": "Rightmove Group Limited",
+    "company_number": "03824658",
+    "industry": "Technology",
+    "segment": "Enterprise",
+    "turnover": 365000000,
+    "employee_count": 800,
+    "latest_annual_report_url": "https://find-and-update.company-information.service.gov.uk/company/03824658/filing-history",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.3,
+      "warmth": "cold",
+      "signals": [
+        "Imported from CSV — no engagement data"
+      ]
+    },
+    "source": "mock",
+    "imported_at": "2026-05-17T22:24:03.093Z"
+  },
+  {
+    "id": "ch-00218442",
+    "name": "British American Tobacco p.l.c.",
+    "company_number": "00218442",
+    "industry": "Tobacco",
+    "segment": "Enterprise",
+    "turnover": 25000000000,
+    "employee_count": 52000,
+    "latest_annual_report_url": "https://find-and-update.company-information.service.gov.uk/company/00218442/filing-history",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.3,
+      "warmth": "cold",
+      "signals": [
+        "Imported from CSV — no engagement data"
+      ]
+    },
+    "source": "mock",
+    "imported_at": "2026-05-17T22:24:03.093Z"
   }
 ]

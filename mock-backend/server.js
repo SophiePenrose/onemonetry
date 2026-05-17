@@ -10,7 +10,19 @@ import {
   listReports,
   getExclusions as dbGetExclusions,
   setExclusions as dbSetExclusions,
+  createImportJob,
+  updateImportJob,
+  getImportJob,
+  listImportJobs,
+  addImportLogEntry,
+  getImportLogs,
 } from "./db.js";
+import {
+  isCompaniesHouseConfigured,
+  lookupCompany,
+  parseCompanyNumbersCSV,
+  getBulkDownloadInfo,
+} from "./companies-house.js";
 
 const app = express();
 app.use(express.json());
@@ -758,6 +770,162 @@ app.get("/api/industries", (_req, res) => {
   const COMPANIES = loadCompanies();
   const industries = [...new Set(COMPANIES.map((c) => c.industry))].sort();
   res.json({ industries });
+});
+
+// --- Companies House Integration ---
+
+app.get("/api/companies-house/status", (_req, res) => {
+  res.json({
+    configured: isCompaniesHouseConfigured(),
+    bulk_data: getBulkDownloadInfo(),
+  });
+});
+
+app.get("/api/companies-house/lookup/:number", async (req, res) => {
+  const { number } = req.params;
+  try {
+    const data = await lookupCompany(number);
+    if (data.error) return res.status(data.status || 500).json(data);
+    res.json({ company: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/import/csv", (req, res) => {
+  const { csv_content, filename } = req.body;
+  if (!csv_content) return res.status(400).json({ error: "csv_content is required" });
+
+  const companyNumbers = parseCompanyNumbersCSV(csv_content);
+  if (companyNumbers.length === 0) {
+    return res.status(400).json({ error: "No valid company numbers found in CSV" });
+  }
+
+  const jobId = `csv-${Date.now()}`;
+  createImportJob(jobId, "csv", companyNumbers.length, { filename: filename || "upload.csv" });
+
+  processCSVImport(jobId, companyNumbers);
+
+  res.status(202).json({
+    job_id: jobId,
+    company_numbers_found: companyNumbers.length,
+    status: "processing",
+    message: `Found ${companyNumbers.length} company numbers. Processing in background.`,
+  });
+});
+
+async function processCSVImport(jobId, companyNumbers) {
+  let imported = 0, skipped = 0, errors = 0;
+  const COMPANIES = loadCompanies();
+  const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
+
+  for (let i = 0; i < companyNumbers.length; i++) {
+    const num = companyNumbers[i];
+
+    if (existingNumbers.has(num)) {
+      addImportLogEntry(jobId, num, null, "skipped", "Already exists in universe");
+      skipped++;
+      updateImportJob(jobId, { processed_items: i + 1, imported_items: imported, skipped_items: skipped, error_count: errors });
+      continue;
+    }
+
+    try {
+      const chData = await lookupCompany(num);
+      if (chData.error) {
+        addImportLogEntry(jobId, num, null, "error", chData.message);
+        errors++;
+      } else if (chData.status === "dissolved" || chData.status === "liquidation") {
+        addImportLogEntry(jobId, num, chData.name, "skipped", `Status: ${chData.status} (non-trading)`);
+        skipped++;
+      } else {
+        const newCompany = {
+          id: `ch-${num}`,
+          name: chData.name || `Company ${num}`,
+          company_number: num,
+          industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
+          segment: guessTurnoverSegment(chData.turnover_hint),
+          turnover: chData.turnover_hint || 0,
+          employee_count: chData.employee_hint || 0,
+          latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${num}/filing-history`,
+          motions: [],
+          product_fit: {},
+          competitors: [],
+          stakeholders: [],
+          cadence_history: [],
+          response_propensity: { score: 0.3, warmth: "cold", signals: ["Imported from CSV — no engagement data"] },
+          source: chData.source,
+          imported_at: new Date().toISOString(),
+        };
+
+        COMPANIES.push(newCompany);
+        existingNumbers.add(num);
+        addImportLogEntry(jobId, num, newCompany.name, "imported", `Added as ${newCompany.segment}`, newCompany.turnover);
+        imported++;
+      }
+    } catch (err) {
+      addImportLogEntry(jobId, num, null, "error", err.message);
+      errors++;
+    }
+
+    updateImportJob(jobId, { processed_items: i + 1, imported_items: imported, skipped_items: skipped, error_count: errors });
+
+    if (isCompaniesHouseConfigured()) await new Promise((r) => setTimeout(r, 500));
+  }
+
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  updateImportJob(jobId, {
+    status: "completed",
+    completed_at: new Date().toISOString(),
+    processed_items: companyNumbers.length,
+    imported_items: imported,
+    skipped_items: skipped,
+    error_count: errors,
+  });
+}
+
+function mapSICToIndustry(sicCodes) {
+  if (!sicCodes || sicCodes.length === 0) return "Unknown";
+  const code = sicCodes[0];
+  const prefix = parseInt(code.substring(0, 2));
+  if (prefix <= 3) return "Agriculture";
+  if (prefix <= 9) return "Mining";
+  if (prefix <= 33) return "Manufacturing";
+  if (prefix <= 35) return "Energy";
+  if (prefix <= 39) return "Utilities";
+  if (prefix <= 43) return "Construction";
+  if (prefix <= 47) return "Retail";
+  if (prefix <= 53) return "Logistics";
+  if (prefix <= 56) return "Hospitality";
+  if (prefix <= 63) return "Technology";
+  if (prefix <= 66) return "Financial Services";
+  if (prefix <= 68) return "Real Estate";
+  if (prefix <= 75) return "Professional Services";
+  if (prefix <= 82) return "Business Services";
+  if (prefix <= 84) return "Public Administration";
+  if (prefix <= 85) return "Education";
+  if (prefix <= 88) return "Healthcare";
+  if (prefix <= 93) return "Entertainment";
+  return "Other Services";
+}
+
+function guessTurnoverSegment(turnover) {
+  if (!turnover) return "Mid-Market";
+  if (turnover >= 250_000_000) return "Enterprise";
+  if (turnover >= 10_000_000) return "Mid-Market";
+  return "SMB";
+}
+
+app.get("/api/import/jobs", (_req, res) => {
+  res.json({ jobs: listImportJobs() });
+});
+
+app.get("/api/import/jobs/:id", (req, res) => {
+  const job = getImportJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  const logs = getImportLogs(req.params.id, 200);
+  res.json({ job, logs });
 });
 
 // --- LLM Evidence Extraction ---
