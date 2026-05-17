@@ -17,30 +17,45 @@ const STATE_META = {
 
 export default function Shortlist({ productMotion }) {
   const [companies, setCompanies] = useState([]);
+  const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [stateFilter, setStateFilter] = useState("all");
+  const [showSuppressed, setShowSuppressed] = useState(false);
 
-  useEffect(() => {
+  function fetchShortlist(suppressedFlag) {
     setLoading(true);
     setError(null);
-    setSelectedCompanyId(null);
-    setStateFilter("all");
-    fetch(`/api/shortlist?product_motion=${encodeURIComponent(productMotion)}`)
+    const qs = `product_motion=${encodeURIComponent(productMotion)}${suppressedFlag ? "&show_suppressed=true" : ""}`;
+    fetch(`/api/shortlist?${qs}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch shortlist");
         return res.json();
       })
       .then((data) => {
         setCompanies(data.companies || []);
+        setMeta(data.meta || null);
         setLoading(false);
       })
       .catch((err) => {
         setError(err.message);
         setLoading(false);
       });
+  }
+
+  useEffect(() => {
+    setSelectedCompanyId(null);
+    setStateFilter("all");
+    setShowSuppressed(false);
+    fetchShortlist(false);
   }, [productMotion]);
+
+  function toggleSuppressed() {
+    const next = !showSuppressed;
+    setShowSuppressed(next);
+    fetchShortlist(next);
+  }
 
   const stateCounts = {};
   companies.forEach((c) => {
@@ -58,20 +73,11 @@ export default function Shortlist({ productMotion }) {
         <button
           onClick={() => {
             setSelectedCompanyId(null);
-            setLoading(true);
-            fetch(`/api/shortlist?product_motion=${encodeURIComponent(productMotion)}`)
-              .then((res) => res.json())
-              .then((data) => { setCompanies(data.companies || []); setLoading(false); })
-              .catch(() => setLoading(false));
+            fetchShortlist(showSuppressed);
           }}
           style={{
-            padding: "8px 16px",
-            border: "1px solid #ddd",
-            borderRadius: 6,
-            background: "#fff",
-            cursor: "pointer",
-            fontSize: 14,
-            marginBottom: 16,
+            padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6,
+            background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16,
           }}
         >
           ← Back to Shortlist
@@ -83,7 +89,7 @@ export default function Shortlist({ productMotion }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
         <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist — {productMotion}</h2>
         {!loading && !error && (
           <span style={{ color: "#888", fontSize: 14 }}>
@@ -92,19 +98,41 @@ export default function Shortlist({ productMotion }) {
         )}
       </div>
 
+      {!loading && !error && meta && (meta.excluded > 0 || meta.suppressed > 0) && (
+        <div style={{ fontSize: 12, color: "#888", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          {meta.excluded > 0 && (
+            <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+              {meta.excluded} excluded
+            </span>
+          )}
+          {meta.suppressed > 0 && (
+            <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+              {meta.suppressed} suppressed
+            </span>
+          )}
+          <span style={{ color: "#aaa" }}>·</span>
+          <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+            <input
+              type="checkbox"
+              checked={showSuppressed}
+              onChange={toggleSuppressed}
+              style={{ cursor: "pointer" }}
+            />
+            <span>Show suppressed</span>
+          </label>
+        </div>
+      )}
+
       {!loading && !error && companies.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
           <button
             onClick={() => setStateFilter("all")}
             style={{
-              padding: "4px 14px",
-              borderRadius: 14,
+              padding: "4px 14px", borderRadius: 14,
               border: stateFilter === "all" ? "2px solid #333" : "1px solid #ddd",
               background: stateFilter === "all" ? "#333" : "#fff",
               color: stateFilter === "all" ? "#fff" : "#555",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
+              fontSize: 12, fontWeight: 600, cursor: "pointer",
             }}
           >
             All ({companies.length})
@@ -118,14 +146,11 @@ export default function Shortlist({ productMotion }) {
                 key={stateId}
                 onClick={() => setStateFilter(stateId)}
                 style={{
-                  padding: "4px 14px",
-                  borderRadius: 14,
+                  padding: "4px 14px", borderRadius: 14,
                   border: active ? `2px solid ${meta.color}` : "1px solid #ddd",
                   background: active ? meta.color : "#fff",
                   color: active ? "#fff" : meta.color,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
+                  fontSize: 12, fontWeight: 600, cursor: "pointer",
                 }}
               >
                 {meta.label} ({count})

@@ -43,6 +43,45 @@ const ALLOWED_TRANSITIONS = {
   held_for_review: ["new_candidate", "shortlisted"],
 };
 
+// --- Exclusions and suppression ---
+
+const SUPPRESSED_STATES = ["closed_won", "closed_lost", "held_for_review", "revisit_later"];
+
+const EXCLUSIONS_FILE = path.join(process.cwd(), "mock-backend", "exclusions.json");
+
+function loadExclusions() {
+  try {
+    return JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, "utf-8"));
+  } catch {
+    return {
+      prohibited_industries: ["Gambling", "Tobacco", "Weapons", "Adult Entertainment"],
+      excluded_company_ids: [],
+    };
+  }
+}
+
+function saveExclusions(exclusions) {
+  fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify(exclusions, null, 2));
+}
+
+function isExcluded(company) {
+  const exclusions = loadExclusions();
+  if (exclusions.excluded_company_ids.includes(company.id)) return { excluded: true, reason: "Manually excluded" };
+  if (exclusions.prohibited_industries.some((ind) => company.industry.toLowerCase().includes(ind.toLowerCase()))) {
+    return { excluded: true, reason: `Prohibited industry: ${company.industry}` };
+  }
+  return { excluded: false };
+}
+
+function isSuppressed(companyId) {
+  const ws = getCompanyState(companyId);
+  if (SUPPRESSED_STATES.includes(ws.state)) {
+    const label = WORKFLOW_STATES.find((s) => s.id === ws.state)?.label || ws.state;
+    return { suppressed: true, reason: `Status: ${label}` };
+  }
+  return { suppressed: false };
+}
+
 // --- Scoring weights (configurable) ---
 
 const LAYER_NAMES = ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"];
@@ -142,6 +181,22 @@ app.get("/api/scoring-weights", (_req, res) => {
   res.json({ weights: DEFAULT_WEIGHTS, layers: LAYER_NAMES });
 });
 
+app.get("/api/exclusions", (_req, res) => {
+  const exclusions = loadExclusions();
+  res.json({ exclusions, suppressed_states: SUPPRESSED_STATES });
+});
+
+app.put("/api/exclusions", (req, res) => {
+  const { prohibited_industries, excluded_company_ids } = req.body;
+  const current = loadExclusions();
+  const updated = {
+    prohibited_industries: prohibited_industries ?? current.prohibited_industries,
+    excluded_company_ids: excluded_company_ids ?? current.excluded_company_ids,
+  };
+  saveExclusions(updated);
+  res.json({ exclusions: updated });
+});
+
 app.get("/api/dashboard", (_req, res) => {
   const COMPANIES = loadCompanies();
 
@@ -217,25 +272,39 @@ app.get("/api/dashboard", (_req, res) => {
 });
 
 app.get("/api/shortlist", (req, res) => {
-  const { product_motion, state_filter } = req.query;
+  const { product_motion, state_filter, show_suppressed } = req.query;
   if (!product_motion || !VALID_MOTIONS.includes(product_motion)) {
     return res.status(400).json({ error: "Missing or invalid product_motion parameter" });
   }
   const COMPANIES = loadCompanies();
-  let eligible = COMPANIES.filter(
+  const motionEligible = COMPANIES.filter(
     (c) => c.motions.includes(product_motion) && c.product_fit[product_motion]?.eligible
   );
 
-  if (state_filter && VALID_STATE_IDS.includes(state_filter)) {
-    eligible = eligible.filter((c) => getCompanyState(c.id).state === state_filter);
+  let excludedCount = 0;
+  let suppressedCount = 0;
+  const active = [];
+
+  for (const c of motionEligible) {
+    const excl = isExcluded(c);
+    if (excl.excluded) { excludedCount++; continue; }
+    const supp = isSuppressed(c.id);
+    if (supp.suppressed) { suppressedCount++; if (show_suppressed !== "true") continue; }
+    active.push(c);
   }
 
-  const companies = eligible
+  let filtered = active;
+  if (state_filter && VALID_STATE_IDS.includes(state_filter)) {
+    filtered = active.filter((c) => getCompanyState(c.id).state === state_filter);
+  }
+
+  const companies = filtered
     .map((c) => {
       const fit = c.product_fit[product_motion];
       const layers = fit.layers || {};
       const compositeScore = computeCompositeScore(layers);
       const ws = getCompanyState(c.id);
+      const supp = isSuppressed(c.id);
       return {
         id: c.id,
         name: c.name,
@@ -249,12 +318,22 @@ app.get("/api/shortlist", (req, res) => {
         explanation: fit.explanation,
         workflow_state: ws.state,
         score_breakdown: buildScoreBreakdown(layers),
+        suppressed: supp.suppressed,
+        suppression_reason: supp.reason || null,
       };
     })
     .sort((a, b) => b.score - a.score)
     .map((c, idx) => ({ ...c, rank: idx + 1 }));
 
-  res.json({ companies });
+  res.json({
+    companies,
+    meta: {
+      total_eligible: motionEligible.length,
+      excluded: excludedCount,
+      suppressed: suppressedCount,
+      showing: companies.length,
+    },
+  });
 });
 
 app.get("/api/company/:id", (req, res) => {

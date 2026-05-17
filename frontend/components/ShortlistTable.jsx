@@ -65,13 +65,19 @@ function ShortlistTable({ companies, onSelectCompany }) {
       <tbody>
         {companies.map((company) => {
           const sm = STATE_META[company.workflow_state] || STATE_META.new_candidate;
+          const suppressed = company.suppressed;
           return (
             <tr
               key={company.id}
               onClick={() => onSelectCompany && onSelectCompany(company)}
-              style={{ cursor: onSelectCompany ? "pointer" : "default", borderBottom: "1px solid #eee" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              style={{
+                cursor: onSelectCompany ? "pointer" : "default",
+                borderBottom: "1px solid #eee",
+                opacity: suppressed ? 0.5 : 1,
+                background: suppressed ? "#f9fafb" : "transparent",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = suppressed ? "#f0f1f3" : "#f8f9fb")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = suppressed ? "#f9fafb" : "transparent")}
             >
               <td style={{ padding: "10px 16px", color: "#888", fontSize: 13 }}>{company.rank}</td>
               <td style={{ padding: "10px 16px", fontWeight: 600 }}>
