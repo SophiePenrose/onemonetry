@@ -1,0 +1,188 @@
+[
+  {
+    "id": "acme-widgets",
+    "name": "Acme Widgets Ltd",
+    "companyNumber": "12345678",
+    "industry": "Manufacturing",
+    "turnover": "GBP 18m",
+    "employeeCount": 145,
+    "workflowStatus": "Shortlisted",
+    "annualReportUrl": "https://example.com/acme-annual-report.pdf",
+    "motions": {
+      "FX": {
+        "productFit": 42,
+        "commercialValue": 26,
+        "timing": 14,
+        "competitorContext": 8,
+        "summary": "International suppliers and regular euro purchases create a clear FX wedge.",
+        "explanation": "Acme has visible import activity, multi-currency purchasing, and enough transaction scale to justify an FX conversation.",
+        "evidence": [
+          "Imports components from EU suppliers",
+          "Reports exposure to EUR supplier pricing",
+          "Finance team manages multi-currency invoices"
+        ]
+      },
+      "Cards": {
+        "productFit": 33,
+        "commercialValue": 18,
+        "timing": 10,
+        "competitorContext": 5,
+        "summary": "Moderate fit from field-team spend, but FX is the stronger current motion.",
+        "explanation": "Card spend exists, but the clearest pain in the mock data is supplier FX exposure.",
+        "evidence": [
+          "Field sales and operations teams submit expenses",
+          "Manual reimbursement process mentioned in finance notes"
+        ]
+      }
+    }
+  },
+  {
+    "id": "delta-exports",
+    "name": "Delta Exports Ltd",
+    "companyNumber": "45678901",
+    "industry": "Import and Export",
+    "turnover": "GBP 32m",
+    "employeeCount": 210,
+    "workflowStatus": "New candidate",
+    "annualReportUrl": "https://example.com/delta-annual-report.pdf",
+    "motions": {
+      "FX": {
+        "productFit": 46,
+        "commercialValue": 30,
+        "timing": 15,
+        "competitorContext": 6,
+        "summary": "High international exposure and recurring receipts make this the strongest FX prospect.",
+        "explanation": "Delta combines import and export flows, recurring currency exposure, and a clear treasury use case.",
+        "evidence": [
+          "Exports to North America and Europe",
+          "Reports USD and EUR revenue exposure",
+          "Uses hedging language in finance commentary"
+        ]
+      },
+      "Spend Management": {
+        "productFit": 40,
+        "commercialValue": 23,
+        "timing": 13,
+        "competitorContext": 6,
+        "summary": "Distributed purchasing creates a secondary spend-management angle.",
+        "explanation": "The company has multi-site procurement and enough operational complexity for spend controls to matter.",
+        "evidence": [
+          "Multiple warehouse sites",
+          "Department-level purchasing approvals",
+          "Manual supplier onboarding noted"
+        ]
+      }
+    }
+  },
+  {
+    "id": "epsilon-tech",
+    "name": "Epsilon Tech Ltd",
+    "companyNumber": "56789012",
+    "industry": "Technology",
+    "turnover": "GBP 45m",
+    "employeeCount": 320,
+    "workflowStatus": "Selected for outreach",
+    "annualReportUrl": "https://example.com/epsilon-annual-report.pdf",
+    "motions": {
+      "Cards": {
+        "productFit": 45,
+        "commercialValue": 25,
+        "timing": 12,
+        "competitorContext": 7,
+        "summary": "Large distributed teams and fragmented tooling create a strong cards wedge.",
+        "explanation": "Epsilon has multiple teams spending independently, making card controls and policy automation relevant.",
+        "evidence": [
+          "Fast-growing engineering and go-to-market teams",
+          "Multiple SaaS subscriptions across departments",
+          "Finance stack described as fragmented"
+        ]
+      },
+      "Spend Management": {
+        "productFit": 43,
+        "commercialValue": 24,
+        "timing": 13,
+        "competitorContext": 7,
+        "summary": "High SaaS and team spend point to a spend-management conversation.",
+        "explanation": "The same distributed purchasing signals support spend-management prioritisation.",
+        "evidence": [
+          "Department-led software purchasing",
+          "Manual approval workflow",
+          "Finance team wants better spend visibility"
+        ]
+      }
+    }
+  },
+  {
+    "id": "beta-retail",
+    "name": "Beta Retail PLC",
+    "companyNumber": "23456789",
+    "industry": "Retail",
+    "turnover": "GBP 76m",
+    "employeeCount": 480,
+    "workflowStatus": "Shortlisted",
+    "annualReportUrl": "https://example.com/beta-annual-report.pdf",
+    "motions": {
+      "Merchant Acquiring": {
+        "productFit": 44,
+        "commercialValue": 29,
+        "timing": 14,
+        "competitorContext": 8,
+        "summary": "Consumer checkout volume makes payment acceptance the clearest motion.",
+        "explanation": "Beta has online and store payment acceptance needs, making merchant acquiring the best first conversation.",
+        "evidence": [
+          "Online checkout and retail stores",
+          "High card transaction volume",
+          "Mentions payment costs in operating commentary"
+        ]
+      },
+      "Cards": {
+        "productFit": 28,
+        "commercialValue": 18,
+        "timing": 9,
+        "competitorContext": 4,
+        "summary": "Some store operations spend, but product fit is below the MVP shortlist gate.",
+        "explanation": "Card spend exists, but the mock evidence is stronger for payment acceptance.",
+        "evidence": [
+          "Regional managers submit expenses",
+          "Store operations purchasing is partially centralised"
+        ]
+      }
+    }
+  },
+  {
+    "id": "gamma-consulting",
+    "name": "Gamma Consulting LLP",
+    "companyNumber": "34567890",
+    "industry": "Professional Services",
+    "turnover": "GBP 12m",
+    "employeeCount": 85,
+    "workflowStatus": "Revisit later",
+    "annualReportUrl": "https://example.com/gamma-annual-report.pdf",
+    "motions": {
+      "Cards": {
+        "productFit": 36,
+        "commercialValue": 17,
+        "timing": 8,
+        "competitorContext": 5,
+        "summary": "Consultant travel and expenses create a usable but lower-priority cards fit.",
+        "explanation": "Gamma clears the MVP product-fit gate, though the commercial value is lower than larger targets.",
+        "evidence": [
+          "Consultants travel for client work",
+          "Expense reimbursement is handled manually"
+        ]
+      },
+      "Spend Management": {
+        "productFit": 31,
+        "commercialValue": 15,
+        "timing": 7,
+        "competitorContext": 4,
+        "summary": "Some spend pain, but not enough evidence for this week's shortlist.",
+        "explanation": "Spend complexity appears limited compared with stronger mid-market accounts.",
+        "evidence": [
+          "Central finance team controls most purchasing",
+          "Limited evidence of system fragmentation"
+        ]
+      }
+    }
+  }
+]
