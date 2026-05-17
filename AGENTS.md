@@ -2,19 +2,18 @@
 
 ## Cursor Cloud specific instructions
 
-This repository is a **documentation-only** design specification repository for the Revolut Business Mid-Market Prospecting App. It contains only Markdown files — there is no source code, no package managers, no services, no tests, and no runnable application.
+### Services
 
-### Repository contents
+| Service | Directory | Port | Start command |
+|---------|-----------|------|---------------|
+| Mock Backend (Express) | `mock-backend/` | 8000 | `node mock-backend/server.js` (run from repo root) |
+| Frontend (Vite + React) | `frontend/` | 5173 | `npm run dev` (run from `frontend/`) |
 
-| File | Purpose |
-|------|---------|
-| `README.md` | Project overview |
-| `master_prompt_outline_v2.md` | Structured master design spec (scoring architecture, product-fit layers, workflow states, weekly report behavior) |
-| `revolut_prospecting_app_supplementary_context.md` | Narrative companion explaining reasoning behind design decisions |
+### Important caveats
 
-### Development notes
-
-- **No build/lint/test commands exist.** There are no dependencies to install and no scripts to run.
-- **No services to start.** The repo describes a prospecting app that has not yet been implemented.
-- Edits to this repo involve only Markdown authoring. Any standard text editor or Markdown preview tool is sufficient.
-- If the application described in the specs is eventually implemented in this repo, this section should be updated with build, test, and run instructions.
+- The **mock-backend must be started from the repo root** (`/workspace`), not from inside `mock-backend/`. It resolves `companies.json` via `path.join(process.cwd(), "mock-backend", "companies.json")`.
+- The **frontend Vite dev server** proxies `/api` requests to `http://localhost:8000`, so the mock-backend must be running before the frontend can fetch data.
+- Start the backend **before** the frontend to avoid proxy errors on initial page load.
+- Both services use `npm` (lockfiles are `package-lock.json`).
+- There are **no lint, test, or build CI scripts** configured in either `package.json`. `npm run build` in `frontend/` runs `vite build`.
+- The mock data has 3 companies in `mock-backend/companies.json` with two product motions: `FX` and `Cards`.
