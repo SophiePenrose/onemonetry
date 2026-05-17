@@ -6,3 +6,4 @@ mock-backend/exclusions.json
 mock-backend/onemonetry.db
 mock-backend/onemonetry.db-wal
 mock-backend/onemonetry.db-shm
+mock-backend/data/

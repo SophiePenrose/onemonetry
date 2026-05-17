@@ -23,6 +23,14 @@ import {
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
 } from "./companies-house.js";
+import {
+  getMonthlyZipURLs,
+  getDailyZipURLs,
+  processAccountsZip,
+  getAutoPullStatus,
+  startAutoPull,
+  stopAutoPull,
+} from "./bulk-processor.js";
 
 const app = express();
 app.use(express.json());
@@ -926,6 +934,155 @@ app.get("/api/import/jobs/:id", (req, res) => {
   if (!job) return res.status(404).json({ error: "Job not found" });
   const logs = getImportLogs(req.params.id, 200);
   res.json({ job, logs });
+});
+
+// --- Bulk ZIP Processing ---
+
+app.get("/api/import/bulk/monthly", (req, res) => {
+  const months = parseInt(req.query.months) || 24;
+  res.json({ files: getMonthlyZipURLs(months) });
+});
+
+app.get("/api/import/bulk/daily", (req, res) => {
+  const days = parseInt(req.query.days) || 14;
+  res.json({ files: getDailyZipURLs(days) });
+});
+
+app.post("/api/import/bulk/process", async (req, res) => {
+  const { url, filename } = req.body;
+  if (!url || !filename) return res.status(400).json({ error: "url and filename required" });
+
+  const jobId = `bulk-${Date.now()}`;
+  createImportJob(jobId, "bulk_zip", 0, { filename, url });
+
+  res.status(202).json({ job_id: jobId, status: "processing", filename });
+
+  try {
+    const result = await processAccountsZip(url, filename, (progress) => {
+      updateImportJob(jobId, {
+        status: "running",
+        metadata: JSON.stringify({ ...progress }),
+      });
+    });
+
+    if (result.error) {
+      updateImportJob(jobId, {
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        metadata: JSON.stringify({ error: result.message, stage: result.stage }),
+      });
+      addImportLogEntry(jobId, null, null, "error", `${result.stage}: ${result.message}`);
+      return;
+    }
+
+    if (result.skipped) {
+      updateImportJob(jobId, {
+        status: "completed",
+        completed_at: new Date().toISOString(),
+        metadata: JSON.stringify({ skipped: true, reason: result.reason }),
+      });
+      return;
+    }
+
+    const COMPANIES = loadCompanies();
+    const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
+    let imported = 0;
+
+    for (const co of result.companies) {
+      if (existingNumbers.has(co.company_number)) {
+        addImportLogEntry(jobId, co.company_number, null, "skipped", "Already in universe", co.turnover);
+        continue;
+      }
+
+      const newCompany = {
+        id: `ch-${co.company_number}`,
+        name: `Company ${co.company_number}`,
+        company_number: co.company_number,
+        industry: "Unknown",
+        segment: guessTurnoverSegment(co.turnover),
+        turnover: co.turnover,
+        employee_count: 0,
+        latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${co.company_number}/filing-history`,
+        motions: [],
+        product_fit: {},
+        competitors: [],
+        stakeholders: [],
+        cadence_history: [],
+        response_propensity: { score: 0.2, warmth: "cold", signals: ["Imported from bulk accounts data"] },
+        source: "bulk_zip",
+        source_file: co.source_file,
+        imported_at: new Date().toISOString(),
+      };
+
+      COMPANIES.push(newCompany);
+      existingNumbers.add(co.company_number);
+      addImportLogEntry(jobId, co.company_number, newCompany.name, "imported", `£${(co.turnover / 1e6).toFixed(1)}M turnover from ${filename}`, co.turnover);
+      imported++;
+    }
+
+    const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+    fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+    updateImportJob(jobId, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      total_items: result.stats.total_files,
+      processed_items: result.stats.total_files,
+      imported_items: imported,
+      skipped_items: result.stats.below_threshold + (result.companies.length - imported),
+      error_count: result.stats.parse_errors,
+    });
+  } catch (err) {
+    updateImportJob(jobId, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      metadata: JSON.stringify({ error: err.message }),
+    });
+  }
+});
+
+// --- Auto-pull Schedule ---
+
+app.get("/api/import/autopull/status", (_req, res) => {
+  res.json(getAutoPullStatus());
+});
+
+app.post("/api/import/autopull/start", (_req, res) => {
+  const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+  const status = startAutoPull(TWELVE_HOURS, async (companies) => {
+    const COMPANIES = loadCompanies();
+    const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
+    for (const co of companies) {
+      if (existingNumbers.has(co.company_number)) continue;
+      COMPANIES.push({
+        id: `ch-${co.company_number}`,
+        name: `Company ${co.company_number}`,
+        company_number: co.company_number,
+        industry: "Unknown",
+        segment: guessTurnoverSegment(co.turnover),
+        turnover: co.turnover,
+        employee_count: 0,
+        latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${co.company_number}/filing-history`,
+        motions: [],
+        product_fit: {},
+        competitors: [],
+        stakeholders: [],
+        cadence_history: [],
+        response_propensity: { score: 0.2, warmth: "cold", signals: ["Auto-imported from daily accounts data"] },
+        source: "auto_pull",
+        imported_at: new Date().toISOString(),
+      });
+      existingNumbers.add(co.company_number);
+    }
+    const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+    fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  });
+  res.json({ message: "Auto-pull started (every 12 hours)", ...status });
+});
+
+app.post("/api/import/autopull/stop", (_req, res) => {
+  const status = stopAutoPull();
+  res.json({ message: "Auto-pull stopped", ...status });
 });
 
 // --- LLM Evidence Extraction ---
