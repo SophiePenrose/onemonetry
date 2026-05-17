@@ -676,6 +676,90 @@ app.post("/api/reports/generate", (_req, res) => {
   res.status(201).json({ report_id: report.id, week_label: weekLabel, company_count: snapshot.length });
 });
 
+// --- Search and Add Companies ---
+
+app.get("/api/search", (req, res) => {
+  const { q, industry, segment, min_turnover, max_turnover } = req.query;
+  const COMPANIES = loadCompanies();
+  let results = COMPANIES;
+
+  if (q) {
+    const lower = q.toLowerCase();
+    results = results.filter(
+      (c) => c.name.toLowerCase().includes(lower) || c.industry.toLowerCase().includes(lower) || c.id.toLowerCase().includes(lower)
+    );
+  }
+  if (industry) {
+    results = results.filter((c) => c.industry.toLowerCase().includes(industry.toLowerCase()));
+  }
+  if (segment) {
+    results = results.filter((c) => c.segment === segment);
+  }
+  if (min_turnover) {
+    results = results.filter((c) => c.turnover >= Number(min_turnover));
+  }
+  if (max_turnover) {
+    results = results.filter((c) => c.turnover <= Number(max_turnover));
+  }
+
+  const mapped = results.map((c) => {
+    const profile = computeCompanyProfile(c);
+    const ws = getCompanyState(c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      industry: c.industry,
+      segment: c.segment,
+      turnover: c.turnover,
+      employee_count: c.employee_count,
+      combined_score: profile.combined_score,
+      motion_count: profile.eligible_motion_count,
+      workflow_state: ws.state,
+    };
+  });
+
+  res.json({ results: mapped, total: mapped.length });
+});
+
+app.post("/api/companies", (req, res) => {
+  const { name, company_number, industry, segment, turnover, employee_count, motions, product_fit } = req.body;
+
+  if (!name || !industry) {
+    return res.status(400).json({ error: "name and industry are required" });
+  }
+
+  const COMPANIES = loadCompanies();
+  const id = `c${Date.now()}`;
+  const newCompany = {
+    id,
+    name,
+    company_number: company_number || "",
+    industry,
+    segment: segment || "Mid-Market",
+    turnover: turnover || 0,
+    employee_count: employee_count || 0,
+    latest_annual_report_url: "",
+    motions: motions || [],
+    product_fit: product_fit || {},
+    competitors: [],
+    stakeholders: [],
+    cadence_history: [],
+    response_propensity: { score: 0.5, warmth: "cool", signals: ["Newly added — no engagement data yet"] },
+  };
+
+  COMPANIES.push(newCompany);
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.status(201).json({ company: newCompany });
+});
+
+app.get("/api/industries", (_req, res) => {
+  const COMPANIES = loadCompanies();
+  const industries = [...new Set(COMPANIES.map((c) => c.industry))].sort();
+  res.json({ industries });
+});
+
 // --- LLM Evidence Extraction ---
 
 import { extractEvidence, isLLMConfigured } from "./llm.js";
@@ -706,7 +790,18 @@ app.post("/api/llm/extract", async (req, res) => {
   }
 });
 
+// --- Serve frontend in production ---
+
+const frontendDist = path.join(process.cwd(), "frontend", "dist");
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+  console.log("Serving frontend from", frontendDist);
+}
+
 app.listen(PORT, () => {
-  console.log(`Mock backend running on http://localhost:${PORT}`);
-  console.log(`LLM integration: ${isLLMConfigured() ? "configured" : "using mock evidence (set OPENAI_API_KEY to enable)"}`);
+  console.log(`Onemonetry running on http://localhost:${PORT}`);
+  console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
 });

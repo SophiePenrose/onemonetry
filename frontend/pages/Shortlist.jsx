@@ -77,13 +77,14 @@ function MotionChip({ motion, score, fitLevel }) {
 
 MotionChip.propTypes = { motion: PropTypes.string.isRequired, score: PropTypes.number.isRequired, fitLevel: PropTypes.string };
 
-export default function Shortlist({ onSelectCompany }) {
+export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const [companies, setCompanies] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [stateFilter, setStateFilter] = useState("all");
   const [showSuppressed, setShowSuppressed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   function fetchData(suppressedFlag) {
     setLoading(true);
@@ -106,19 +107,52 @@ export default function Shortlist({ onSelectCompany }) {
   const stateCounts = {};
   companies.forEach((c) => { stateCounts[c.workflow_state] = (stateCounts[c.workflow_state] || 0) + 1; });
 
-  const filtered = stateFilter === "all"
+  const afterStateFilter = stateFilter === "all"
     ? companies
     : companies.filter((c) => c.workflow_state === stateFilter);
 
+  const filtered = searchQuery.trim()
+    ? afterStateFilter.filter((c) =>
+        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.industry.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : afterStateFilter;
+
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist</h2>
-        {!loading && !error && (
-          <span style={{ color: "#888", fontSize: 14 }}>
-            {filtered.length} of {companies.length} companies
-          </span>
-        )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist</h2>
+          {!loading && !error && (
+            <span style={{ color: "#888", fontSize: 14 }}>
+              {filtered.length} of {companies.length} companies
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="Search companies…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd",
+              fontSize: 13, width: 200,
+            }}
+          />
+          {onShowAddCompany && (
+            <button
+              onClick={onShowAddCompany}
+              style={{
+                padding: "6px 16px", borderRadius: 6, border: "none",
+                background: "#0075EB", color: "#fff", fontWeight: 600,
+                fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >
+              + Add Company
+            </button>
+          )}
+        </div>
       </div>
 
       {!loading && !error && meta && (meta.excluded > 0 || meta.suppressed > 0) && (
@@ -241,4 +275,5 @@ export default function Shortlist({ onSelectCompany }) {
 
 Shortlist.propTypes = {
   onSelectCompany: PropTypes.func,
+  onShowAddCompany: PropTypes.func,
 };

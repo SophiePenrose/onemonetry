@@ -3,6 +3,7 @@ import Home from "./pages/Home";
 import Shortlist from "./pages/Shortlist";
 import CompanyDetail from "./pages/CompanyDetail";
 import Reports from "./pages/Reports";
+import AddCompany from "./pages/AddCompany";
 
 export default function App() {
   const [view, setView] = useState("home");
@@ -57,7 +58,7 @@ export default function App() {
           { id: "shortlist", label: "📋 Shortlist", action: navigateShortlist },
           { id: "reports", label: "📊 Reports", action: navigateReports },
         ].map((tab) => {
-          const isActive = view === tab.id || (view === "company_detail" && returnView === tab.id);
+          const isActive = view === tab.id || (view === "company_detail" && returnView === tab.id) || (view === "add_company" && tab.id === "shortlist");
           return (
             <button
               key={tab.id}
@@ -79,12 +80,19 @@ export default function App() {
 
       <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
         {view === "home" && (
-          <Home
-            onNavigateToCompany={(id) => navigateToCompany(id, "home")}
-          />
+          <Home onNavigateToCompany={(id) => navigateToCompany(id, "home")} />
         )}
         {view === "shortlist" && (
-          <Shortlist onSelectCompany={(id) => navigateToCompany(id, "shortlist")} />
+          <Shortlist
+            onSelectCompany={(id) => navigateToCompany(id, "shortlist")}
+            onShowAddCompany={() => setView("add_company")}
+          />
+        )}
+        {view === "add_company" && (
+          <AddCompany
+            onCompanyAdded={(company) => navigateToCompany(company.id, "shortlist")}
+            onCancel={navigateShortlist}
+          />
         )}
         {view === "reports" && (
           <Reports onNavigateToCompany={(id) => navigateToCompany(id, "reports")} />

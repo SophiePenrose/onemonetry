@@ -24,7 +24,7 @@
           },
           "commercial_value": {
             "score": 0.45,
-            "evidence": "\u00a35M turnover; moderate FX volumes relative to larger prospects."
+            "evidence": "£5M turnover; moderate FX volumes relative to larger prospects."
           },
           "pain_strength": {
             "score": 0.7,
@@ -179,7 +179,7 @@
           },
           "commercial_value": {
             "score": 0.8,
-            "evidence": "\u00a312M turnover with ~60% card payments; meaningful processing volume."
+            "evidence": "£12M turnover with ~60% card payments; meaningful processing volume."
           },
           "pain_strength": {
             "score": 0.85,
@@ -206,7 +206,7 @@
           },
           "commercial_value": {
             "score": 0.7,
-            "evidence": "Online channel estimated at \u00a34M+ annually."
+            "evidence": "Online channel estimated at £4M+ annually."
           },
           "pain_strength": {
             "score": 0.75,
@@ -313,7 +313,7 @@
       "avg_transaction": 42,
       "online_share": 0.35,
       "growth_rate": 0.12,
-      "wallet_opportunity": "High \u2014 \u00a37.2M processing volume with room to capture online growth"
+      "wallet_opportunity": "High — £7.2M processing volume with room to capture online growth"
     }
   },
   {
@@ -367,7 +367,7 @@
           },
           "commercial_value": {
             "score": 0.45,
-            "evidence": "\u00a33M turnover limits total addressable spend."
+            "evidence": "£3M turnover limits total addressable spend."
           },
           "pain_strength": {
             "score": 0.85,
@@ -443,7 +443,7 @@
           },
           "commercial_value": {
             "score": 0.85,
-            "evidence": "\u00a328M turnover with heavy international payment flows."
+            "evidence": "£28M turnover with heavy international payment flows."
           },
           "pain_strength": {
             "score": 0.8,
@@ -470,7 +470,7 @@
           },
           "commercial_value": {
             "score": 0.8,
-            "evidence": "Hedgeable exposure estimated at \u00a38-10M annually."
+            "evidence": "Hedgeable exposure estimated at £8-10M annually."
           },
           "pain_strength": {
             "score": 0.75,
@@ -703,7 +703,7 @@
           },
           "commercial_value": {
             "score": 0.5,
-            "evidence": "Plan upgrade could unlock \u00a32-3K/month in additional fees."
+            "evidence": "Plan upgrade could unlock £2-3K/month in additional fees."
           },
           "pain_strength": {
             "score": 0.45,
@@ -812,7 +812,7 @@
           },
           "commercial_value": {
             "score": 0.75,
-            "evidence": "\u00a315M turnover with distributed budgets."
+            "evidence": "£15M turnover with distributed budgets."
           },
           "pain_strength": {
             "score": 0.9,
@@ -913,11 +913,11 @@
       "Merchant Acquiring": {
         "eligible": true,
         "fit_level": "strong",
-        "explanation": "Pure-play online retailer processing \u00a318M in card payments annually. Cited PSP fees as top-3 cost line.",
+        "explanation": "Pure-play online retailer processing £18M in card payments annually. Cited PSP fees as top-3 cost line.",
         "layers": {
           "product_fit": {
             "score": 0.92,
-            "evidence": "Pure-play e-commerce; \u00a318M annual card payment volume."
+            "evidence": "Pure-play e-commerce; £18M annual card payment volume."
           },
           "commercial_value": {
             "score": 0.88,
@@ -948,7 +948,7 @@
           },
           "commercial_value": {
             "score": 0.8,
-            "evidence": "Higher conversion = direct revenue uplift on \u00a322M base."
+            "evidence": "Higher conversion = direct revenue uplift on £22M base."
           },
           "pain_strength": {
             "score": 0.78,
@@ -1092,9 +1092,9 @@
     "merchant_spend": {
       "annual_card_volume": 18000000,
       "avg_transaction": 65,
-      "online_share": 1.0,
+      "online_share": 1,
       "growth_rate": 0.22,
-      "wallet_opportunity": "Very high \u2014 \u00a318M pure online with 22% YoY growth. Largest acquiring opportunity in pipeline"
+      "wallet_opportunity": "Very high — £18M pure online with 22% YoY growth. Largest acquiring opportunity in pipeline"
     }
   },
   {
@@ -1149,7 +1149,7 @@
           },
           "commercial_value": {
             "score": 0.85,
-            "evidence": "\u00a345M turnover; significant procurement volumes."
+            "evidence": "£45M turnover; significant procurement volumes."
           },
           "pain_strength": {
             "score": 0.88,
@@ -1257,7 +1257,7 @@
           },
           "commercial_value": {
             "score": 0.5,
-            "evidence": "\u00a36M turnover; moderate FX volumes."
+            "evidence": "£6M turnover; moderate FX volumes."
           },
           "pain_strength": {
             "score": 0.65,
@@ -1379,7 +1379,7 @@
           },
           "commercial_value": {
             "score": 0.65,
-            "evidence": "\u00a39M turnover with distributed maintenance spend."
+            "evidence": "£9M turnover with distributed maintenance spend."
           },
           "pain_strength": {
             "score": 0.8,
@@ -1489,7 +1489,7 @@
           },
           "commercial_value": {
             "score": 0.9,
-            "evidence": "\u00a338M turnover with massive FX volumes."
+            "evidence": "£38M turnover with massive FX volumes."
           },
           "pain_strength": {
             "score": 0.85,
@@ -1516,7 +1516,7 @@
           },
           "commercial_value": {
             "score": 0.88,
-            "evidence": "Hedgeable exposure estimated at \u00a315-20M annually."
+            "evidence": "Hedgeable exposure estimated at £15-20M annually."
           },
           "pain_strength": {
             "score": 0.8,
@@ -1774,7 +1774,7 @@
           },
           "commercial_value": {
             "score": 0.7,
-            "evidence": "\u00a318M turnover with significant import volumes."
+            "evidence": "£18M turnover with significant import volumes."
           },
           "pain_strength": {
             "score": 0.75,
@@ -1922,7 +1922,7 @@
       "avg_transaction": 28,
       "online_share": 0.15,
       "growth_rate": 0.08,
-      "wallet_opportunity": "Low \u2014 \u00a3850K mostly trade counter. Retail is secondary to B2B distribution"
+      "wallet_opportunity": "Low — £850K mostly trade counter. Retail is secondary to B2B distribution"
     }
   },
   {
@@ -1950,7 +1950,7 @@
           },
           "commercial_value": {
             "score": 0.6,
-            "evidence": "\u00a37.5M turnover; meaningful FX on receivables."
+            "evidence": "£7.5M turnover; meaningful FX on receivables."
           },
           "pain_strength": {
             "score": 0.7,
@@ -2075,7 +2075,7 @@
           },
           "commercial_value": {
             "score": 0.88,
-            "evidence": "\u00a332M turnover with huge multi-currency payment volumes."
+            "evidence": "£32M turnover with huge multi-currency payment volumes."
           },
           "pain_strength": {
             "score": 0.82,
@@ -2094,11 +2094,11 @@
       "Merchant Acquiring": {
         "eligible": true,
         "fit_level": "strong",
-        "explanation": "Consumer-facing bookings via website and call centre; processes \u00a325M+ in card payments annually.",
+        "explanation": "Consumer-facing bookings via website and call centre; processes £25M+ in card payments annually.",
         "layers": {
           "product_fit": {
             "score": 0.9,
-            "evidence": "Consumer bookings; \u00a325M+ annual card processing."
+            "evidence": "Consumer bookings; £25M+ annual card processing."
           },
           "commercial_value": {
             "score": 0.85,
@@ -2281,7 +2281,7 @@
       "avg_transaction": 180,
       "online_share": 0.6,
       "growth_rate": 0.15,
-      "wallet_opportunity": "Very high \u2014 \u00a325M travel bookings with high avg transaction. Premium processing volume"
+      "wallet_opportunity": "Very high — £25M travel bookings with high avg transaction. Premium processing volume"
     }
   },
   {
@@ -2459,7 +2459,7 @@
           },
           "commercial_value": {
             "score": 0.75,
-            "evidence": "\u00a320M turnover; significant import payments."
+            "evidence": "£20M turnover; significant import payments."
           },
           "pain_strength": {
             "score": 0.72,
@@ -2486,7 +2486,7 @@
           },
           "commercial_value": {
             "score": 0.82,
-            "evidence": "\u00a320M turnover with majority card payments."
+            "evidence": "£20M turnover with majority card payments."
           },
           "pain_strength": {
             "score": 0.7,
@@ -2513,7 +2513,7 @@
           },
           "commercial_value": {
             "score": 0.75,
-            "evidence": "Higher conversion on \u00a39M online revenue is material."
+            "evidence": "Higher conversion on £9M online revenue is material."
           },
           "pain_strength": {
             "score": 0.7,
@@ -2620,7 +2620,7 @@
       "avg_transaction": 55,
       "online_share": 0.45,
       "growth_rate": 0.18,
-      "wallet_opportunity": "High \u2014 \u00a312M split between 12 stores and e-commerce. Growing online channel"
+      "wallet_opportunity": "High — £12M split between 12 stores and e-commerce. Growing online channel"
     }
   },
   {
@@ -2643,15 +2643,15 @@
       "FX": {
         "eligible": true,
         "fit_level": "strong",
-        "explanation": "Multi-national operations in 8 countries; EUR, USD, SEK, and NOK payment flows. Treasury team manages \u00a340M+ in annual FX.",
+        "explanation": "Multi-national operations in 8 countries; EUR, USD, SEK, and NOK payment flows. Treasury team manages £40M+ in annual FX.",
         "layers": {
           "product_fit": {
             "score": 0.97,
-            "evidence": "8-country operations; \u00a340M+ annual FX flows."
+            "evidence": "8-country operations; £40M+ annual FX flows."
           },
           "commercial_value": {
             "score": 0.95,
-            "evidence": "\u00a355M turnover; largest FX opportunity in pipeline."
+            "evidence": "£55M turnover; largest FX opportunity in pipeline."
           },
           "pain_strength": {
             "score": 0.85,
@@ -2678,7 +2678,7 @@
           },
           "commercial_value": {
             "score": 0.92,
-            "evidence": "Hedgeable exposure of \u00a320M+ annually."
+            "evidence": "Hedgeable exposure of £20M+ annually."
           },
           "pain_strength": {
             "score": 0.8,
@@ -2759,7 +2759,7 @@
           },
           "commercial_value": {
             "score": 0.85,
-            "evidence": "\u00a355M turnover; massive procurement volumes."
+            "evidence": "£55M turnover; massive procurement volumes."
           },
           "pain_strength": {
             "score": 0.82,
@@ -2918,7 +2918,7 @@
           },
           "commercial_value": {
             "score": 0.55,
-            "evidence": "\u00a314M turnover; moderate FX component."
+            "evidence": "£14M turnover; moderate FX component."
           },
           "pain_strength": {
             "score": 0.55,
@@ -3026,7 +3026,7 @@
       "avg_transaction": 35,
       "online_share": 0.1,
       "growth_rate": 0.05,
-      "wallet_opportunity": "Low \u2014 \u00a3420K mostly trade counter transactions. Limited card payment adoption"
+      "wallet_opportunity": "Low — £420K mostly trade counter transactions. Limited card payment adoption"
     }
   },
   {
@@ -3081,7 +3081,7 @@
           },
           "commercial_value": {
             "score": 0.7,
-            "evidence": "\u00a310M budget with complex allocation structure."
+            "evidence": "£10M budget with complex allocation structure."
           },
           "pain_strength": {
             "score": 0.85,
@@ -3181,6 +3181,247 @@
         "Board resolution to implement controls by year-end",
         "CFO replied via referral",
         "Positive discovery call with CFO"
+      ]
+    }
+  },
+  {
+    "id": "c1779054039100",
+    "name": "Test Corp Ltd",
+    "company_number": "",
+    "industry": "Technology",
+    "segment": "Mid-Market",
+    "turnover": 10000000,
+    "employee_count": 100,
+    "latest_annual_report_url": "",
+    "motions": [
+      "FX",
+      "Cards"
+    ],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
+  },
+  {
+    "id": "c1779054444276",
+    "name": "Phoenix Trading International",
+    "company_number": "",
+    "industry": "Import/Export",
+    "segment": "Mid-Market",
+    "turnover": 15000000,
+    "employee_count": 120,
+    "latest_annual_report_url": "",
+    "motions": [
+      "FX",
+      "Cards",
+      "Spend Management"
+    ],
+    "product_fit": {
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — FX relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — Cards relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — Spend Management relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      }
+    },
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
+  },
+  {
+    "id": "c1779055091691",
+    "name": "Atlas Global Shipping",
+    "company_number": "",
+    "industry": "Shipping",
+    "segment": "Mid-Market",
+    "turnover": 25000000,
+    "employee_count": 200,
+    "latest_annual_report_url": "",
+    "motions": [
+      "FX",
+      "FX Forwards",
+      "Cards"
+    ],
+    "product_fit": {
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — FX relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      },
+      "FX Forwards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — FX Forwards relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Manually added — Cards relevance to be assessed.",
+        "layers": {
+          "product_fit": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "commercial_value": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "pain_strength": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "urgency": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          },
+          "competitor_context": {
+            "score": 0.5,
+            "evidence": "Pending assessment"
+          }
+        }
+      }
+    },
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
       ]
     }
   }
