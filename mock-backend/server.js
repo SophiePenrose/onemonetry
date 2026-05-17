@@ -105,6 +105,22 @@ function getCompanyState(companyId) {
   };
 }
 
+// --- Report persistence ---
+
+const REPORTS_FILE = path.join(process.cwd(), "mock-backend", "weekly_reports.json");
+
+function loadReports() {
+  try {
+    return JSON.parse(fs.readFileSync(REPORTS_FILE, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+function saveReports(reports) {
+  fs.writeFileSync(REPORTS_FILE, JSON.stringify(reports, null, 2));
+}
+
 // --- Data loading ---
 
 function loadCompanies() {
@@ -322,6 +338,119 @@ app.patch("/api/company/:id/state", (req, res) => {
     allowed_transitions: ALLOWED_TRANSITIONS[new_state],
     history: workflowState[id].history,
   });
+});
+
+// --- Weekly Reports ---
+
+function getWeekLabel(date) {
+  const d = new Date(date);
+  const start = new Date(d);
+  start.setDate(d.getDate() - d.getDay() + 1);
+  return start.toISOString().slice(0, 10);
+}
+
+function generateReportSnapshot(COMPANIES, topN = 20) {
+  const entries = [];
+  for (const company of COMPANIES) {
+    const ws = getCompanyState(company.id);
+    if (["closed_won", "closed_lost"].includes(ws.state)) continue;
+
+    const bestMotion = company.motions.reduce((best, motion) => {
+      const fit = company.product_fit[motion];
+      if (!fit?.eligible) return best;
+      const score = computeCompositeScore(fit.layers || {});
+      return !best || score > best.score
+        ? { motion, score, fit_level: fit.fit_level, explanation: fit.explanation }
+        : best;
+    }, null);
+
+    if (bestMotion) {
+      entries.push({
+        company_id: company.id,
+        name: company.name,
+        industry: company.industry,
+        turnover: company.turnover,
+        best_motion: bestMotion.motion,
+        score: bestMotion.score,
+        fit_level: bestMotion.fit_level,
+        explanation: bestMotion.explanation,
+        workflow_state_at_generation: ws.state,
+        eligible_motions: company.motions.filter((m) => company.product_fit[m]?.eligible),
+      });
+    }
+  }
+
+  entries.sort((a, b) => b.score - a.score);
+  return entries.slice(0, topN);
+}
+
+app.get("/api/reports", (_req, res) => {
+  const reports = loadReports();
+  const summary = reports.map((r) => ({
+    id: r.id,
+    week_label: r.week_label,
+    generated_at: r.generated_at,
+    company_count: r.companies.length,
+    top_company: r.companies[0]?.name || null,
+    top_score: r.companies[0]?.score || null,
+  }));
+  summary.sort((a, b) => b.generated_at.localeCompare(a.generated_at));
+  res.json({ reports: summary });
+});
+
+app.get("/api/reports/:id", (req, res) => {
+  const { id } = req.params;
+  const reports = loadReports();
+  const report = reports.find((r) => r.id === id);
+  if (!report) {
+    return res.status(404).json({ error: "Report not found" });
+  }
+
+  const companiesWithCurrentState = report.companies.map((entry) => {
+    const ws = getCompanyState(entry.company_id);
+    return {
+      ...entry,
+      current_workflow_state: ws.state,
+      state_changed: entry.workflow_state_at_generation !== ws.state,
+    };
+  });
+
+  res.json({
+    report: {
+      ...report,
+      companies: companiesWithCurrentState,
+    },
+  });
+});
+
+app.post("/api/reports/generate", (_req, res) => {
+  const COMPANIES = loadCompanies();
+  const reports = loadReports();
+  const now = new Date();
+  const weekLabel = getWeekLabel(now);
+
+  const existing = reports.find((r) => r.week_label === weekLabel);
+  if (existing) {
+    return res.status(409).json({
+      error: "Report already exists for this week",
+      report_id: existing.id,
+      week_label: weekLabel,
+    });
+  }
+
+  const snapshot = generateReportSnapshot(COMPANIES);
+  const report = {
+    id: `report-${weekLabel}`,
+    week_label: weekLabel,
+    generated_at: now.toISOString(),
+    company_count: snapshot.length,
+    companies: snapshot,
+  };
+
+  reports.push(report);
+  saveReports(reports);
+
+  res.status(201).json({ report_id: report.id, week_label: weekLabel, company_count: snapshot.length });
 });
 
 app.listen(PORT, () => {

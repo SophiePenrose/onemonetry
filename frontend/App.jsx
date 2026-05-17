@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import Home from "./pages/Home";
 import Shortlist from "./pages/Shortlist";
 import CompanyDetail from "./pages/CompanyDetail";
+import Reports from "./pages/Reports";
 
 const MOTION_LABELS = {
   FX: "FX / Multicurrency",
@@ -19,6 +20,7 @@ export default function App() {
   const [view, setView] = useState("home");
   const [selectedMotion, setSelectedMotion] = useState(null);
   const [deepLinkCompany, setDeepLinkCompany] = useState(null);
+  const [returnView, setReturnView] = useState(null);
 
   useEffect(() => {
     fetch("/api/motions")
@@ -30,18 +32,37 @@ export default function App() {
   function navigateToMotion(motion) {
     setSelectedMotion(motion);
     setDeepLinkCompany(null);
+    setReturnView(null);
     setView("shortlist");
   }
 
-  function navigateToCompany(companyId, motion) {
+  function navigateToCompany(companyId, motion, fromView) {
     setSelectedMotion(motion);
     setDeepLinkCompany(companyId);
+    setReturnView(fromView || null);
     setView("company_detail");
   }
 
   function navigateHome() {
     setView("home");
     setDeepLinkCompany(null);
+    setReturnView(null);
+  }
+
+  function navigateReports() {
+    setView("reports");
+    setDeepLinkCompany(null);
+    setReturnView(null);
+  }
+
+  function handleBackFromDetail() {
+    if (returnView === "reports") {
+      setView("reports");
+    } else {
+      setView("home");
+    }
+    setDeepLinkCompany(null);
+    setReturnView(null);
   }
 
   return (
@@ -72,6 +93,22 @@ export default function App() {
           }}
         >
           ⌂ Workspace
+        </button>
+        <button
+          onClick={navigateReports}
+          style={{
+            padding: "12px 20px",
+            border: "none",
+            borderBottom: view === "reports" ? "3px solid #0075EB" : "3px solid transparent",
+            background: "none",
+            color: view === "reports" ? "#0075EB" : "#555",
+            fontWeight: view === "reports" ? 600 : 400,
+            fontSize: 14,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          📊 Reports
         </button>
         <div style={{ width: 1, background: "#e0e3e8", margin: "8px 4px" }} />
         {motions.map((m) => {
@@ -105,13 +142,16 @@ export default function App() {
             onNavigateToCompany={navigateToCompany}
           />
         )}
+        {view === "reports" && (
+          <Reports onNavigateToCompany={(id, motion) => navigateToCompany(id, motion, "reports")} />
+        )}
         {view === "shortlist" && selectedMotion && (
           <Shortlist productMotion={selectedMotion} />
         )}
         {view === "company_detail" && deepLinkCompany && selectedMotion && (
           <div>
             <button
-              onClick={navigateHome}
+              onClick={handleBackFromDetail}
               style={{
                 padding: "8px 16px",
                 border: "1px solid #ddd",
@@ -122,7 +162,7 @@ export default function App() {
                 marginBottom: 16,
               }}
             >
-              ← Back to Workspace
+              ← Back to {returnView === "reports" ? "Reports" : "Workspace"}
             </button>
             <CompanyDetail companyId={deepLinkCompany} productMotion={selectedMotion} />
           </div>
