@@ -9,7 +9,7 @@ The app is intended to turn a large universe of companies into a smaller, explai
 ## What is in this repo
 
 - `master_prompt_outline_v2.md` — the structured master outline and source-of-truth design spec.
-- `revolut_prospecting_app_supplementary_context_v2.md` — the written narrative context that explains the logic behind the outline.
+- `revolut_prospecting_app_supplementary_context.md` — the written narrative context that explains the logic behind the outline.
 - `frontend/` — a Vite React MVP with shortlist and company detail pages.
 - `mock-backend/` — a local Express API with mock company data and deterministic scoring.
 - `README.md` — this project overview and local run instructions.
