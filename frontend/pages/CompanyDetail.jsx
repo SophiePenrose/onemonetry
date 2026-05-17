@@ -2,6 +2,9 @@ import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import ScoreExplanation from "../components/ScoreExplanation";
 import WorkflowPanel from "../components/WorkflowPanel";
+import CompetitorPanel from "../components/CompetitorPanel";
+import StakeholderPanel from "../components/StakeholderPanel";
+import CadenceLog from "../components/CadenceLog";
 
 function formatTurnover(value) {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
@@ -106,6 +109,13 @@ export default function CompanyDetail({ companyId, productMotion }) {
           />
         </div>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+        <CompetitorPanel competitors={company.competitors} />
+        <StakeholderPanel stakeholders={company.stakeholders} />
+      </div>
+
+      <CadenceLog cadenceHistory={company.cadence_history} />
 
       <WorkflowPanel
         companyId={companyId}

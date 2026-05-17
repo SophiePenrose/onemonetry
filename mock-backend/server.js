@@ -369,6 +369,9 @@ app.get("/api/company/:id", (req, res) => {
       explanation: fit.explanation,
       workflow_state: ws.state,
       workflow_history: ws.history || [],
+      competitors: company.competitors || [],
+      stakeholders: company.stakeholders || [],
+      cadence_history: company.cadence_history || [],
     },
   });
 });
