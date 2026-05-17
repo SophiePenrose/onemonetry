@@ -9,9 +9,42 @@
     "latest_annual_report_url": "https://example.com/report1.pdf",
     "motions": ["FX", "Cards", "Spend Management"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.92, "explanation": "Imports raw materials from 4 countries; 30% revenue from EU exports. Clear multi-currency treasury need." },
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "50 employees across 3 departments with travel and procurement spend, but no sign of current card programme pain." },
-      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Growing headcount and multi-site operations suggest fragmented approval workflows." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Imports raw materials from 4 countries; 30% revenue from EU exports. Clear multi-currency treasury need.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "International trade across 4 countries with 30% EU export revenue." },
+          "commercial_value": { "score": 0.45, "evidence": "£5M turnover; moderate FX volumes relative to larger prospects." },
+          "pain_strength": { "score": 0.70, "evidence": "Currently paying retail FX rates through high-street bank; no hedging capability." },
+          "urgency": { "score": 0.60, "evidence": "EUR/GBP volatility impacting margins; CFO mentioned FX costs in board report." },
+          "competitor_context": { "score": 0.75, "evidence": "Incumbent is NatWest with basic FX desk; no specialist provider in place." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "50 employees across 3 departments with travel and procurement spend, but no sign of current card programme pain.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "50 employees with some travel and procurement needs." },
+          "commercial_value": { "score": 0.40, "evidence": "Small team limits card revenue potential." },
+          "pain_strength": { "score": 0.35, "evidence": "No visible complaints about current expense process." },
+          "urgency": { "score": 0.30, "evidence": "No immediate trigger for change." },
+          "competitor_context": { "score": 0.50, "evidence": "Using basic Barclays business debit cards; low switching friction." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Growing headcount and multi-site operations suggest fragmented approval workflows.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "Multi-site but still relatively small scale." },
+          "commercial_value": { "score": 0.35, "evidence": "Modest spend volumes." },
+          "pain_strength": { "score": 0.60, "evidence": "No centralised approval process; email-based sign-offs." },
+          "urgency": { "score": 0.40, "evidence": "Growing headcount may force process change." },
+          "competitor_context": { "score": 0.55, "evidence": "No spend management tool in place; greenfield opportunity." }
+        }
+      }
     }
   },
   {
@@ -24,9 +57,42 @@
     "latest_annual_report_url": "https://example.com/report2.pdf",
     "motions": ["Merchant Acquiring", "Revolut Pay", "Cards"],
     "product_fit": {
-      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.95, "explanation": "Consumer-facing retailer with 8 stores and online checkout. Annual report cites payment processing costs as margin pressure." },
-      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "E-commerce channel growing 40% YoY; checkout conversion is a stated priority." },
-      "Cards": { "eligible": true, "fit_level": "weak", "score_contribution": 0.30, "explanation": "Corporate card need is limited to a small head-office team." }
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Consumer-facing retailer with 8 stores and online checkout. Annual report cites payment processing costs as margin pressure.",
+        "layers": {
+          "product_fit": { "score": 0.95, "evidence": "8 retail stores plus e-commerce; card payment acceptance is core." },
+          "commercial_value": { "score": 0.80, "evidence": "£12M turnover with ~60% card payments; meaningful processing volume." },
+          "pain_strength": { "score": 0.85, "evidence": "Annual report explicitly cites payment processing costs as top-3 margin pressure." },
+          "urgency": { "score": 0.70, "evidence": "Contract renewal with current PSP due in Q3." },
+          "competitor_context": { "score": 0.65, "evidence": "Currently with Worldpay on legacy pricing; sticky but expensive." }
+        }
+      },
+      "Revolut Pay": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "E-commerce channel growing 40% YoY; checkout conversion is a stated priority.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "Active e-commerce with growing online revenue." },
+          "commercial_value": { "score": 0.70, "evidence": "Online channel estimated at £4M+ annually." },
+          "pain_strength": { "score": 0.75, "evidence": "Checkout abandonment cited as concern by digital team." },
+          "urgency": { "score": 0.80, "evidence": "Actively trialling alternative payment methods this quarter." },
+          "competitor_context": { "score": 0.60, "evidence": "PayPal and Apple Pay offered; room for additional methods." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "weak",
+        "explanation": "Corporate card need is limited to a small head-office team.",
+        "layers": {
+          "product_fit": { "score": 0.30, "evidence": "Only ~20 head-office staff would use corporate cards." },
+          "commercial_value": { "score": 0.20, "evidence": "Low card spend potential from small office team." },
+          "pain_strength": { "score": 0.25, "evidence": "Current process works adequately for small team." },
+          "urgency": { "score": 0.15, "evidence": "No trigger for change." },
+          "competitor_context": { "score": 0.40, "evidence": "No corporate card programme in place." }
+        }
+      }
     }
   },
   {
@@ -39,8 +105,30 @@
     "latest_annual_report_url": "https://example.com/report3.pdf",
     "motions": ["Cards", "Spend Management"],
     "product_fit": {
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Consultant travel and client entertainment spend across 30 staff; currently using personal cards for reimbursement." },
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.82, "explanation": "Manual expense process with no centralised approval; partner mentioned 'spend visibility' as a concern in interview." }
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Consultant travel and client entertainment spend across 30 staff; currently using personal cards for reimbursement.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "30 consultants with frequent travel and client entertainment." },
+          "commercial_value": { "score": 0.50, "evidence": "High per-head spend but small total headcount." },
+          "pain_strength": { "score": 0.80, "evidence": "Personal card reimbursement causing friction; partners want visibility." },
+          "urgency": { "score": 0.65, "evidence": "New managing partner pushing for expense modernisation." },
+          "competitor_context": { "score": 0.70, "evidence": "No corporate card programme; greenfield opportunity." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Manual expense process with no centralised approval; partner mentioned 'spend visibility' as a concern in interview.",
+        "layers": {
+          "product_fit": { "score": 0.80, "evidence": "Consulting firm with distributed spend and no approval workflow." },
+          "commercial_value": { "score": 0.45, "evidence": "£3M turnover limits total addressable spend." },
+          "pain_strength": { "score": 0.85, "evidence": "Partner explicitly cited 'spend visibility' as a concern." },
+          "urgency": { "score": 0.70, "evidence": "Active search for solution; evaluating options." },
+          "competitor_context": { "score": 0.65, "evidence": "Spreadsheet-based process; no incumbent software." }
+        }
+      }
     }
   },
   {
@@ -53,10 +141,54 @@
     "latest_annual_report_url": "https://example.com/report4.pdf",
     "motions": ["FX", "FX Forwards", "API Integrations", "Cards"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.97, "explanation": "Operates in 12 countries; 65% of revenue in non-GBP currencies. Significant FX exposure on both payables and receivables." },
-      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "Quarterly hedging programme mentioned in annual report; recurring fuel and freight contracts denominated in USD and EUR." },
-      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Uses SAP for ERP; API integration could automate payment flows, but no current sign of build-vs-buy appetite." },
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "310 staff with driver and warehouse teams; fleet card and per-diem use cases are plausible." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Operates in 12 countries; 65% of revenue in non-GBP currencies. Significant FX exposure on both payables and receivables.",
+        "layers": {
+          "product_fit": { "score": 0.97, "evidence": "12-country operations; 65% non-GBP revenue." },
+          "commercial_value": { "score": 0.85, "evidence": "£28M turnover with heavy international payment flows." },
+          "pain_strength": { "score": 0.80, "evidence": "Margin erosion from FX spreads; manual payment processing across entities." },
+          "urgency": { "score": 0.75, "evidence": "New CFO reviewing treasury operations; FX costs flagged." },
+          "competitor_context": { "score": 0.70, "evidence": "HSBC relationship but dissatisfied with FX pricing transparency." }
+        }
+      },
+      "FX Forwards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Quarterly hedging programme mentioned in annual report; recurring fuel and freight contracts denominated in USD and EUR.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "Recurring USD/EUR freight contracts with known future obligations." },
+          "commercial_value": { "score": 0.80, "evidence": "Hedgeable exposure estimated at £8-10M annually." },
+          "pain_strength": { "score": 0.75, "evidence": "Current hedging is ad-hoc; no systematic forward programme." },
+          "urgency": { "score": 0.65, "evidence": "Board reviewing risk management policy this year." },
+          "competitor_context": { "score": 0.60, "evidence": "HSBC offers forwards but pricing is opaque; room for transparent alternative." }
+        }
+      },
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Uses SAP for ERP; API integration could automate payment flows, but no current sign of build-vs-buy appetite.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "SAP ERP with manual treasury workflow." },
+          "commercial_value": { "score": 0.60, "evidence": "Automation could reduce FTE cost and error rate." },
+          "pain_strength": { "score": 0.50, "evidence": "Manual processes but team is used to them." },
+          "urgency": { "score": 0.30, "evidence": "No active project to automate treasury." },
+          "competitor_context": { "score": 0.45, "evidence": "SAP has native banking connectors; would need compelling reason to add Revolut API." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "310 staff with driver and warehouse teams; fleet card and per-diem use cases are plausible.",
+        "layers": {
+          "product_fit": { "score": 0.65, "evidence": "Large workforce with field-based purchasing needs." },
+          "commercial_value": { "score": 0.60, "evidence": "310 potential cardholders with fuel and supplies spend." },
+          "pain_strength": { "score": 0.50, "evidence": "Petty cash and reimbursement processes are slow but functional." },
+          "urgency": { "score": 0.35, "evidence": "Not a current priority for finance team." },
+          "competitor_context": { "score": 0.55, "evidence": "Basic fleet cards from Shell; no integrated expense management." }
+        }
+      }
     }
   },
   {
@@ -69,9 +201,42 @@
     "latest_annual_report_url": "https://example.com/report5.pdf",
     "motions": ["API Integrations", "FX", "Monthly Plans"],
     "product_fit": {
-      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.93, "explanation": "Platform business with developer team; already consumes banking APIs from two providers. Strong integration appetite." },
-      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Some cross-border client settlements, but FX volumes appear modest relative to core business." },
-      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.50, "explanation": "Current Revolut Business user on a basic plan; usage patterns suggest upgrade potential." }
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Platform business with developer team; already consumes banking APIs from two providers. Strong integration appetite.",
+        "layers": {
+          "product_fit": { "score": 0.93, "evidence": "Platform business already consuming banking APIs." },
+          "commercial_value": { "score": 0.75, "evidence": "API usage could drive significant transaction volume." },
+          "pain_strength": { "score": 0.70, "evidence": "Multi-provider complexity; wants to consolidate." },
+          "urgency": { "score": 0.80, "evidence": "Active project to add new banking rail this quarter." },
+          "competitor_context": { "score": 0.55, "evidence": "Currently using Modulr and ClearBank; both have limitations." }
+        }
+      },
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Some cross-border client settlements, but FX volumes appear modest relative to core business.",
+        "layers": {
+          "product_fit": { "score": 0.50, "evidence": "Some cross-border settlements in EUR and USD." },
+          "commercial_value": { "score": 0.35, "evidence": "FX volumes are secondary to core platform revenue." },
+          "pain_strength": { "score": 0.40, "evidence": "FX is a minor operational friction, not a major pain." },
+          "urgency": { "score": 0.30, "evidence": "No specific FX initiative planned." },
+          "competitor_context": { "score": 0.45, "evidence": "Using bank FX rates; no specialist provider." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Current Revolut Business user on a basic plan; usage patterns suggest upgrade potential.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "Existing Revolut user with growing transaction volumes." },
+          "commercial_value": { "score": 0.50, "evidence": "Plan upgrade could unlock £2-3K/month in additional fees." },
+          "pain_strength": { "score": 0.45, "evidence": "Hitting limits on basic plan features." },
+          "urgency": { "score": 0.50, "evidence": "Growing team means more users needed." },
+          "competitor_context": { "score": 0.80, "evidence": "Already on Revolut; high retention probability." }
+        }
+      }
     }
   },
   {
@@ -84,9 +249,42 @@
     "latest_annual_report_url": "https://example.com/report6.pdf",
     "motions": ["Cards", "Spend Management", "Monthly Plans"],
     "product_fit": {
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.87, "explanation": "200 staff across 5 care facilities; procurement, travel, and site-level purchasing all done via personal reimbursement." },
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "Multi-site, multi-budget structure with no centralised spend controls. Finance director cited 'lack of visibility' in trade press." },
-      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Scale and headcount justify a custom plan, but no current Revolut relationship." }
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "200 staff across 5 care facilities; procurement, travel, and site-level purchasing all done via personal reimbursement.",
+        "layers": {
+          "product_fit": { "score": 0.87, "evidence": "5 care facilities with distributed purchasing needs." },
+          "commercial_value": { "score": 0.70, "evidence": "200 potential cardholders; significant procurement volume." },
+          "pain_strength": { "score": 0.80, "evidence": "Personal reimbursement causing delays and staff friction." },
+          "urgency": { "score": 0.65, "evidence": "New COO reviewing operational efficiency." },
+          "competitor_context": { "score": 0.60, "evidence": "No corporate card programme; only petty cash and reimbursement." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Multi-site, multi-budget structure with no centralised spend controls. Finance director cited 'lack of visibility' in trade press.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "Multi-site, multi-budget structure needing centralised controls." },
+          "commercial_value": { "score": 0.75, "evidence": "£15M turnover with distributed budgets." },
+          "pain_strength": { "score": 0.90, "evidence": "Finance director publicly cited 'lack of visibility' as key concern." },
+          "urgency": { "score": 0.75, "evidence": "Board mandate to improve financial controls this year." },
+          "competitor_context": { "score": 0.70, "evidence": "No spend management software; pure manual process." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Scale and headcount justify a custom plan, but no current Revolut relationship.",
+        "layers": {
+          "product_fit": { "score": 0.50, "evidence": "Scale justifies custom plan." },
+          "commercial_value": { "score": 0.55, "evidence": "Meaningful plan revenue from 200+ users." },
+          "pain_strength": { "score": 0.30, "evidence": "No existing Revolut relationship to upgrade." },
+          "urgency": { "score": 0.25, "evidence": "Would need full onboarding first." },
+          "competitor_context": { "score": 0.40, "evidence": "Banking with Lloyds; plan sale depends on primary product hook." }
+        }
+      }
     }
   },
   {
@@ -99,10 +297,54 @@
     "latest_annual_report_url": "https://example.com/report7.pdf",
     "motions": ["Merchant Acquiring", "Revolut Pay", "FX", "API Integrations"],
     "product_fit": {
-      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.91, "explanation": "Pure-play online retailer processing £18M in card payments annually. Cited PSP fees as top-3 cost line." },
-      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.94, "explanation": "Checkout conversion optimisation is a board-level priority; trialling alternative payment methods." },
-      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.68, "explanation": "Ships to EU and US; supplier payments in EUR and CNY. Moderate but real FX need." },
-      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.63, "explanation": "In-house engineering team; already integrated with Stripe API. Could migrate or add Revolut as secondary." }
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Pure-play online retailer processing £18M in card payments annually. Cited PSP fees as top-3 cost line.",
+        "layers": {
+          "product_fit": { "score": 0.92, "evidence": "Pure-play e-commerce; £18M annual card payment volume." },
+          "commercial_value": { "score": 0.88, "evidence": "Large processing volume with meaningful margin opportunity." },
+          "pain_strength": { "score": 0.85, "evidence": "PSP fees cited as top-3 cost line in annual report." },
+          "urgency": { "score": 0.75, "evidence": "Actively reviewing payment costs as part of margin improvement programme." },
+          "competitor_context": { "score": 0.60, "evidence": "Stripe is incumbent; well-integrated but expensive at scale." }
+        }
+      },
+      "Revolut Pay": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Online sales are 45% of revenue; actively testing new checkout flows to reduce basket abandonment.",
+        "layers": {
+          "product_fit": { "score": 0.93, "evidence": "100% online; checkout optimisation is core business concern." },
+          "commercial_value": { "score": 0.80, "evidence": "Higher conversion = direct revenue uplift on £22M base." },
+          "pain_strength": { "score": 0.78, "evidence": "Basket abandonment rate cited as key metric to improve." },
+          "urgency": { "score": 0.85, "evidence": "Active A/B testing on checkout; willing to trial new methods." },
+          "competitor_context": { "score": 0.55, "evidence": "Offers PayPal, Apple Pay, Google Pay; room for additional conversion lift." }
+        }
+      },
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Ships to EU and US; supplier payments in EUR and CNY. Moderate but real FX need.",
+        "layers": {
+          "product_fit": { "score": 0.65, "evidence": "EU and US sales with some supplier payments in foreign currencies." },
+          "commercial_value": { "score": 0.55, "evidence": "Moderate FX volumes; not primary business driver." },
+          "pain_strength": { "score": 0.50, "evidence": "FX costs are a known but not critical issue." },
+          "urgency": { "score": 0.40, "evidence": "No specific FX review planned." },
+          "competitor_context": { "score": 0.50, "evidence": "Using Stripe for payouts; bank for supplier payments." }
+        }
+      },
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "In-house engineering team; already integrated with Stripe API. Could migrate or add Revolut as secondary.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "Technical team with API integration experience." },
+          "commercial_value": { "score": 0.55, "evidence": "API could reduce processing costs and add features." },
+          "pain_strength": { "score": 0.45, "evidence": "Stripe integration works; migration would need clear ROI." },
+          "urgency": { "score": 0.35, "evidence": "No active project to change payment infrastructure." },
+          "competitor_context": { "score": 0.40, "evidence": "Stripe deeply embedded; high switching cost." }
+        }
+      }
     }
   },
   {
@@ -115,9 +357,42 @@
     "latest_annual_report_url": "https://example.com/report8.pdf",
     "motions": ["Cards", "Spend Management", "FX"],
     "product_fit": {
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "500 staff across 12 active project sites; materials purchasing, fuel, and per-diem cards needed at site level." },
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.91, "explanation": "Project-based budgeting with no real-time spend tracking; finance team manually reconciles monthly." },
-      "FX": { "eligible": true, "fit_level": "weak", "score_contribution": 0.25, "explanation": "Primarily domestic operations; occasional materials import from EU but volumes are small." }
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "500 staff across 12 active project sites; materials purchasing, fuel, and per-diem cards needed at site level.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "500 staff across 12 sites with heavy field purchasing." },
+          "commercial_value": { "score": 0.85, "evidence": "Large workforce with high materials and fuel spend." },
+          "pain_strength": { "score": 0.75, "evidence": "Site managers requesting better purchasing tools; current process is slow." },
+          "urgency": { "score": 0.60, "evidence": "Operational review underway but cards not top priority." },
+          "competitor_context": { "score": 0.50, "evidence": "Shell fleet cards for fuel; no integrated corporate card solution." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Project-based budgeting with no real-time spend tracking; finance team manually reconciles monthly.",
+        "layers": {
+          "product_fit": { "score": 0.92, "evidence": "Project-based budgeting across 12 sites; classic spend management need." },
+          "commercial_value": { "score": 0.85, "evidence": "£45M turnover; significant procurement volumes." },
+          "pain_strength": { "score": 0.88, "evidence": "Manual monthly reconciliation; finance team overloaded." },
+          "urgency": { "score": 0.70, "evidence": "New FD pushing for real-time financial visibility." },
+          "competitor_context": { "score": 0.65, "evidence": "Excel-based tracking; no spend management tool." }
+        }
+      },
+      "FX": {
+        "eligible": true,
+        "fit_level": "weak",
+        "explanation": "Primarily domestic operations; occasional materials import from EU but volumes are small.",
+        "layers": {
+          "product_fit": { "score": 0.25, "evidence": "Occasional EU materials import." },
+          "commercial_value": { "score": 0.15, "evidence": "Very small FX volumes." },
+          "pain_strength": { "score": 0.20, "evidence": "FX is a minor inconvenience, not a pain point." },
+          "urgency": { "score": 0.10, "evidence": "No FX-related initiative." },
+          "competitor_context": { "score": 0.30, "evidence": "Using bank for occasional transfers; no specialist needed." }
+        }
+      }
     }
   },
   {
@@ -130,9 +405,42 @@
     "latest_annual_report_url": "https://example.com/report9.pdf",
     "motions": ["FX", "Cards", "Monthly Plans"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.80, "explanation": "Licenses content internationally; pays royalties in USD, EUR, and JPY quarterly." },
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Small team but high per-head ad-hoc spend on production, travel, and subscriptions." },
-      "Monthly Plans": { "eligible": true, "fit_level": "weak", "score_contribution": 0.35, "explanation": "Existing Revolut user but low transaction volume; plan upgrade value is marginal." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Licenses content internationally; pays royalties in USD, EUR, and JPY quarterly.",
+        "layers": {
+          "product_fit": { "score": 0.82, "evidence": "International content licensing with multi-currency royalty payments." },
+          "commercial_value": { "score": 0.50, "evidence": "£6M turnover; moderate FX volumes." },
+          "pain_strength": { "score": 0.65, "evidence": "Quarterly royalty payments in 3 currencies; manual process." },
+          "urgency": { "score": 0.55, "evidence": "Expanding into Asian markets; FX complexity growing." },
+          "competitor_context": { "score": 0.60, "evidence": "Using Wise for some transfers; bank for others. Fragmented." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Small team but high per-head ad-hoc spend on production, travel, and subscriptions.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "45 staff with production and travel expenses." },
+          "commercial_value": { "score": 0.40, "evidence": "High per-head spend but small team." },
+          "pain_strength": { "score": 0.50, "evidence": "Subscription sprawl and ad-hoc production costs are messy." },
+          "urgency": { "score": 0.35, "evidence": "No specific initiative to change." },
+          "competitor_context": { "score": 0.55, "evidence": "No corporate card programme in place." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "weak",
+        "explanation": "Existing Revolut user but low transaction volume; plan upgrade value is marginal.",
+        "layers": {
+          "product_fit": { "score": 0.35, "evidence": "Existing user but limited feature needs." },
+          "commercial_value": { "score": 0.25, "evidence": "Low transaction volume limits plan revenue." },
+          "pain_strength": { "score": 0.20, "evidence": "Current plan meets most needs." },
+          "urgency": { "score": 0.15, "evidence": "No growth trigger visible." },
+          "competitor_context": { "score": 0.70, "evidence": "Already on Revolut; retention advantage." }
+        }
+      }
     }
   },
   {
@@ -145,8 +453,30 @@
     "latest_annual_report_url": "https://example.com/report10.pdf",
     "motions": ["Spend Management", "Cards"],
     "product_fit": {
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.84, "explanation": "Manages 40+ properties with per-property maintenance budgets; no centralised procurement system." },
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.81, "explanation": "Property managers make frequent ad-hoc purchases for maintenance and supplies; currently using shared company credit card." }
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Manages 40+ properties with per-property maintenance budgets; no centralised procurement system.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "40+ properties each with separate maintenance budgets." },
+          "commercial_value": { "score": 0.65, "evidence": "£9M turnover with distributed maintenance spend." },
+          "pain_strength": { "score": 0.80, "evidence": "Property managers overspend without visibility; landlords complain." },
+          "urgency": { "score": 0.70, "evidence": "Board reviewing cost controls after budget overruns." },
+          "competitor_context": { "score": 0.60, "evidence": "Using spreadsheets per property; no software solution." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Property managers make frequent ad-hoc purchases for maintenance and supplies; currently using shared company credit card.",
+        "layers": {
+          "product_fit": { "score": 0.80, "evidence": "Frequent ad-hoc maintenance purchases across properties." },
+          "commercial_value": { "score": 0.60, "evidence": "65 staff with regular purchasing needs." },
+          "pain_strength": { "score": 0.75, "evidence": "Shared credit card with no spend attribution." },
+          "urgency": { "score": 0.65, "evidence": "Audit flagged lack of spend controls." },
+          "competitor_context": { "score": 0.70, "evidence": "Single shared card; easy to displace." }
+        }
+      }
     }
   },
   {
@@ -159,10 +489,54 @@
     "latest_annual_report_url": "https://example.com/report11.pdf",
     "motions": ["FX", "FX Forwards", "API Integrations", "Monthly Plans"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.95, "explanation": "Exports to 20+ countries; 70% of revenue denominated in USD and EUR. Multi-entity structure with cross-border intercompany flows." },
-      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.92, "explanation": "12-month supply contracts priced in foreign currencies; board report mentions hedging policy review." },
-      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.78, "explanation": "Enterprise-grade ERP (Oracle); treasury team has expressed interest in automated reconciliation." },
-      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.75, "explanation": "High transaction volumes and multi-entity needs strongly justify a custom enterprise plan." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Exports to 20+ countries; 70% of revenue denominated in USD and EUR. Multi-entity structure with cross-border intercompany flows.",
+        "layers": {
+          "product_fit": { "score": 0.96, "evidence": "20+ export markets; 70% non-GBP revenue; multi-entity." },
+          "commercial_value": { "score": 0.90, "evidence": "£38M turnover with massive FX volumes." },
+          "pain_strength": { "score": 0.85, "evidence": "Cross-border intercompany flows are complex and expensive." },
+          "urgency": { "score": 0.70, "evidence": "Treasury team actively reviewing FX provider options." },
+          "competitor_context": { "score": 0.55, "evidence": "Deutsche Bank relationship; good service but expensive for volume." }
+        }
+      },
+      "FX Forwards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "12-month supply contracts priced in foreign currencies; board report mentions hedging policy review.",
+        "layers": {
+          "product_fit": { "score": 0.93, "evidence": "12-month supply contracts with known FX obligations." },
+          "commercial_value": { "score": 0.88, "evidence": "Hedgeable exposure estimated at £15-20M annually." },
+          "pain_strength": { "score": 0.80, "evidence": "Current hedging is expensive and inflexible." },
+          "urgency": { "score": 0.75, "evidence": "Board-mandated hedging policy review in progress." },
+          "competitor_context": { "score": 0.50, "evidence": "Deutsche Bank forwards; competitive but Revolut could offer better digital experience." }
+        }
+      },
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Enterprise-grade ERP (Oracle); treasury team has expressed interest in automated reconciliation.",
+        "layers": {
+          "product_fit": { "score": 0.78, "evidence": "Oracle ERP with treasury automation interest." },
+          "commercial_value": { "score": 0.70, "evidence": "Automation could drive higher transaction volumes through Revolut." },
+          "pain_strength": { "score": 0.65, "evidence": "Manual reconciliation across entities is time-consuming." },
+          "urgency": { "score": 0.55, "evidence": "IT roadmap includes treasury automation in next 12 months." },
+          "competitor_context": { "score": 0.45, "evidence": "Oracle treasury module exists but is underutilised." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "High transaction volumes and multi-entity needs strongly justify a custom enterprise plan.",
+        "layers": {
+          "product_fit": { "score": 0.75, "evidence": "Multi-entity, high-volume user profile." },
+          "commercial_value": { "score": 0.80, "evidence": "Enterprise plan with 420+ users is high-value." },
+          "pain_strength": { "score": 0.55, "evidence": "Current plan limitations visible but workable." },
+          "urgency": { "score": 0.45, "evidence": "Would follow from primary product engagement." },
+          "competitor_context": { "score": 0.60, "evidence": "No competing plan if already using Revolut products." }
+        }
+      }
     }
   },
   {
@@ -175,8 +549,30 @@
     "latest_annual_report_url": "https://example.com/report12.pdf",
     "motions": ["Cards", "FX"],
     "product_fit": {
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Ad spend on Google/Meta platforms and SaaS subscriptions; some need for virtual cards for campaign budgets." },
-      "FX": { "eligible": true, "fit_level": "weak", "score_contribution": 0.30, "explanation": "A few overseas freelancers paid in USD, but volumes are minimal." }
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Ad spend on Google/Meta platforms and SaaS subscriptions; some need for virtual cards for campaign budgets.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "Digital ad spend and SaaS subscriptions across team." },
+          "commercial_value": { "score": 0.35, "evidence": "Small team limits total card programme value." },
+          "pain_strength": { "score": 0.55, "evidence": "Campaign budgets need per-project spend control." },
+          "urgency": { "score": 0.40, "evidence": "Growing client base increasing spend complexity." },
+          "competitor_context": { "score": 0.60, "evidence": "No virtual card solution; using shared business debit card." }
+        }
+      },
+      "FX": {
+        "eligible": true,
+        "fit_level": "weak",
+        "explanation": "A few overseas freelancers paid in USD, but volumes are minimal.",
+        "layers": {
+          "product_fit": { "score": 0.30, "evidence": "Occasional freelancer payments in USD." },
+          "commercial_value": { "score": 0.15, "evidence": "Very small FX volumes." },
+          "pain_strength": { "score": 0.25, "evidence": "Minor inconvenience, not a real pain." },
+          "urgency": { "score": 0.10, "evidence": "No FX-related plans." },
+          "competitor_context": { "score": 0.40, "evidence": "Using Wise for transfers; works fine." }
+        }
+      }
     }
   },
   {
@@ -189,10 +585,54 @@
     "latest_annual_report_url": "https://example.com/report13.pdf",
     "motions": ["FX", "Merchant Acquiring", "Cards", "Spend Management"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Imports speciality ingredients from 6 countries; pays suppliers in EUR, USD, and THB." },
-      "Merchant Acquiring": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Operates 3 retail outlets alongside B2B distribution; card payment volumes are growing but still secondary to wholesale." },
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "Delivery drivers and warehouse staff need fuel and supplies purchasing; currently using petty cash." },
-      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "Multi-depot operation with decentralised purchasing; no approval workflow beyond email sign-off." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Imports speciality ingredients from 6 countries; pays suppliers in EUR, USD, and THB.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "6-country import business with multi-currency supplier payments." },
+          "commercial_value": { "score": 0.70, "evidence": "£18M turnover with significant import volumes." },
+          "pain_strength": { "score": 0.75, "evidence": "FX costs eating into thin food distribution margins." },
+          "urgency": { "score": 0.60, "evidence": "Margin pressure from post-Brexit import costs." },
+          "competitor_context": { "score": 0.65, "evidence": "Using Barclays international payments; slow and expensive." }
+        }
+      },
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Operates 3 retail outlets alongside B2B distribution; card payment volumes are growing but still secondary to wholesale.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "3 retail outlets with growing card acceptance." },
+          "commercial_value": { "score": 0.40, "evidence": "Retail is secondary; limited processing volume." },
+          "pain_strength": { "score": 0.45, "evidence": "Current terminal provider works but is overpriced." },
+          "urgency": { "score": 0.35, "evidence": "No immediate plans to change." },
+          "competitor_context": { "score": 0.50, "evidence": "SumUp terminals; adequate for current scale." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Delivery drivers and warehouse staff need fuel and supplies purchasing; currently using petty cash.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "Delivery drivers and warehouse teams with fuel needs." },
+          "commercial_value": { "score": 0.50, "evidence": "150 staff; moderate card programme potential." },
+          "pain_strength": { "score": 0.60, "evidence": "Petty cash system is inefficient and untrackable." },
+          "urgency": { "score": 0.45, "evidence": "Operations manager wants better controls." },
+          "competitor_context": { "score": 0.55, "evidence": "Petty cash; no card programme to displace." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Multi-depot operation with decentralised purchasing; no approval workflow beyond email sign-off.",
+        "layers": {
+          "product_fit": { "score": 0.65, "evidence": "Multi-depot with decentralised purchasing." },
+          "commercial_value": { "score": 0.55, "evidence": "Moderate procurement volumes across depots." },
+          "pain_strength": { "score": 0.60, "evidence": "Email-based approvals with no audit trail." },
+          "urgency": { "score": 0.40, "evidence": "No active project to address." },
+          "competitor_context": { "score": 0.50, "evidence": "No spend management tool in place." }
+        }
+      }
     }
   },
   {
@@ -205,9 +645,42 @@
     "latest_annual_report_url": "https://example.com/report14.pdf",
     "motions": ["FX", "FX Forwards", "Cards"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.88, "explanation": "Project-based work for Middle East and African clients; invoices in USD and AED with 60-90 day payment terms." },
-      "FX Forwards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.65, "explanation": "Long project timelines create some hedgeable exposure, but no formal hedging programme exists yet." },
-      "Cards": { "eligible": true, "fit_level": "weak", "score_contribution": 0.35, "explanation": "Mostly office-based staff; limited ad-hoc purchasing beyond occasional site visits." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Project-based work for Middle East and African clients; invoices in USD and AED with 60-90 day payment terms.",
+        "layers": {
+          "product_fit": { "score": 0.88, "evidence": "Middle East and Africa projects with USD/AED invoicing." },
+          "commercial_value": { "score": 0.60, "evidence": "£7.5M turnover; meaningful FX on receivables." },
+          "pain_strength": { "score": 0.70, "evidence": "60-90 day payment terms create FX uncertainty on receivables." },
+          "urgency": { "score": 0.55, "evidence": "Expanding into new African markets increases exposure." },
+          "competitor_context": { "score": 0.65, "evidence": "Standard bank FX; no specialist provider for emerging market currencies." }
+        }
+      },
+      "FX Forwards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Long project timelines create some hedgeable exposure, but no formal hedging programme exists yet.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "Long project timelines with known future FX receipts." },
+          "commercial_value": { "score": 0.45, "evidence": "Moderate hedgeable volumes." },
+          "pain_strength": { "score": 0.55, "evidence": "FX uncertainty on long projects; no current hedging." },
+          "urgency": { "score": 0.40, "evidence": "Not actively seeking hedging solutions." },
+          "competitor_context": { "score": 0.50, "evidence": "No hedging in place; could be first-mover advantage." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "weak",
+        "explanation": "Mostly office-based staff; limited ad-hoc purchasing beyond occasional site visits.",
+        "layers": {
+          "product_fit": { "score": 0.35, "evidence": "Mostly office-based; limited purchasing needs." },
+          "commercial_value": { "score": 0.25, "evidence": "Small card programme potential." },
+          "pain_strength": { "score": 0.20, "evidence": "Current process works for occasional needs." },
+          "urgency": { "score": 0.15, "evidence": "No demand for change." },
+          "competitor_context": { "score": 0.45, "evidence": "No corporate cards; not a priority." }
+        }
+      }
     }
   },
   {
@@ -220,11 +693,66 @@
     "latest_annual_report_url": "https://example.com/report15.pdf",
     "motions": ["FX", "Merchant Acquiring", "Revolut Pay", "Cards", "Spend Management"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.93, "explanation": "Pays hotels and ground operators in 15+ currencies; receivables from international tour operators in USD and EUR." },
-      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.89, "explanation": "Consumer-facing bookings via website and call centre; processes £25M+ in card payments annually." },
-      "Revolut Pay": { "eligible": true, "fit_level": "medium", "score_contribution": 0.70, "explanation": "Online booking flow could benefit from alternative payment methods, but conversion is not currently flagged as an issue." },
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.83, "explanation": "280 staff including field reps and tour guides with frequent travel, accommodation, and incidental expenses." },
-      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.68, "explanation": "Multi-department structure but existing Concur deployment handles most approval workflows." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Pays hotels and ground operators in 15+ currencies; receivables from international tour operators in USD and EUR.",
+        "layers": {
+          "product_fit": { "score": 0.94, "evidence": "15+ currency payment flows to hotels and operators globally." },
+          "commercial_value": { "score": 0.88, "evidence": "£32M turnover with huge multi-currency payment volumes." },
+          "pain_strength": { "score": 0.82, "evidence": "FX costs are a major margin factor in travel industry." },
+          "urgency": { "score": 0.70, "evidence": "Post-pandemic recovery driving need to optimise costs." },
+          "competitor_context": { "score": 0.60, "evidence": "Multiple bank relationships for different corridors; fragmented and expensive." }
+        }
+      },
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Consumer-facing bookings via website and call centre; processes £25M+ in card payments annually.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "Consumer bookings; £25M+ annual card processing." },
+          "commercial_value": { "score": 0.85, "evidence": "Massive processing volume." },
+          "pain_strength": { "score": 0.70, "evidence": "Processing costs are significant but currently acceptable." },
+          "urgency": { "score": 0.55, "evidence": "Not actively reviewing PSP but open to proposals." },
+          "competitor_context": { "score": 0.50, "evidence": "Adyen is incumbent; good product but could negotiate better with alternative." }
+        }
+      },
+      "Revolut Pay": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Online booking flow could benefit from alternative payment methods, but conversion is not currently flagged as an issue.",
+        "layers": {
+          "product_fit": { "score": 0.65, "evidence": "Online booking flow exists but not pure e-commerce." },
+          "commercial_value": { "score": 0.55, "evidence": "Could improve conversion on online bookings." },
+          "pain_strength": { "score": 0.40, "evidence": "Conversion not currently flagged as a problem." },
+          "urgency": { "score": 0.30, "evidence": "No active checkout optimisation project." },
+          "competitor_context": { "score": 0.50, "evidence": "Standard card payments; no alternative payment methods." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "280 staff including field reps and tour guides with frequent travel, accommodation, and incidental expenses.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "280 staff with heavy travel and incidental spend." },
+          "commercial_value": { "score": 0.80, "evidence": "Large cardholder base with high per-head travel spend." },
+          "pain_strength": { "score": 0.70, "evidence": "Tour guides and reps need advance funds; current process is clunky." },
+          "urgency": { "score": 0.55, "evidence": "HR flagged expense process as staff satisfaction issue." },
+          "competitor_context": { "score": 0.55, "evidence": "Amex corporate cards for senior staff; nothing for field teams." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Multi-department structure but existing Concur deployment handles most approval workflows.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "Multi-department with distributed spend." },
+          "commercial_value": { "score": 0.55, "evidence": "Meaningful spend volumes." },
+          "pain_strength": { "score": 0.35, "evidence": "Concur handles most needs; some gaps in real-time controls." },
+          "urgency": { "score": 0.25, "evidence": "Concur contract not up for renewal soon." },
+          "competitor_context": { "score": 0.30, "evidence": "Concur is entrenched; high switching cost." }
+        }
+      }
     }
   },
   {
@@ -237,9 +765,42 @@
     "latest_annual_report_url": "https://example.com/report16.pdf",
     "motions": ["API Integrations", "Monthly Plans", "FX"],
     "product_fit": {
-      "API Integrations": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "B2B SaaS platform with embedded payments feature on roadmap; engineering team already evaluated banking APIs." },
-      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.72, "explanation": "Growing transaction volume and team size; current basic plan is limiting multi-user admin features." },
-      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.52, "explanation": "US and EU client base with some invoicing in USD and EUR, but treasury is not complex." }
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "B2B SaaS platform with embedded payments feature on roadmap; engineering team already evaluated banking APIs.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "B2B SaaS with embedded payments on product roadmap." },
+          "commercial_value": { "score": 0.80, "evidence": "Embedded payments could drive significant transaction revenue." },
+          "pain_strength": { "score": 0.75, "evidence": "Current payments are manual; customers requesting embedded flow." },
+          "urgency": { "score": 0.85, "evidence": "Feature on this quarter's roadmap; actively evaluating providers." },
+          "competitor_context": { "score": 0.60, "evidence": "Evaluated Stripe Connect and Modulr; neither fully meets needs." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Growing transaction volume and team size; current basic plan is limiting multi-user admin features.",
+        "layers": {
+          "product_fit": { "score": 0.70, "evidence": "Growing team hitting plan limits." },
+          "commercial_value": { "score": 0.65, "evidence": "Plan upgrade with 90 users is meaningful." },
+          "pain_strength": { "score": 0.60, "evidence": "Multi-user admin limitations causing friction." },
+          "urgency": { "score": 0.55, "evidence": "Planning to review banking setup this quarter." },
+          "competitor_context": { "score": 0.75, "evidence": "Already on Revolut; high retention likelihood." }
+        }
+      },
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "US and EU client base with some invoicing in USD and EUR, but treasury is not complex.",
+        "layers": {
+          "product_fit": { "score": 0.50, "evidence": "Some USD and EUR invoicing." },
+          "commercial_value": { "score": 0.40, "evidence": "Moderate FX needs." },
+          "pain_strength": { "score": 0.35, "evidence": "FX is a minor operational task." },
+          "urgency": { "score": 0.25, "evidence": "No FX-specific plans." },
+          "competitor_context": { "score": 0.45, "evidence": "Using Revolut for basic FX; adequate." }
+        }
+      }
     }
   },
   {
@@ -252,10 +813,54 @@
     "latest_annual_report_url": "https://example.com/report17.pdf",
     "motions": ["FX", "Merchant Acquiring", "Revolut Pay", "Spend Management"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.86, "explanation": "Sources garments from Turkey, Bangladesh, and China; pays in USD, EUR, and BDT. Seasonal bulk orders create lumpy FX flows." },
-      "Merchant Acquiring": { "eligible": true, "fit_level": "strong", "score_contribution": 0.90, "explanation": "12 retail stores plus flagship e-commerce; payment acceptance is core to the business." },
-      "Revolut Pay": { "eligible": true, "fit_level": "strong", "score_contribution": 0.85, "explanation": "Online sales are 45% of revenue; actively testing new checkout flows to reduce basket abandonment." },
-      "Spend Management": { "eligible": true, "fit_level": "medium", "score_contribution": 0.58, "explanation": "Seasonal buying cycles mean large procurement spikes; some budget control need but existing processes work." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Sources garments from Turkey, Bangladesh, and China; pays in USD, EUR, and BDT. Seasonal bulk orders create lumpy FX flows.",
+        "layers": {
+          "product_fit": { "score": 0.86, "evidence": "Multi-country sourcing with seasonal FX flows." },
+          "commercial_value": { "score": 0.75, "evidence": "£20M turnover; significant import payments." },
+          "pain_strength": { "score": 0.72, "evidence": "Seasonal bulk orders create FX cost uncertainty." },
+          "urgency": { "score": 0.60, "evidence": "Next buying season approaching; FX budgets being set." },
+          "competitor_context": { "score": 0.55, "evidence": "Bank FX with no specialist provider; paying wide spreads." }
+        }
+      },
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "12 retail stores plus flagship e-commerce; payment acceptance is core to the business.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "12 stores plus e-commerce; payments are core." },
+          "commercial_value": { "score": 0.82, "evidence": "£20M turnover with majority card payments." },
+          "pain_strength": { "score": 0.70, "evidence": "Processing costs are high relative to fashion margins." },
+          "urgency": { "score": 0.55, "evidence": "Reviewing costs but no active PSP switch project." },
+          "competitor_context": { "score": 0.50, "evidence": "Barclaycard for in-store; Stripe for online." }
+        }
+      },
+      "Revolut Pay": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Online sales are 45% of revenue; actively testing new checkout flows to reduce basket abandonment.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "45% online revenue; checkout optimisation is active." },
+          "commercial_value": { "score": 0.75, "evidence": "Higher conversion on £9M online revenue is material." },
+          "pain_strength": { "score": 0.70, "evidence": "Basket abandonment is a tracked KPI." },
+          "urgency": { "score": 0.80, "evidence": "Digital team actively A/B testing checkout." },
+          "competitor_context": { "score": 0.55, "evidence": "Offers PayPal and Klarna; room for Revolut Pay." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Seasonal buying cycles mean large procurement spikes; some budget control need but existing processes work.",
+        "layers": {
+          "product_fit": { "score": 0.55, "evidence": "Seasonal procurement spikes." },
+          "commercial_value": { "score": 0.45, "evidence": "Moderate spend management opportunity." },
+          "pain_strength": { "score": 0.40, "evidence": "Processes work during normal periods; strain during peaks." },
+          "urgency": { "score": 0.30, "evidence": "Not a current priority." },
+          "competitor_context": { "score": 0.45, "evidence": "Manual process; no incumbent tool." }
+        }
+      }
     }
   },
   {
@@ -268,12 +873,78 @@
     "latest_annual_report_url": "https://example.com/report18.pdf",
     "motions": ["FX", "FX Forwards", "API Integrations", "Cards", "Spend Management", "Monthly Plans"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 0.96, "explanation": "Multi-national operations in 8 countries; EUR, USD, SEK, and NOK payment flows. Treasury team manages £40M+ in annual FX." },
-      "FX Forwards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.94, "explanation": "Long-term infrastructure contracts with known future FX obligations; formal hedging policy in place." },
-      "API Integrations": { "eligible": true, "fit_level": "medium", "score_contribution": 0.62, "explanation": "SAP-based treasury; automation interest exists but IT priorities are focused on operational systems." },
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.82, "explanation": "600 staff across multiple sites and countries; significant travel, fuel, and field procurement needs." },
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.87, "explanation": "Multi-entity, multi-country structure with per-project budgets; finance team struggles with consolidation." },
-      "Monthly Plans": { "eligible": true, "fit_level": "strong", "score_contribution": 0.80, "explanation": "Enterprise-scale usage justifies custom pricing; currently on standard plan with workarounds for multi-entity access." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Multi-national operations in 8 countries; EUR, USD, SEK, and NOK payment flows. Treasury team manages £40M+ in annual FX.",
+        "layers": {
+          "product_fit": { "score": 0.97, "evidence": "8-country operations; £40M+ annual FX flows." },
+          "commercial_value": { "score": 0.95, "evidence": "£55M turnover; largest FX opportunity in pipeline." },
+          "pain_strength": { "score": 0.85, "evidence": "Complex multi-currency treasury with high transaction costs." },
+          "urgency": { "score": 0.75, "evidence": "Treasury modernisation programme underway." },
+          "competitor_context": { "score": 0.55, "evidence": "Barclays and SEB; multiple relationships but poor consolidation." }
+        }
+      },
+      "FX Forwards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Long-term infrastructure contracts with known future FX obligations; formal hedging policy in place.",
+        "layers": {
+          "product_fit": { "score": 0.95, "evidence": "Infrastructure contracts with multi-year FX obligations." },
+          "commercial_value": { "score": 0.92, "evidence": "Hedgeable exposure of £20M+ annually." },
+          "pain_strength": { "score": 0.80, "evidence": "Current hedging through banks is expensive and slow to execute." },
+          "urgency": { "score": 0.85, "evidence": "Formal hedging policy review mandated by board." },
+          "competitor_context": { "score": 0.50, "evidence": "Bank forward contracts; functional but uncompetitive pricing." }
+        }
+      },
+      "API Integrations": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "SAP-based treasury; automation interest exists but IT priorities are focused on operational systems.",
+        "layers": {
+          "product_fit": { "score": 0.60, "evidence": "SAP treasury with automation potential." },
+          "commercial_value": { "score": 0.55, "evidence": "Automation would increase transaction volumes." },
+          "pain_strength": { "score": 0.50, "evidence": "Manual processes but IT focused elsewhere." },
+          "urgency": { "score": 0.30, "evidence": "Not on near-term IT roadmap." },
+          "competitor_context": { "score": 0.40, "evidence": "SAP native integrations exist." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "600 staff across multiple sites and countries; significant travel, fuel, and field procurement needs.",
+        "layers": {
+          "product_fit": { "score": 0.85, "evidence": "600 staff across multiple countries with field spend." },
+          "commercial_value": { "score": 0.80, "evidence": "Large cardholder base with high per-head spend." },
+          "pain_strength": { "score": 0.70, "evidence": "Mixed card and expense processes across countries." },
+          "urgency": { "score": 0.55, "evidence": "Consolidation project on radar but not started." },
+          "competitor_context": { "score": 0.50, "evidence": "Different cards per country; fragmented." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Multi-entity, multi-country structure with per-project budgets; finance team struggles with consolidation.",
+        "layers": {
+          "product_fit": { "score": 0.90, "evidence": "Multi-entity, multi-country project-based budgeting." },
+          "commercial_value": { "score": 0.85, "evidence": "£55M turnover; massive procurement volumes." },
+          "pain_strength": { "score": 0.82, "evidence": "Finance team manually consolidates across entities monthly." },
+          "urgency": { "score": 0.65, "evidence": "CFO pushing for better financial controls." },
+          "competitor_context": { "score": 0.55, "evidence": "Excel and email; no centralised spend tool." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Enterprise-scale usage justifies custom pricing; currently on standard plan with workarounds for multi-entity access.",
+        "layers": {
+          "product_fit": { "score": 0.80, "evidence": "Enterprise scale with multi-entity needs." },
+          "commercial_value": { "score": 0.85, "evidence": "Custom plan for 600+ users is very high value." },
+          "pain_strength": { "score": 0.65, "evidence": "Working around plan limitations across entities." },
+          "urgency": { "score": 0.50, "evidence": "Would follow primary product adoption." },
+          "competitor_context": { "score": 0.60, "evidence": "No competing plan structure." }
+        }
+      }
     }
   },
   {
@@ -286,9 +957,42 @@
     "latest_annual_report_url": "https://example.com/report19.pdf",
     "motions": ["FX", "Merchant Acquiring", "Cards"],
     "product_fit": {
-      "FX": { "eligible": true, "fit_level": "medium", "score_contribution": 0.70, "explanation": "Imports components from Germany and Japan; moderate FX volumes but growing as EU sourcing increases." },
-      "Merchant Acquiring": { "eligible": true, "fit_level": "medium", "score_contribution": 0.55, "explanation": "Operates a trade counter and small online catalogue; card payments are a minority of revenue but growing." },
-      "Cards": { "eligible": true, "fit_level": "medium", "score_contribution": 0.60, "explanation": "Field sales team and warehouse operatives with purchasing needs; ad-hoc spending is poorly controlled." }
+      "FX": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Imports components from Germany and Japan; moderate FX volumes but growing as EU sourcing increases.",
+        "layers": {
+          "product_fit": { "score": 0.68, "evidence": "Germany and Japan imports with EUR and JPY payments." },
+          "commercial_value": { "score": 0.55, "evidence": "£14M turnover; moderate FX component." },
+          "pain_strength": { "score": 0.55, "evidence": "FX costs are noticeable but manageable." },
+          "urgency": { "score": 0.45, "evidence": "EU sourcing increasing; FX need growing." },
+          "competitor_context": { "score": 0.50, "evidence": "Bank transfers for imports; standard pricing." }
+        }
+      },
+      "Merchant Acquiring": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Operates a trade counter and small online catalogue; card payments are a minority of revenue but growing.",
+        "layers": {
+          "product_fit": { "score": 0.50, "evidence": "Trade counter and small online catalogue." },
+          "commercial_value": { "score": 0.35, "evidence": "Card payments are minority of revenue." },
+          "pain_strength": { "score": 0.40, "evidence": "Current terminal works; costs are acceptable." },
+          "urgency": { "score": 0.30, "evidence": "No plans to change." },
+          "competitor_context": { "score": 0.45, "evidence": "iZettle terminal; adequate for needs." }
+        }
+      },
+      "Cards": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Field sales team and warehouse operatives with purchasing needs; ad-hoc spending is poorly controlled.",
+        "layers": {
+          "product_fit": { "score": 0.58, "evidence": "Field sales and warehouse teams with purchasing needs." },
+          "commercial_value": { "score": 0.45, "evidence": "110 staff with moderate spend." },
+          "pain_strength": { "score": 0.55, "evidence": "Ad-hoc spending poorly tracked." },
+          "urgency": { "score": 0.40, "evidence": "Finance team wants better controls." },
+          "competitor_context": { "score": 0.50, "evidence": "No corporate card programme." }
+        }
+      }
     }
   },
   {
@@ -301,9 +1005,42 @@
     "latest_annual_report_url": "https://example.com/report20.pdf",
     "motions": ["Cards", "Spend Management", "Monthly Plans"],
     "product_fit": {
-      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 0.79, "explanation": "Multi-academy trust with 6 schools; each school has departmental purchasing needs currently handled via purchase orders and petty cash." },
-      "Spend Management": { "eligible": true, "fit_level": "strong", "score_contribution": 0.86, "explanation": "Complex budget delegation across schools and departments; trustees want real-time visibility into spending against allocated budgets." },
-      "Monthly Plans": { "eligible": true, "fit_level": "medium", "score_contribution": 0.50, "explanation": "Transaction volumes and user count justify a plan upgrade, but procurement process for financial services is slow." }
+      "Cards": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Multi-academy trust with 6 schools; each school has departmental purchasing needs currently handled via purchase orders and petty cash.",
+        "layers": {
+          "product_fit": { "score": 0.80, "evidence": "6 schools with departmental purchasing needs." },
+          "commercial_value": { "score": 0.65, "evidence": "180 staff; meaningful card programme." },
+          "pain_strength": { "score": 0.75, "evidence": "Purchase orders and petty cash are slow and error-prone." },
+          "urgency": { "score": 0.60, "evidence": "Trustees pushing for operational modernisation." },
+          "competitor_context": { "score": 0.70, "evidence": "No corporate card programme; PO-based process." }
+        }
+      },
+      "Spend Management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Complex budget delegation across schools and departments; trustees want real-time visibility into spending against allocated budgets.",
+        "layers": {
+          "product_fit": { "score": 0.88, "evidence": "Multi-school budget delegation with oversight needs." },
+          "commercial_value": { "score": 0.70, "evidence": "£10M budget with complex allocation structure." },
+          "pain_strength": { "score": 0.85, "evidence": "Trustees demanding real-time spend visibility." },
+          "urgency": { "score": 0.80, "evidence": "Board resolution to implement controls by year-end." },
+          "competitor_context": { "score": 0.65, "evidence": "No spend management tool; manual reconciliation." }
+        }
+      },
+      "Monthly Plans": {
+        "eligible": true,
+        "fit_level": "medium",
+        "explanation": "Transaction volumes and user count justify a plan upgrade, but procurement process for financial services is slow.",
+        "layers": {
+          "product_fit": { "score": 0.50, "evidence": "Scale justifies plan upgrade." },
+          "commercial_value": { "score": 0.55, "evidence": "180 users is meaningful plan revenue." },
+          "pain_strength": { "score": 0.35, "evidence": "Current plan mostly adequate." },
+          "urgency": { "score": 0.20, "evidence": "Procurement process is slow for financial services." },
+          "competitor_context": { "score": 0.40, "evidence": "Would follow from primary product adoption." }
+        }
+      }
     }
   }
 ]

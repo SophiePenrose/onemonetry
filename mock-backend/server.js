@@ -43,6 +43,43 @@ const ALLOWED_TRANSITIONS = {
   held_for_review: ["new_candidate", "shortlisted"],
 };
 
+// --- Scoring weights (configurable) ---
+
+const LAYER_NAMES = ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"];
+
+const DEFAULT_WEIGHTS = {
+  product_fit: 0.35,
+  commercial_value: 0.20,
+  pain_strength: 0.20,
+  urgency: 0.15,
+  competitor_context: 0.10,
+};
+
+function computeCompositeScore(layers, weights = DEFAULT_WEIGHTS) {
+  let total = 0;
+  let weightSum = 0;
+  for (const layer of LAYER_NAMES) {
+    if (layers[layer]) {
+      total += (layers[layer].score || 0) * (weights[layer] || 0);
+      weightSum += weights[layer] || 0;
+    }
+  }
+  return weightSum > 0 ? Math.round((total / weightSum) * 100) / 100 : 0;
+}
+
+function buildScoreBreakdown(layers) {
+  const breakdown = {};
+  for (const layer of LAYER_NAMES) {
+    if (layers[layer]) {
+      breakdown[layer] = {
+        score: layers[layer].score,
+        evidence: layers[layer].evidence,
+      };
+    }
+  }
+  return breakdown;
+}
+
 // --- State persistence ---
 
 const STATE_FILE = path.join(process.cwd(), "mock-backend", "workflow_state.json");
@@ -85,36 +122,48 @@ app.get("/api/workflow-states", (_req, res) => {
   res.json({ states: WORKFLOW_STATES, transitions: ALLOWED_TRANSITIONS });
 });
 
+app.get("/api/scoring-weights", (_req, res) => {
+  res.json({ weights: DEFAULT_WEIGHTS, layers: LAYER_NAMES });
+});
+
 app.get("/api/shortlist", (req, res) => {
   const { product_motion, state_filter } = req.query;
   if (!product_motion || !VALID_MOTIONS.includes(product_motion)) {
     return res.status(400).json({ error: "Missing or invalid product_motion parameter" });
   }
   const COMPANIES = loadCompanies();
-  let eligible = COMPANIES
-    .filter((c) => c.motions.includes(product_motion) && c.product_fit[product_motion]?.eligible)
-    .sort((a, b) => b.product_fit[product_motion].score_contribution - a.product_fit[product_motion].score_contribution);
+  let eligible = COMPANIES.filter(
+    (c) => c.motions.includes(product_motion) && c.product_fit[product_motion]?.eligible
+  );
 
   if (state_filter && VALID_STATE_IDS.includes(state_filter)) {
     eligible = eligible.filter((c) => getCompanyState(c.id).state === state_filter);
   }
 
-  const companies = eligible.map((c, idx) => {
-    const ws = getCompanyState(c.id);
-    return {
-      id: c.id,
-      name: c.name,
-      industry: c.industry,
-      turnover: c.turnover,
-      score: c.product_fit[product_motion].score_contribution,
-      rank: idx + 1,
-      product_motion,
-      fit_level: c.product_fit[product_motion].fit_level,
-      product_fit: c.product_fit[product_motion],
-      explanation: c.product_fit[product_motion].explanation,
-      workflow_state: ws.state,
-    };
-  });
+  const companies = eligible
+    .map((c) => {
+      const fit = c.product_fit[product_motion];
+      const layers = fit.layers || {};
+      const compositeScore = computeCompositeScore(layers);
+      const ws = getCompanyState(c.id);
+      return {
+        id: c.id,
+        name: c.name,
+        industry: c.industry,
+        turnover: c.turnover,
+        score: compositeScore,
+        rank: 0,
+        product_motion,
+        fit_level: fit.fit_level,
+        product_fit: fit,
+        explanation: fit.explanation,
+        workflow_state: ws.state,
+        score_breakdown: buildScoreBreakdown(layers),
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((c, idx) => ({ ...c, rank: idx + 1 }));
+
   res.json({ companies });
 });
 
@@ -133,6 +182,8 @@ app.get("/api/company/:id", (req, res) => {
   if (!fit || !fit.eligible) {
     return res.status(403).json({ error: "Company does not meet current shortlist criteria" });
   }
+  const layers = fit.layers || {};
+  const compositeScore = computeCompositeScore(layers);
   const ws = getCompanyState(id);
   res.json({
     company: {
@@ -144,8 +195,8 @@ app.get("/api/company/:id", (req, res) => {
       employee_count: company.employee_count,
       latest_annual_report_url: company.latest_annual_report_url,
       product_fit: fit,
-      score_breakdown: { product_fit: fit.score_contribution },
-      final_score: fit.score_contribution,
+      score_breakdown: buildScoreBreakdown(layers),
+      final_score: compositeScore,
       explanation: fit.explanation,
       workflow_state: ws.state,
       workflow_history: ws.history || [],
