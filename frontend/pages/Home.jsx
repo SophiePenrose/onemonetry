@@ -2,15 +2,15 @@ import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 const STATE_META = {
-  new_candidate: { label: "New", color: "#6c757d", icon: "○" },
-  shortlisted: { label: "Shortlisted", color: "#0075EB", icon: "★" },
-  selected_for_outreach: { label: "Outreach", color: "#6f42c1", icon: "→" },
-  in_cadence: { label: "In Cadence", color: "#e67e22", icon: "↻" },
-  active_opportunity: { label: "Active Opp", color: "#20c997", icon: "◆" },
-  closed_won: { label: "Won", color: "#0a8754", icon: "✓" },
-  closed_lost: { label: "Lost", color: "#c0392b", icon: "✕" },
-  revisit_later: { label: "Revisit", color: "#95a5a6", icon: "◷" },
-  held_for_review: { label: "Held", color: "#f39c12", icon: "⏸" },
+  new_candidate: { label: "New", color: "#6c757d" },
+  shortlisted: { label: "Shortlisted", color: "#0075EB" },
+  selected_for_outreach: { label: "Outreach", color: "#6f42c1" },
+  in_cadence: { label: "In Cadence", color: "#e67e22" },
+  active_opportunity: { label: "Active Opp", color: "#20c997" },
+  closed_won: { label: "Won", color: "#0a8754" },
+  closed_lost: { label: "Lost", color: "#c0392b" },
+  revisit_later: { label: "Revisit", color: "#95a5a6" },
+  held_for_review: { label: "Held", color: "#f39c12" },
 };
 
 function formatTurnover(value) {
@@ -19,16 +19,12 @@ function formatTurnover(value) {
   return `£${value}`;
 }
 
-function PipelineCard({ stateId, count, label, color }) {
+function PipelineCard({ count, label, color }) {
   return (
     <div style={{
-      background: "#fff",
-      borderRadius: 8,
-      padding: "14px 16px",
-      boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-      borderLeft: `4px solid ${color}`,
-      minWidth: 110,
-      flex: "1 1 0",
+      background: "#fff", borderRadius: 8, padding: "14px 16px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06)", borderLeft: `4px solid ${color}`,
+      minWidth: 110, flex: "1 1 0",
     }}>
       <div style={{ fontSize: 28, fontWeight: 700, color }}>{count}</div>
       <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{label}</div>
@@ -36,67 +32,37 @@ function PipelineCard({ stateId, count, label, color }) {
   );
 }
 
-PipelineCard.propTypes = {
-  stateId: PropTypes.string,
-  count: PropTypes.number.isRequired,
-  label: PropTypes.string.isRequired,
-  color: PropTypes.string.isRequired,
-};
+PipelineCard.propTypes = { count: PropTypes.number.isRequired, label: PropTypes.string.isRequired, color: PropTypes.string.isRequired };
 
-function MotionCard({ motion, total, avgScore, topCompany, onMotionClick }) {
+function MotionSummaryBar({ motionSummary }) {
+  const motions = Object.entries(motionSummary)
+    .filter(([, s]) => s.total > 0)
+    .sort(([, a], [, b]) => b.avg_score - a.avg_score);
+
   return (
-    <div
-      onClick={() => onMotionClick && onMotionClick(motion)}
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        padding: 16,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-        cursor: onMotionClick ? "pointer" : "default",
-        flex: "1 1 calc(25% - 12px)",
-        minWidth: 200,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)")}
-      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.06)")}
-    >
-      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{motion}</div>
-      <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
-        <div>
-          <div style={{ color: "#888", fontSize: 11 }}>Companies</div>
-          <div style={{ fontWeight: 600 }}>{total}</div>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {motions.map(([motion, s]) => (
+        <div key={motion} style={{
+          background: "#fff", borderRadius: 6, padding: "8px 14px",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.06)", fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <span style={{ fontWeight: 600 }}>{motion}</span>
+          <span style={{ color: "#888" }}>{s.total} co.</span>
+          <span style={{ fontWeight: 600, color: "#0075EB" }}>{s.avg_score.toFixed(2)} avg</span>
         </div>
-        <div>
-          <div style={{ color: "#888", fontSize: 11 }}>Avg Score</div>
-          <div style={{ fontWeight: 600 }}>{avgScore.toFixed(2)}</div>
-        </div>
-      </div>
-      {topCompany && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#666", borderTop: "1px solid #f0f0f0", paddingTop: 6 }}>
-          Top: <strong>{topCompany.name}</strong> ({topCompany.score.toFixed(2)})
-        </div>
-      )}
+      ))}
     </div>
   );
 }
 
-MotionCard.propTypes = {
-  motion: PropTypes.string.isRequired,
-  total: PropTypes.number.isRequired,
-  avgScore: PropTypes.number.isRequired,
-  topCompany: PropTypes.object,
-  onMotionClick: PropTypes.func,
-};
+MotionSummaryBar.propTypes = { motionSummary: PropTypes.object.isRequired };
 
 function Badge({ text, bg }) {
   return (
     <span style={{
-      display: "inline-block",
-      padding: "2px 10px",
-      borderRadius: 12,
-      fontSize: 11,
-      fontWeight: 600,
-      color: "#fff",
-      background: bg || "#888",
+      display: "inline-block", padding: "2px 10px", borderRadius: 12,
+      fontSize: 11, fontWeight: 600, color: "#fff", background: bg || "#888",
       whiteSpace: "nowrap",
     }}>
       {text}
@@ -106,7 +72,7 @@ function Badge({ text, bg }) {
 
 Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
 
-export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
+export default function Home({ onNavigateToCompany }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -130,66 +96,45 @@ export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
         <span style={{ color: "#888", fontSize: 14 }}>{data.total_companies} companies in universe</span>
       </div>
 
-      {/* Pipeline funnel */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>Pipeline</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {pipelineOrder.map((stateId) => {
             const p = data.pipeline[stateId];
-            return p ? <PipelineCard key={stateId} stateId={stateId} count={p.count} label={p.label} color={p.color} /> : null;
+            return p ? <PipelineCard key={stateId} count={p.count} label={p.label} color={p.color} /> : null;
           })}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
           {secondaryStates.map((stateId) => {
             const p = data.pipeline[stateId];
-            return p ? <PipelineCard key={stateId} stateId={stateId} count={p.count} label={p.label} color={p.color} /> : null;
+            return p ? <PipelineCard key={stateId} count={p.count} label={p.label} color={p.color} /> : null;
           })}
         </div>
       </div>
 
-      {/* Motion cards */}
       <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>Product Motions</div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          {Object.entries(data.motion_summary)
-            .filter(([, s]) => s.total > 0)
-            .sort(([, a], [, b]) => b.avg_score - a.avg_score)
-            .map(([motion, s]) => (
-              <MotionCard
-                key={motion}
-                motion={motion}
-                total={s.total}
-                avgScore={s.avg_score}
-                topCompany={s.top_company}
-                onMotionClick={onNavigateToMotion}
-              />
-            ))}
-        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>Motion Coverage</div>
+        <MotionSummaryBar motionSummary={data.motion_summary} />
       </div>
 
-      {/* Active prospects */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>
           Active Prospects
           {data.active_prospects.length > 0 && (
             <span style={{ fontWeight: 400, color: "#888", marginLeft: 8 }}>
-              {data.active_prospects.length} {data.active_prospects.length === 1 ? "company" : "companies"} in play
+              {data.active_prospects.length} in play
             </span>
           )}
         </div>
 
         {data.active_prospects.length === 0 ? (
           <div style={{
-            background: "#fff",
-            borderRadius: 8,
-            padding: 32,
-            textAlign: "center",
-            color: "#888",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+            background: "#fff", borderRadius: 8, padding: 32, textAlign: "center",
+            color: "#888", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
           }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
             <div style={{ fontSize: 14 }}>No active prospects yet</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>Select a product motion above and shortlist companies to get started.</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>Go to the Shortlist tab and start shortlisting companies.</div>
           </div>
         ) : (
           <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
@@ -202,7 +147,6 @@ export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
                 <th style={{ padding: "10px 16px" }}>Best Motion</th>
                 <th style={{ padding: "10px 16px", textAlign: "right" }}>Score</th>
                 <th style={{ padding: "10px 16px", textAlign: "center" }}>Motions</th>
-                <th style={{ padding: "10px 16px" }}>Last Activity</th>
               </tr>
             </thead>
             <tbody>
@@ -212,12 +156,12 @@ export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
                   <tr
                     key={p.id}
                     style={{ borderBottom: "1px solid #eee", cursor: "pointer" }}
-                    onClick={() => onNavigateToCompany && onNavigateToCompany(p.id, p.best_motion)}
+                    onClick={() => onNavigateToCompany && onNavigateToCompany(p.id)}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
                     <td style={{ padding: "10px 16px", fontWeight: 600 }}>
-                      <a href="#" onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(p.id, p.best_motion); }} style={{ color: "#0075EB", textDecoration: "none" }}>
+                      <a href="#" onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(p.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
                         {p.name}
                       </a>
                     </td>
@@ -225,11 +169,8 @@ export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
                     <td style={{ padding: "10px 16px", textAlign: "right", fontSize: 13 }}>{formatTurnover(p.turnover)}</td>
                     <td style={{ padding: "10px 16px", textAlign: "center" }}><Badge text={sm.label} bg={sm.color} /></td>
                     <td style={{ padding: "10px 16px", fontSize: 13 }}>{p.best_motion}</td>
-                    <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{p.best_score.toFixed(2)}</td>
+                    <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600 }}>{p.best_score.toFixed(2)}</td>
                     <td style={{ padding: "10px 16px", textAlign: "center", fontSize: 13 }}>{p.motion_count}</td>
-                    <td style={{ padding: "10px 16px", color: "#888", fontSize: 12 }}>
-                      {p.last_activity ? new Date(p.last_activity).toLocaleDateString() : "—"}
-                    </td>
                   </tr>
                 );
               })}
@@ -242,6 +183,5 @@ export default function Home({ onNavigateToMotion, onNavigateToCompany }) {
 }
 
 Home.propTypes = {
-  onNavigateToMotion: PropTypes.func,
   onNavigateToCompany: PropTypes.func,
 };

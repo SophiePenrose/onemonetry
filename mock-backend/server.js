@@ -144,6 +144,39 @@ function getCompanyState(companyId) {
   };
 }
 
+// --- Unified multi-motion scoring ---
+
+function computeCompanyProfile(company) {
+  const motionScores = [];
+  for (const motion of company.motions) {
+    const fit = company.product_fit[motion];
+    if (!fit?.eligible) continue;
+    const layers = fit.layers || {};
+    const score = computeCompositeScore(layers);
+    motionScores.push({
+      motion,
+      score,
+      fit_level: fit.fit_level,
+      explanation: fit.explanation,
+      score_breakdown: buildScoreBreakdown(layers),
+    });
+  }
+  motionScores.sort((a, b) => b.score - a.score);
+
+  const bestScore = motionScores[0]?.score || 0;
+  const avgScore = motionScores.length > 0
+    ? Math.round((motionScores.reduce((s, m) => s + m.score, 0) / motionScores.length) * 100) / 100
+    : 0;
+  const combinedScore = Math.round((bestScore * 0.6 + avgScore * 0.4) * 100) / 100;
+
+  return {
+    motion_scores: motionScores,
+    best_motion: motionScores[0] || null,
+    combined_score: combinedScore,
+    eligible_motion_count: motionScores.length,
+  };
+}
+
 // --- Report persistence ---
 
 const REPORTS_FILE = path.join(process.cwd(), "mock-backend", "weekly_reports.json");
@@ -271,6 +304,67 @@ app.get("/api/dashboard", (_req, res) => {
   });
 });
 
+app.get("/api/unified-shortlist", (req, res) => {
+  const { state_filter, show_suppressed } = req.query;
+  const COMPANIES = loadCompanies();
+
+  let excludedCount = 0;
+  let suppressedCount = 0;
+  const entries = [];
+
+  for (const company of COMPANIES) {
+    const excl = isExcluded(company);
+    if (excl.excluded) { excludedCount++; continue; }
+
+    const ws = getCompanyState(company.id);
+    const supp = isSuppressed(company.id);
+    if (supp.suppressed) {
+      suppressedCount++;
+      if (show_suppressed !== "true") continue;
+    }
+
+    if (state_filter && VALID_STATE_IDS.includes(state_filter) && ws.state !== state_filter) continue;
+
+    const profile = computeCompanyProfile(company);
+    if (profile.eligible_motion_count === 0) continue;
+
+    entries.push({
+      id: company.id,
+      name: company.name,
+      industry: company.industry,
+      turnover: company.turnover,
+      employee_count: company.employee_count,
+      combined_score: profile.combined_score,
+      best_motion: profile.best_motion?.motion || null,
+      best_score: profile.best_motion?.score || 0,
+      best_fit_level: profile.best_motion?.fit_level || null,
+      eligible_motions: profile.motion_scores.map((m) => ({
+        motion: m.motion,
+        score: m.score,
+        fit_level: m.fit_level,
+      })),
+      motion_count: profile.eligible_motion_count,
+      workflow_state: ws.state,
+      suppressed: supp.suppressed,
+      suppression_reason: supp.reason || null,
+      rank: 0,
+    });
+  }
+
+  entries.sort((a, b) => b.combined_score - a.combined_score);
+  entries.forEach((e, idx) => { e.rank = idx + 1; });
+
+  res.json({
+    companies: entries,
+    meta: {
+      total: COMPANIES.length,
+      excluded: excludedCount,
+      suppressed: suppressedCount,
+      showing: entries.length,
+    },
+  });
+});
+
 app.get("/api/shortlist", (req, res) => {
   const { product_motion, state_filter, show_suppressed } = req.query;
   if (!product_motion || !VALID_MOTIONS.includes(product_motion)) {
@@ -339,41 +433,65 @@ app.get("/api/shortlist", (req, res) => {
 app.get("/api/company/:id", (req, res) => {
   const { id } = req.params;
   const { product_motion } = req.query;
-  if (!product_motion || !VALID_MOTIONS.includes(product_motion)) {
-    return res.status(400).json({ error: "Missing or invalid product_motion parameter" });
-  }
   const COMPANIES = loadCompanies();
   const company = COMPANIES.find((c) => c.id === id);
   if (!company) {
     return res.status(404).json({ error: "Company not found" });
   }
-  const fit = company.product_fit[product_motion];
-  if (!fit || !fit.eligible) {
-    return res.status(403).json({ error: "Company does not meet current shortlist criteria" });
-  }
-  const layers = fit.layers || {};
-  const compositeScore = computeCompositeScore(layers);
+
   const ws = getCompanyState(id);
-  res.json({
-    company: {
-      id: company.id,
-      name: company.name,
-      company_number: company.company_number,
-      industry: company.industry,
-      turnover: company.turnover,
-      employee_count: company.employee_count,
-      latest_annual_report_url: company.latest_annual_report_url,
-      product_fit: fit,
-      score_breakdown: buildScoreBreakdown(layers),
-      final_score: compositeScore,
-      explanation: fit.explanation,
-      workflow_state: ws.state,
-      workflow_history: ws.history || [],
-      competitors: company.competitors || [],
-      stakeholders: company.stakeholders || [],
-      cadence_history: company.cadence_history || [],
-    },
-  });
+  const profile = computeCompanyProfile(company);
+
+  if (product_motion && VALID_MOTIONS.includes(product_motion)) {
+    const fit = company.product_fit[product_motion];
+    if (!fit || !fit.eligible) {
+      return res.status(403).json({ error: "Company does not meet current shortlist criteria" });
+    }
+    const layers = fit.layers || {};
+    const compositeScore = computeCompositeScore(layers);
+    res.json({
+      company: {
+        id: company.id,
+        name: company.name,
+        company_number: company.company_number,
+        industry: company.industry,
+        turnover: company.turnover,
+        employee_count: company.employee_count,
+        latest_annual_report_url: company.latest_annual_report_url,
+        product_fit: fit,
+        score_breakdown: buildScoreBreakdown(layers),
+        final_score: compositeScore,
+        explanation: fit.explanation,
+        workflow_state: ws.state,
+        workflow_history: ws.history || [],
+        competitors: company.competitors || [],
+        stakeholders: company.stakeholders || [],
+        cadence_history: company.cadence_history || [],
+        all_motion_scores: profile.motion_scores,
+        combined_score: profile.combined_score,
+      },
+    });
+  } else {
+    res.json({
+      company: {
+        id: company.id,
+        name: company.name,
+        company_number: company.company_number,
+        industry: company.industry,
+        turnover: company.turnover,
+        employee_count: company.employee_count,
+        latest_annual_report_url: company.latest_annual_report_url,
+        combined_score: profile.combined_score,
+        best_motion: profile.best_motion,
+        all_motion_scores: profile.motion_scores,
+        workflow_state: ws.state,
+        workflow_history: ws.history || [],
+        competitors: company.competitors || [],
+        stakeholders: company.stakeholders || [],
+        cadence_history: company.cadence_history || [],
+      },
+    });
+  }
 });
 
 app.patch("/api/company/:id/state", (req, res) => {

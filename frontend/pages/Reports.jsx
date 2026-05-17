@@ -190,7 +190,7 @@ function ReportDetail({ reportId, onBack, onNavigateToCompany }) {
                   cursor: onNavigateToCompany ? "pointer" : "default",
                   background: c.state_changed ? "#fefce8" : "transparent",
                 }}
-                onClick={() => onNavigateToCompany && onNavigateToCompany(c.company_id, c.best_motion)}
+                onClick={() => onNavigateToCompany && onNavigateToCompany(c.company_id)}
                 onMouseEnter={(e) => (e.currentTarget.style.background = c.state_changed ? "#fef9c3" : "#f8f9fb")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = c.state_changed ? "#fefce8" : "transparent")}
               >
@@ -198,7 +198,7 @@ function ReportDetail({ reportId, onBack, onNavigateToCompany }) {
                 <td style={{ padding: "10px 16px", fontWeight: 600 }}>
                   <a
                     href="#"
-                    onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(c.company_id, c.best_motion); }}
+                    onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(c.company_id); }}
                     style={{ color: "#0075EB", textDecoration: "none" }}
                   >
                     {c.name}

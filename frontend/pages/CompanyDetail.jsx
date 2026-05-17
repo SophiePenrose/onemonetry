@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import ScoreExplanation from "../components/ScoreExplanation";
+import MotionScoresPanel from "../components/MotionScoresPanel";
 import WorkflowPanel from "../components/WorkflowPanel";
 import CompetitorPanel from "../components/CompetitorPanel";
 import StakeholderPanel from "../components/StakeholderPanel";
@@ -23,7 +23,7 @@ function Field({ label, children }) {
 
 Field.propTypes = { label: PropTypes.string.isRequired, children: PropTypes.node };
 
-export default function CompanyDetail({ companyId, productMotion }) {
+export default function CompanyDetail({ companyId }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -37,14 +37,12 @@ export default function CompanyDetail({ companyId, productMotion }) {
   }, []);
 
   useEffect(() => {
-    if (!companyId || !productMotion) return;
+    if (!companyId) return;
     setLoading(true);
     setError(null);
     setCompany(null);
-    fetch(`/api/company/${encodeURIComponent(companyId)}?product_motion=${encodeURIComponent(productMotion)}`)
+    fetch(`/api/company/${encodeURIComponent(companyId)}`)
       .then(async (res) => {
-        if (res.status === 403) throw new Error("Company does not meet current shortlist criteria");
-        if (res.status === 404) throw new Error("Company not found");
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "Failed to fetch company detail");
@@ -59,7 +57,7 @@ export default function CompanyDetail({ companyId, productMotion }) {
         setError(err.message);
         setLoading(false);
       });
-  }, [companyId, productMotion]);
+  }, [companyId]);
 
   function handleStateChange(data) {
     setCompany((prev) => prev ? {
@@ -69,7 +67,7 @@ export default function CompanyDetail({ companyId, productMotion }) {
     } : prev);
   }
 
-  if (!companyId || !productMotion) return <div>Missing company or product motion.</div>;
+  if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <div style={{ color: "#888" }}>Loading…</div>;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
   if (!company) return null;
@@ -77,7 +75,13 @@ export default function CompanyDetail({ companyId, productMotion }) {
   return (
     <div>
       <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-        <h2 style={{ margin: "0 0 16px", fontSize: 22 }}>{company.name}</h2>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Combined Score</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{company.combined_score?.toFixed(2)}</div>
+          </div>
+        </div>
 
         <Field label="Company Number">
           <a
@@ -95,20 +99,18 @@ export default function CompanyDetail({ companyId, productMotion }) {
         <Field label="Annual Report">
           <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB" }}>View report →</a>
         </Field>
-        <Field label="Final Score">
-          <span style={{ fontWeight: 700, fontSize: 16 }}>{company.final_score?.toFixed(2)}</span>
+        <Field label="Eligible Motions">
+          <span style={{ fontWeight: 600 }}>{company.all_motion_scores?.length || 0}</span>
+          <span style={{ color: "#888", marginLeft: 8 }}>
+            {company.all_motion_scores?.map((m) => m.motion).join(", ")}
+          </span>
         </Field>
-
-        <div style={{ marginTop: 20 }}>
-          <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Score Explanation</h3>
-          <ScoreExplanation
-            productFit={company.product_fit}
-            scoreBreakdown={company.score_breakdown}
-            finalScore={company.final_score}
-            explanation={company.explanation}
-          />
-        </div>
       </div>
+
+      <MotionScoresPanel
+        motionScores={company.all_motion_scores || []}
+        combinedScore={company.combined_score}
+      />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
         <CompetitorPanel competitors={company.competitors} />
@@ -130,5 +132,4 @@ export default function CompanyDetail({ companyId, productMotion }) {
 
 CompanyDetail.propTypes = {
   companyId: PropTypes.string.isRequired,
-  productMotion: PropTypes.string.isRequired,
 };

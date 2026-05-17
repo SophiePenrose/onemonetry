@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import ShortlistTable from "../components/ShortlistTable";
-import CompanyDetail from "./CompanyDetail";
 
 const STATE_META = {
   new_candidate: { label: "New", color: "#6c757d" },
@@ -15,85 +13,84 @@ const STATE_META = {
   held_for_review: { label: "Held", color: "#f39c12" },
 };
 
-export default function Shortlist({ productMotion }) {
+const FIT_COLORS = { strong: "#0a8754", medium: "#c27b00", weak: "#c0392b" };
+
+function Badge({ text, bg }) {
+  return (
+    <span style={{
+      display: "inline-block", padding: "2px 8px", borderRadius: 10,
+      fontSize: 11, fontWeight: 600, color: "#fff", background: bg || "#888",
+      whiteSpace: "nowrap",
+    }}>
+      {text}
+    </span>
+  );
+}
+
+Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
+
+function MotionChip({ motion, score, fitLevel }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      padding: "2px 8px", borderRadius: 10, fontSize: 11,
+      background: "#f0f2f5", color: "#555", whiteSpace: "nowrap",
+      border: `1px solid ${FIT_COLORS[fitLevel] || "#ddd"}`,
+    }}>
+      <span style={{ fontWeight: 600, color: FIT_COLORS[fitLevel] || "#555" }}>{score.toFixed(2)}</span>
+      <span>{motion}</span>
+    </span>
+  );
+}
+
+MotionChip.propTypes = { motion: PropTypes.string.isRequired, score: PropTypes.number.isRequired, fitLevel: PropTypes.string };
+
+function formatTurnover(value) {
+  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
+  return `£${value}`;
+}
+
+export default function Shortlist({ onSelectCompany }) {
   const [companies, setCompanies] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [stateFilter, setStateFilter] = useState("all");
   const [showSuppressed, setShowSuppressed] = useState(false);
 
-  function fetchShortlist(suppressedFlag) {
+  function fetchData(suppressedFlag) {
     setLoading(true);
     setError(null);
-    const qs = `product_motion=${encodeURIComponent(productMotion)}${suppressedFlag ? "&show_suppressed=true" : ""}`;
-    fetch(`/api/shortlist?${qs}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch shortlist");
-        return res.json();
-      })
-      .then((data) => {
-        setCompanies(data.companies || []);
-        setMeta(data.meta || null);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
+    const qs = suppressedFlag ? "show_suppressed=true" : "";
+    fetch(`/api/unified-shortlist?${qs}`)
+      .then((res) => { if (!res.ok) throw new Error("Failed to fetch"); return res.json(); })
+      .then((data) => { setCompanies(data.companies || []); setMeta(data.meta || null); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
   }
 
-  useEffect(() => {
-    setSelectedCompanyId(null);
-    setStateFilter("all");
-    setShowSuppressed(false);
-    fetchShortlist(false);
-  }, [productMotion]);
+  useEffect(() => { fetchData(false); }, []);
 
   function toggleSuppressed() {
     const next = !showSuppressed;
     setShowSuppressed(next);
-    fetchShortlist(next);
+    fetchData(next);
   }
 
   const stateCounts = {};
-  companies.forEach((c) => {
-    const s = c.workflow_state || "new_candidate";
-    stateCounts[s] = (stateCounts[s] || 0) + 1;
-  });
+  companies.forEach((c) => { stateCounts[c.workflow_state] = (stateCounts[c.workflow_state] || 0) + 1; });
 
   const filtered = stateFilter === "all"
     ? companies
-    : companies.filter((c) => (c.workflow_state || "new_candidate") === stateFilter);
-
-  if (selectedCompanyId) {
-    return (
-      <div>
-        <button
-          onClick={() => {
-            setSelectedCompanyId(null);
-            fetchShortlist(showSuppressed);
-          }}
-          style={{
-            padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6,
-            background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16,
-          }}
-        >
-          ← Back to Shortlist
-        </button>
-        <CompanyDetail companyId={selectedCompanyId} productMotion={productMotion} />
-      </div>
-    );
-  }
+    : companies.filter((c) => c.workflow_state === stateFilter);
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist — {productMotion}</h2>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist</h2>
         {!loading && !error && (
           <span style={{ color: "#888", fontSize: 14 }}>
-            {filtered.length} of {companies.length} {companies.length === 1 ? "company" : "companies"}
+            {filtered.length} of {companies.length} companies
           </span>
         )}
       </div>
@@ -110,14 +107,8 @@ export default function Shortlist({ productMotion }) {
               {meta.suppressed} suppressed
             </span>
           )}
-          <span style={{ color: "#aaa" }}>·</span>
           <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            <input
-              type="checkbox"
-              checked={showSuppressed}
-              onChange={toggleSuppressed}
-              style={{ cursor: "pointer" }}
-            />
+            <input type="checkbox" checked={showSuppressed} onChange={toggleSuppressed} style={{ cursor: "pointer" }} />
             <span>Show suppressed</span>
           </label>
         </div>
@@ -125,36 +116,25 @@ export default function Shortlist({ productMotion }) {
 
       {!loading && !error && companies.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-          <button
-            onClick={() => setStateFilter("all")}
-            style={{
-              padding: "4px 14px", borderRadius: 14,
-              border: stateFilter === "all" ? "2px solid #333" : "1px solid #ddd",
-              background: stateFilter === "all" ? "#333" : "#fff",
-              color: stateFilter === "all" ? "#fff" : "#555",
-              fontSize: 12, fontWeight: 600, cursor: "pointer",
-            }}
-          >
-            All ({companies.length})
-          </button>
-          {Object.entries(STATE_META).map(([stateId, meta]) => {
+          <button onClick={() => setStateFilter("all")} style={{
+            padding: "4px 14px", borderRadius: 14,
+            border: stateFilter === "all" ? "2px solid #333" : "1px solid #ddd",
+            background: stateFilter === "all" ? "#333" : "#fff",
+            color: stateFilter === "all" ? "#fff" : "#555",
+            fontSize: 12, fontWeight: 600, cursor: "pointer",
+          }}>All ({companies.length})</button>
+          {Object.entries(STATE_META).map(([stateId, sm]) => {
             const count = stateCounts[stateId] || 0;
             if (count === 0) return null;
             const active = stateFilter === stateId;
             return (
-              <button
-                key={stateId}
-                onClick={() => setStateFilter(stateId)}
-                style={{
-                  padding: "4px 14px", borderRadius: 14,
-                  border: active ? `2px solid ${meta.color}` : "1px solid #ddd",
-                  background: active ? meta.color : "#fff",
-                  color: active ? "#fff" : meta.color,
-                  fontSize: 12, fontWeight: 600, cursor: "pointer",
-                }}
-              >
-                {meta.label} ({count})
-              </button>
+              <button key={stateId} onClick={() => setStateFilter(stateId)} style={{
+                padding: "4px 14px", borderRadius: 14,
+                border: active ? `2px solid ${sm.color}` : "1px solid #ddd",
+                background: active ? sm.color : "#fff",
+                color: active ? "#fff" : sm.color,
+                fontSize: 12, fontWeight: 600, cursor: "pointer",
+              }}>{sm.label} ({count})</button>
             );
           })}
         </div>
@@ -162,16 +142,71 @@ export default function Shortlist({ productMotion }) {
 
       {loading && <div style={{ color: "#888" }}>Loading…</div>}
       {error && <div style={{ color: "#c0392b" }}>Error: {error}</div>}
-      {!loading && !error && (
-        <ShortlistTable
-          companies={filtered}
-          onSelectCompany={(company) => setSelectedCompanyId(company.id)}
-        />
+
+      {!loading && !error && filtered.length === 0 && (
+        <div style={{ color: "#888", padding: 16, background: "#fff", borderRadius: 8 }}>No companies match the current filter.</div>
+      )}
+
+      {!loading && !error && filtered.length > 0 && (
+        <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <thead>
+            <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
+              <th style={{ padding: "10px 14px" }}>#</th>
+              <th style={{ padding: "10px 14px" }}>Company</th>
+              <th style={{ padding: "10px 14px" }}>Industry</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
+              <th style={{ padding: "10px 14px" }}>Motions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((c) => {
+              const sm = STATE_META[c.workflow_state] || STATE_META.new_candidate;
+              return (
+                <tr
+                  key={c.id}
+                  onClick={() => onSelectCompany && onSelectCompany(c.id)}
+                  style={{
+                    borderBottom: "1px solid #eee",
+                    cursor: onSelectCompany ? "pointer" : "default",
+                    opacity: c.suppressed ? 0.5 : 1,
+                    background: c.suppressed ? "#f9fafb" : "transparent",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = c.suppressed ? "#f0f1f3" : "#f8f9fb")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = c.suppressed ? "#f9fafb" : "transparent")}
+                >
+                  <td style={{ padding: "10px 14px", color: "#888", fontSize: 13 }}>{c.rank}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 600 }}>
+                    <a href="#" onClick={(e) => { e.preventDefault(); onSelectCompany && onSelectCompany(c.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
+                      {c.name}
+                    </a>
+                  </td>
+                  <td style={{ padding: "10px 14px", color: "#666", fontSize: 13 }}>{c.industry}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 13 }}>{formatTurnover(c.turnover)}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>
+                    {c.combined_score.toFixed(2)}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                    <Badge text={sm.label} bg={sm.color} />
+                  </td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {c.eligible_motions.map((m) => (
+                        <MotionChip key={m.motion} motion={m.motion} score={m.score} fitLevel={m.fit_level} />
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   );
 }
 
 Shortlist.propTypes = {
-  productMotion: PropTypes.string.isRequired,
+  onSelectCompany: PropTypes.func,
 };
