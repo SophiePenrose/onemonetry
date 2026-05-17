@@ -1,0 +1,42 @@
+[
+  {
+    "id": "c1",
+    "name": "Acme Widgets Ltd",
+    "company_number": "12345678",
+    "industry": "Manufacturing",
+    "turnover": 5000000,
+    "employee_count": 50,
+    "latest_annual_report_url": "https://example.com/report1.pdf",
+    "motions": ["FX", "Cards"],
+    "product_fit": {
+      "FX": { "eligible": true, "fit_level": "strong", "score_contribution": 1.0, "explanation": "International activity." },
+      "Cards": { "eligible": true, "fit_level": "strong", "score_contribution": 1.0, "explanation": "Multi-department, fragmented." }
+    }
+  },
+  {
+    "id": "c2",
+    "name": "Beta Retail PLC",
+    "company_number": "23456789",
+    "industry": "Retail",
+    "turnover": 12000000,
+    "employee_count": 120,
+    "latest_annual_report_url": "https://example.com/report2.pdf",
+    "motions": ["FX"],
+    "product_fit": {
+      "FX": { "eligible": false, "fit_level": "weak", "score_contribution": 0.0, "explanation": "No international activity." }
+    }
+  },
+  {
+    "id": "c3",
+    "name": "Gamma Consulting LLP",
+    "company_number": "34567890",
+    "industry": "Consulting",
+    "turnover": 3000000,
+    "employee_count": 30,
+    "latest_annual_report_url": "https://example.com/report3.pdf",
+    "motions": ["Cards"],
+    "product_fit": {
+      "Cards": { "eligible": false, "fit_level": "weak", "score_contribution": 0.0, "explanation": "Not multi-department." }
+    }
+  }
+]
