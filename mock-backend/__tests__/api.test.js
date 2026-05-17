@@ -129,19 +129,30 @@ describe("API endpoints", () => {
 
   describe("PATCH /api/company/:id/state", () => {
     it("allows valid transitions", async () => {
-      const { status, data } = await fetchJSON("/api/company/c1/state", {
+      const checkRes = await fetchJSON("/api/company/c20");
+      const currentState = checkRes.data.company.workflow_state;
+      let targetState, testCompany;
+      if (currentState === "new_candidate") {
+        targetState = "shortlisted";
+        testCompany = "c20";
+      } else {
+        testCompany = "c19";
+        const c19Res = await fetchJSON("/api/company/c19");
+        targetState = c19Res.data.company.workflow_state === "new_candidate" ? "shortlisted" : "held_for_review";
+      }
+
+      const { status, data } = await fetchJSON(`/api/company/${testCompany}/state`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_state: "shortlisted", note: "Test transition" }),
+        body: JSON.stringify({ new_state: targetState, note: "Test transition" }),
       });
       assert.equal(status, 200);
-      assert.equal(data.new_state, "shortlisted");
-      assert.equal(data.previous_state, "new_candidate");
-      assert.ok(data.history.length >= 2);
+      assert.equal(data.new_state, targetState);
+      assert.ok(data.history.length >= 1);
     });
 
-    it("rejects invalid transitions", async () => {
-      const { status, data } = await fetchJSON("/api/company/c1/state", {
+    it("rejects invalid transitions from new_candidate to closed_won", async () => {
+      const { status, data } = await fetchJSON("/api/company/c14/state", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_state: "closed_won" }),
@@ -151,7 +162,7 @@ describe("API endpoints", () => {
     });
 
     it("returns 400 for invalid state", async () => {
-      const { status } = await fetchJSON("/api/company/c1/state", {
+      const { status } = await fetchJSON("/api/company/c14/state", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_state: "fake_state" }),

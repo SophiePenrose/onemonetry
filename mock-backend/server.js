@@ -1,6 +1,16 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import {
+  getCompanyWorkflowState,
+  setCompanyWorkflowState,
+  saveReport as dbSaveReport,
+  getReport as dbGetReport,
+  getReportByWeek,
+  listReports,
+  getExclusions as dbGetExclusions,
+  setExclusions as dbSetExclusions,
+} from "./db.js";
 
 const app = express();
 app.use(express.json());
@@ -47,25 +57,8 @@ const ALLOWED_TRANSITIONS = {
 
 const SUPPRESSED_STATES = ["closed_won", "closed_lost", "held_for_review", "revisit_later"];
 
-const EXCLUSIONS_FILE = path.join(process.cwd(), "mock-backend", "exclusions.json");
-
-function loadExclusions() {
-  try {
-    return JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, "utf-8"));
-  } catch {
-    return {
-      prohibited_industries: ["Gambling", "Tobacco", "Weapons", "Adult Entertainment"],
-      excluded_company_ids: [],
-    };
-  }
-}
-
-function saveExclusions(exclusions) {
-  fs.writeFileSync(EXCLUSIONS_FILE, JSON.stringify(exclusions, null, 2));
-}
-
 function isExcluded(company) {
-  const exclusions = loadExclusions();
+  const exclusions = dbGetExclusions();
   if (exclusions.excluded_company_ids.includes(company.id)) return { excluded: true, reason: "Manually excluded" };
   if (exclusions.prohibited_industries.some((ind) => company.industry.toLowerCase().includes(ind.toLowerCase()))) {
     return { excluded: true, reason: `Prohibited industry: ${company.industry}` };
@@ -145,29 +138,10 @@ function buildScoreBreakdown(layers) {
   return breakdown;
 }
 
-// --- State persistence ---
-
-const STATE_FILE = path.join(process.cwd(), "mock-backend", "workflow_state.json");
-
-function loadWorkflowState() {
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveWorkflowState(state) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-}
-
-let workflowState = loadWorkflowState();
+// --- State persistence (SQLite) ---
 
 function getCompanyState(companyId) {
-  return workflowState[companyId] || {
-    state: "new_candidate",
-    history: [{ state: "new_candidate", timestamp: new Date().toISOString(), note: "Initial state" }],
-  };
+  return getCompanyWorkflowState(companyId);
 }
 
 // --- Unified multi-motion scoring ---
@@ -214,21 +188,7 @@ function computeCompanyProfile(company) {
   };
 }
 
-// --- Report persistence ---
-
-const REPORTS_FILE = path.join(process.cwd(), "mock-backend", "weekly_reports.json");
-
-function loadReports() {
-  try {
-    return JSON.parse(fs.readFileSync(REPORTS_FILE, "utf-8"));
-  } catch {
-    return [];
-  }
-}
-
-function saveReports(reports) {
-  fs.writeFileSync(REPORTS_FILE, JSON.stringify(reports, null, 2));
-}
+// --- Report persistence (SQLite) ---
 
 // --- Data loading ---
 
@@ -258,18 +218,18 @@ app.get("/api/scoring-weights", (_req, res) => {
 });
 
 app.get("/api/exclusions", (_req, res) => {
-  const exclusions = loadExclusions();
+  const exclusions = dbGetExclusions();
   res.json({ exclusions, suppressed_states: SUPPRESSED_STATES });
 });
 
 app.put("/api/exclusions", (req, res) => {
   const { prohibited_industries, excluded_company_ids } = req.body;
-  const current = loadExclusions();
+  const current = dbGetExclusions();
   const updated = {
     prohibited_industries: prohibited_industries ?? current.prohibited_industries,
     excluded_company_ids: excluded_company_ids ?? current.excluded_company_ids,
   };
-  saveExclusions(updated);
+  dbSetExclusions(updated);
   res.json({ exclusions: updated });
 });
 
@@ -572,26 +532,15 @@ app.patch("/api/company/:id/state", (req, res) => {
     });
   }
 
-  const historyEntry = {
-    from: current.state,
-    to: new_state,
-    timestamp: new Date().toISOString(),
-    note: note || null,
-  };
-
-  workflowState[id] = {
-    state: new_state,
-    history: [...(current.history || []), historyEntry],
-  };
-
-  saveWorkflowState(workflowState);
+  setCompanyWorkflowState(id, current.state, new_state, note || null);
+  const updated = getCompanyState(id);
 
   res.json({
     company_id: id,
     previous_state: current.state,
     new_state,
     allowed_transitions: ALLOWED_TRANSITIONS[new_state],
-    history: workflowState[id].history,
+    history: updated.history,
   });
 });
 
@@ -640,23 +589,24 @@ function generateReportSnapshot(COMPANIES, topN = 20) {
 }
 
 app.get("/api/reports", (_req, res) => {
-  const reports = loadReports();
-  const summary = reports.map((r) => ({
-    id: r.id,
-    week_label: r.week_label,
-    generated_at: r.generated_at,
-    company_count: r.companies.length,
-    top_company: r.companies[0]?.name || null,
-    top_score: r.companies[0]?.score || null,
-  }));
-  summary.sort((a, b) => b.generated_at.localeCompare(a.generated_at));
+  const rows = listReports();
+  const summary = rows.map((r) => {
+    const report = dbGetReport(r.id);
+    return {
+      id: r.id,
+      week_label: r.week_label,
+      generated_at: r.generated_at,
+      company_count: report?.companies?.length || 0,
+      top_company: report?.companies?.[0]?.name || null,
+      top_score: report?.companies?.[0]?.score || null,
+    };
+  });
   res.json({ reports: summary });
 });
 
 app.get("/api/reports/:id", (req, res) => {
   const { id } = req.params;
-  const reports = loadReports();
-  const report = reports.find((r) => r.id === id);
+  const report = dbGetReport(id);
   if (!report) {
     return res.status(404).json({ error: "Report not found" });
   }
@@ -680,11 +630,10 @@ app.get("/api/reports/:id", (req, res) => {
 
 app.post("/api/reports/generate", (_req, res) => {
   const COMPANIES = loadCompanies();
-  const reports = loadReports();
   const now = new Date();
   const weekLabel = getWeekLabel(now);
 
-  const existing = reports.find((r) => r.week_label === weekLabel);
+  const existing = getReportByWeek(weekLabel);
   if (existing) {
     return res.status(409).json({
       error: "Report already exists for this week",
@@ -698,16 +647,45 @@ app.post("/api/reports/generate", (_req, res) => {
     id: `report-${weekLabel}`,
     week_label: weekLabel,
     generated_at: now.toISOString(),
-    company_count: snapshot.length,
     companies: snapshot,
   };
 
-  reports.push(report);
-  saveReports(reports);
+  dbSaveReport(report);
 
   res.status(201).json({ report_id: report.id, week_label: weekLabel, company_count: snapshot.length });
 });
 
+// --- LLM Evidence Extraction ---
+
+import { extractEvidence, isLLMConfigured } from "./llm.js";
+
+app.get("/api/llm/status", (_req, res) => {
+  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
+});
+
+app.post("/api/llm/extract", async (req, res) => {
+  const { company_id, product_motion } = req.body;
+  if (!company_id) {
+    return res.status(400).json({ error: "Missing company_id" });
+  }
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === company_id);
+  if (!company) {
+    return res.status(404).json({ error: "Company not found" });
+  }
+
+  const motion = product_motion || company.motions?.[0] || "FX";
+
+  try {
+    const evidence = await extractEvidence(company, motion);
+    res.json({ company_id, product_motion: motion, evidence });
+  } catch (err) {
+    res.status(500).json({ error: "Evidence extraction failed", detail: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Mock backend running on http://localhost:${PORT}`);
+  console.log(`LLM integration: ${isLLMConfigured() ? "configured" : "using mock evidence (set OPENAI_API_KEY to enable)"}`);
 });

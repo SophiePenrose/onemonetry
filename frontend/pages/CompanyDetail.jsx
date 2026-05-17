@@ -5,6 +5,7 @@ import WorkflowPanel from "../components/WorkflowPanel";
 import CompetitorPanel from "../components/CompetitorPanel";
 import StakeholderPanel from "../components/StakeholderPanel";
 import CadenceLog from "../components/CadenceLog";
+import EvidencePanel from "../components/EvidencePanel";
 
 function formatTurnover(value) {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
@@ -157,6 +158,11 @@ export default function CompanyDetail({ companyId }) {
         <CompetitorPanel competitors={company.competitors} />
         <StakeholderPanel stakeholders={company.stakeholders} />
       </div>
+
+      <EvidencePanel
+        companyId={companyId}
+        motions={company.all_motion_scores || []}
+      />
 
       <CadenceLog cadenceHistory={company.cadence_history} />
 

@@ -3,3 +3,6 @@ mock-backend/node_modules
 mock-backend/workflow_state.json
 mock-backend/weekly_reports.json
 mock-backend/exclusions.json
+mock-backend/onemonetry.db
+mock-backend/onemonetry.db-wal
+mock-backend/onemonetry.db-shm
