@@ -7,8 +7,21 @@ function formatTurnover(value) {
   return `£${value}`;
 }
 
-function fitBadge(level) {
-  const colors = { strong: "#0a8754", medium: "#c27b00", weak: "#c0392b" };
+const FIT_COLORS = { strong: "#0a8754", medium: "#c27b00", weak: "#c0392b" };
+
+const STATE_META = {
+  new_candidate: { label: "New", color: "#6c757d" },
+  shortlisted: { label: "Shortlisted", color: "#0075EB" },
+  selected_for_outreach: { label: "Outreach", color: "#6f42c1" },
+  in_cadence: { label: "In Cadence", color: "#e67e22" },
+  active_opportunity: { label: "Active Opp", color: "#20c997" },
+  closed_won: { label: "Won", color: "#0a8754" },
+  closed_lost: { label: "Lost", color: "#c0392b" },
+  revisit_later: { label: "Revisit", color: "#95a5a6" },
+  held_for_review: { label: "Held", color: "#f39c12" },
+};
+
+function Badge({ text, bg }) {
   return (
     <span
       style={{
@@ -18,14 +31,17 @@ function fitBadge(level) {
         fontSize: 12,
         fontWeight: 600,
         color: "#fff",
-        background: colors[level] || "#888",
+        background: bg || "#888",
         textTransform: "capitalize",
+        whiteSpace: "nowrap",
       }}
     >
-      {level}
+      {text}
     </span>
   );
 }
+
+Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
 
 function ShortlistTable({ companies, onSelectCompany }) {
   if (!companies || companies.length === 0) {
@@ -42,39 +58,48 @@ function ShortlistTable({ companies, onSelectCompany }) {
           <th style={{ padding: "10px 16px", textAlign: "right" }}>Turnover</th>
           <th style={{ padding: "10px 16px", textAlign: "center" }}>Fit</th>
           <th style={{ padding: "10px 16px", textAlign: "right" }}>Score</th>
+          <th style={{ padding: "10px 16px", textAlign: "center" }}>Status</th>
           <th style={{ padding: "10px 16px" }}>Explanation</th>
         </tr>
       </thead>
       <tbody>
-        {companies.map((company) => (
-          <tr
-            key={company.id}
-            onClick={() => onSelectCompany && onSelectCompany(company)}
-            style={{ cursor: onSelectCompany ? "pointer" : "default", borderBottom: "1px solid #eee" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          >
-            <td style={{ padding: "10px 16px", color: "#888", fontSize: 13 }}>{company.rank}</td>
-            <td style={{ padding: "10px 16px", fontWeight: 600 }}>
-              {onSelectCompany ? (
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); onSelectCompany(company); }}
-                  style={{ color: "#0075EB", textDecoration: "none" }}
-                >
-                  {company.name}
-                </a>
-              ) : (
-                company.name
-              )}
-            </td>
-            <td style={{ padding: "10px 16px", color: "#666", fontSize: 13 }}>{company.industry || "—"}</td>
-            <td style={{ padding: "10px 16px", textAlign: "right", fontSize: 13 }}>{company.turnover ? formatTurnover(company.turnover) : "—"}</td>
-            <td style={{ padding: "10px 16px", textAlign: "center" }}>{fitBadge(company.fit_level)}</td>
-            <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{company.score?.toFixed(2)}</td>
-            <td style={{ padding: "10px 16px", color: "#666", fontSize: 13, maxWidth: 300 }}>{company.explanation}</td>
-          </tr>
-        ))}
+        {companies.map((company) => {
+          const sm = STATE_META[company.workflow_state] || STATE_META.new_candidate;
+          return (
+            <tr
+              key={company.id}
+              onClick={() => onSelectCompany && onSelectCompany(company)}
+              style={{ cursor: onSelectCompany ? "pointer" : "default", borderBottom: "1px solid #eee" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <td style={{ padding: "10px 16px", color: "#888", fontSize: 13 }}>{company.rank}</td>
+              <td style={{ padding: "10px 16px", fontWeight: 600 }}>
+                {onSelectCompany ? (
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); onSelectCompany(company); }}
+                    style={{ color: "#0075EB", textDecoration: "none" }}
+                  >
+                    {company.name}
+                  </a>
+                ) : (
+                  company.name
+                )}
+              </td>
+              <td style={{ padding: "10px 16px", color: "#666", fontSize: 13 }}>{company.industry || "—"}</td>
+              <td style={{ padding: "10px 16px", textAlign: "right", fontSize: 13 }}>{company.turnover ? formatTurnover(company.turnover) : "—"}</td>
+              <td style={{ padding: "10px 16px", textAlign: "center" }}>
+                <Badge text={company.fit_level} bg={FIT_COLORS[company.fit_level]} />
+              </td>
+              <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{company.score?.toFixed(2)}</td>
+              <td style={{ padding: "10px 16px", textAlign: "center" }}>
+                <Badge text={sm.label} bg={sm.color} />
+              </td>
+              <td style={{ padding: "10px 16px", color: "#666", fontSize: 13, maxWidth: 280 }}>{company.explanation}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

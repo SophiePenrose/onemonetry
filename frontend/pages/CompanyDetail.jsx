@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import ScoreExplanation from "../components/ScoreExplanation";
+import WorkflowPanel from "../components/WorkflowPanel";
 
 function formatTurnover(value) {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
@@ -23,6 +24,14 @@ export default function CompanyDetail({ companyId, productMotion }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [transitions, setTransitions] = useState({});
+
+  useEffect(() => {
+    fetch("/api/workflow-states")
+      .then((res) => res.json())
+      .then((data) => setTransitions(data.transitions || {}))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!companyId || !productMotion) return;
@@ -49,44 +58,62 @@ export default function CompanyDetail({ companyId, productMotion }) {
       });
   }, [companyId, productMotion]);
 
+  function handleStateChange(data) {
+    setCompany((prev) => prev ? {
+      ...prev,
+      workflow_state: data.new_state,
+      workflow_history: data.history,
+    } : prev);
+  }
+
   if (!companyId || !productMotion) return <div>Missing company or product motion.</div>;
   if (loading) return <div style={{ color: "#888" }}>Loading…</div>;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
   if (!company) return null;
 
   return (
-    <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-      <h2 style={{ margin: "0 0 16px", fontSize: 22 }}>{company.name}</h2>
+    <div>
+      <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 22 }}>{company.name}</h2>
 
-      <Field label="Company Number">
-        <a
-          href={`https://find-and-update.company-information.service.gov.uk/company/${company.company_number}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#0075EB" }}
-        >
-          {company.company_number}
-        </a>
-      </Field>
-      <Field label="Industry">{company.industry}</Field>
-      <Field label="Turnover">{formatTurnover(company.turnover)}</Field>
-      <Field label="Employees">{company.employee_count?.toLocaleString()}</Field>
-      <Field label="Annual Report">
-        <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB" }}>View report →</a>
-      </Field>
-      <Field label="Final Score">
-        <span style={{ fontWeight: 700, fontSize: 16 }}>{company.final_score?.toFixed(2)}</span>
-      </Field>
+        <Field label="Company Number">
+          <a
+            href={`https://find-and-update.company-information.service.gov.uk/company/${company.company_number}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#0075EB" }}
+          >
+            {company.company_number}
+          </a>
+        </Field>
+        <Field label="Industry">{company.industry}</Field>
+        <Field label="Turnover">{formatTurnover(company.turnover)}</Field>
+        <Field label="Employees">{company.employee_count?.toLocaleString()}</Field>
+        <Field label="Annual Report">
+          <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB" }}>View report →</a>
+        </Field>
+        <Field label="Final Score">
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{company.final_score?.toFixed(2)}</span>
+        </Field>
 
-      <div style={{ marginTop: 20 }}>
-        <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Score Explanation</h3>
-        <ScoreExplanation
-          productFit={company.product_fit}
-          scoreBreakdown={company.score_breakdown}
-          finalScore={company.final_score}
-          explanation={company.explanation}
-        />
+        <div style={{ marginTop: 20 }}>
+          <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Score Explanation</h3>
+          <ScoreExplanation
+            productFit={company.product_fit}
+            scoreBreakdown={company.score_breakdown}
+            finalScore={company.final_score}
+            explanation={company.explanation}
+          />
+        </div>
       </div>
+
+      <WorkflowPanel
+        companyId={companyId}
+        currentState={company.workflow_state || "new_candidate"}
+        history={company.workflow_history || []}
+        transitions={transitions}
+        onStateChange={handleStateChange}
+      />
     </div>
   );
 }
