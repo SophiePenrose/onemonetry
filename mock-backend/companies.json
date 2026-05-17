@@ -559,6 +559,18 @@
         "product": "Cards",
         "strength": "weak",
         "notes": "Fuel cards only. No integrated expense management."
+      },
+      {
+        "name": "Wise Business",
+        "product": "FX",
+        "strength": "medium",
+        "notes": "Growing market share in SMB"
+      },
+      {
+        "name": "Wise Business",
+        "product": "FX",
+        "strength": "weak",
+        "notes": "Limited corporate features, mostly SMB"
       }
     ],
     "stakeholders": [
@@ -579,6 +591,20 @@
         "role": "Head of Operations",
         "email": "a.rahman@deltalogistics.example.com",
         "notes": "Interested in fleet cards for drivers."
+      },
+      {
+        "name": "New Contact",
+        "role": "VP Sales",
+        "email": "new@delta.com",
+        "linkedin": "",
+        "notes": "Met at conference"
+      },
+      {
+        "name": "Sophie Chen",
+        "role": "Head of Payments",
+        "email": "s.chen@deltalogistics.example.com",
+        "linkedin": "",
+        "notes": "New hire, enthusiastic about modernising payment infrastructure"
       }
     ],
     "cadence_history": [
@@ -611,6 +637,18 @@
         "type": "email",
         "summary": "Proposal sent. Awaiting internal review.",
         "outcome": "pending"
+      },
+      {
+        "date": "2026-05-17",
+        "type": "call",
+        "summary": "Follow-up call with CFO about proposal",
+        "outcome": "positive"
+      },
+      {
+        "date": "2026-05-17",
+        "type": "meeting",
+        "summary": "Quarterly review meeting with CFO and treasury team. Agreed to move forward with FX pilot.",
+        "outcome": "positive"
       }
     ],
     "segment": "Mid-Market",

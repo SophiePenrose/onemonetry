@@ -1115,6 +1115,102 @@ app.post("/api/llm/extract", async (req, res) => {
   }
 });
 
+// --- Cadence, Stakeholder, Competitor CRUD ---
+
+app.post("/api/company/:id/cadence", (req, res) => {
+  const { id } = req.params;
+  const { date, type, summary, outcome } = req.body;
+  if (!date || !type || !summary) {
+    return res.status(400).json({ error: "date, type, and summary are required" });
+  }
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const entry = { date, type, summary, outcome: outcome || null };
+  if (!company.cadence_history) company.cadence_history = [];
+  company.cadence_history.push(entry);
+
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.status(201).json({ entry, total: company.cadence_history.length });
+});
+
+app.post("/api/company/:id/stakeholders", (req, res) => {
+  const { id } = req.params;
+  const { name, role, email, linkedin, notes } = req.body;
+  if (!name) return res.status(400).json({ error: "name is required" });
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const stakeholder = { name, role: role || "", email: email || "", linkedin: linkedin || "", notes: notes || "" };
+  if (!company.stakeholders) company.stakeholders = [];
+  company.stakeholders.push(stakeholder);
+
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.status(201).json({ stakeholder, total: company.stakeholders.length });
+});
+
+app.delete("/api/company/:id/stakeholders/:idx", (req, res) => {
+  const { id, idx } = req.params;
+  const index = parseInt(idx);
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (!company.stakeholders || index < 0 || index >= company.stakeholders.length) {
+    return res.status(404).json({ error: "Stakeholder not found" });
+  }
+
+  company.stakeholders.splice(index, 1);
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.json({ deleted: true, remaining: company.stakeholders.length });
+});
+
+app.post("/api/company/:id/competitors", (req, res) => {
+  const { id } = req.params;
+  const { name, product, strength, notes } = req.body;
+  if (!name) return res.status(400).json({ error: "name is required" });
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const competitor = { name, product: product || "", strength: strength || "medium", notes: notes || "" };
+  if (!company.competitors) company.competitors = [];
+  company.competitors.push(competitor);
+
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.status(201).json({ competitor, total: company.competitors.length });
+});
+
+app.delete("/api/company/:id/competitors/:idx", (req, res) => {
+  const { id, idx } = req.params;
+  const index = parseInt(idx);
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (!company.competitors || index < 0 || index >= company.competitors.length) {
+    return res.status(404).json({ error: "Competitor not found" });
+  }
+
+  company.competitors.splice(index, 1);
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+
+  res.json({ deleted: true, remaining: company.competitors.length });
+});
+
 // --- Serve frontend in production ---
 
 const frontendDist = path.join(process.cwd(), "frontend", "dist");

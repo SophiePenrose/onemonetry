@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
-import { createReadStream } from "fs";
+// bulk-processor.js
 
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
 const TURNOVER_THRESHOLD = 20_000_000;
@@ -131,7 +131,6 @@ export async function processAccountsZip(zipUrl, filename, onProgress) {
   }
 
   const zipPath = path.join(DATA_DIR, filename);
-  let totalFiles = 0;
   let qualifyingCompanies = 0;
   let belowThreshold = 0;
   let parseErrors = 0;
@@ -167,7 +166,7 @@ export async function processAccountsZip(zipUrl, filename, onProgress) {
 
     const zip = new AdmZip(zipPath);
     const entries = zip.getEntries();
-    totalFiles = entries.length;
+    const totalFiles = entries.length;
 
     if (onProgress) onProgress({ stage: "processing", filename, totalFiles });
 

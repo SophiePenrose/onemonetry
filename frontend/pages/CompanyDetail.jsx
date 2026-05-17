@@ -70,6 +70,13 @@ export default function CompanyDetail({ companyId }) {
     } : prev);
   }
 
+  function refreshCompany() {
+    fetch(`/api/company/${encodeURIComponent(companyId)}`)
+      .then((res) => res.json())
+      .then((data) => setCompany(data.company))
+      .catch(() => {});
+  }
+
   if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <DetailSkeleton />;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
@@ -157,8 +164,8 @@ export default function CompanyDetail({ companyId }) {
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-        <CompetitorPanel competitors={company.competitors} />
-        <StakeholderPanel stakeholders={company.stakeholders} />
+        <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} />
+        <StakeholderPanel stakeholders={company.stakeholders} companyId={companyId} onUpdated={refreshCompany} />
       </div>
 
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />
@@ -168,7 +175,7 @@ export default function CompanyDetail({ companyId }) {
         motions={company.all_motion_scores || []}
       />
 
-      <CadenceLog cadenceHistory={company.cadence_history} />
+      <CadenceLog cadenceHistory={company.cadence_history} companyId={companyId} onEntryAdded={refreshCompany} />
 
       <WorkflowPanel
         companyId={companyId}
