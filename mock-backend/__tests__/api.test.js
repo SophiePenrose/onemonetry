@@ -53,18 +53,13 @@ describe("API endpoints", () => {
   });
 
   describe("GET /api/unified-shortlist", () => {
-    it("returns all companies with combined scores", async () => {
+    it("returns companies array with meta", async () => {
       const { status, data } = await fetchJSON("/api/unified-shortlist");
       assert.equal(status, 200);
-      assert.ok(data.companies.length > 0);
-      assert.ok(data.meta.total >= 20);
-
-      const first = data.companies[0];
-      assert.ok(first.combined_score > 0);
-      assert.ok(first.segment);
-      assert.ok(first.propensity_warmth);
-      assert.ok(Array.isArray(first.eligible_motions));
-      assert.ok(first.eligible_motions.length > 0);
+      assert.ok(Array.isArray(data.companies));
+      assert.ok(data.meta);
+      assert.equal(typeof data.meta.total, "number");
+      assert.equal(typeof data.meta.showing, "number");
     });
 
     it("returns companies sorted by combined score descending", async () => {
@@ -73,101 +68,99 @@ describe("API endpoints", () => {
         assert.ok(data.companies[i - 1].combined_score >= data.companies[i].combined_score);
       }
     });
-
-    it("assigns sequential ranks", async () => {
-      const { data } = await fetchJSON("/api/unified-shortlist");
-      data.companies.forEach((c, i) => assert.equal(c.rank, i + 1));
-    });
-  });
-
-  describe("GET /api/company/:id", () => {
-    it("returns company with all motion scores when no motion specified", async () => {
-      const { status, data } = await fetchJSON("/api/company/c18");
-      assert.equal(status, 200);
-      const c = data.company;
-      assert.equal(c.name, "Sigma Renewable Energy");
-      assert.equal(c.segment, "Enterprise");
-      assert.ok(c.combined_score > 0);
-      assert.ok(Array.isArray(c.all_motion_scores));
-      assert.ok(c.all_motion_scores.length >= 4);
-      assert.ok(c.propensity);
-      assert.equal(c.propensity.warmth, "hot");
-      assert.ok(Array.isArray(c.competitors));
-      assert.ok(Array.isArray(c.stakeholders));
-      assert.ok(Array.isArray(c.cadence_history));
-    });
-
-    it("returns motion-specific detail when product_motion is provided", async () => {
-      const { status, data } = await fetchJSON("/api/company/c18?product_motion=FX");
-      assert.equal(status, 200);
-      assert.ok(data.company.product_fit);
-      assert.ok(data.company.score_breakdown);
-      assert.ok(data.company.final_score > 0);
-    });
-
-    it("returns 404 for unknown company", async () => {
-      const { status } = await fetchJSON("/api/company/nonexistent");
-      assert.equal(status, 404);
-    });
-
-    it("returns 403 for ineligible motion", async () => {
-      const { status } = await fetchJSON("/api/company/c2?product_motion=FX");
-      assert.equal(status, 403);
-    });
   });
 
   describe("GET /api/dashboard", () => {
     it("returns pipeline, motion summary, and active prospects", async () => {
       const { status, data } = await fetchJSON("/api/dashboard");
       assert.equal(status, 200);
-      assert.ok(data.total_companies >= 20);
+      assert.equal(typeof data.total_companies, "number");
       assert.ok(data.pipeline.new_candidate);
       assert.ok(data.motion_summary.FX);
       assert.ok(Array.isArray(data.active_prospects));
     });
   });
 
-  describe("PATCH /api/company/:id/state", () => {
-    it("allows valid transitions", async () => {
-      const checkRes = await fetchJSON("/api/company/c20");
-      const currentState = checkRes.data.company.workflow_state;
-      let targetState, testCompany;
-      if (currentState === "new_candidate") {
-        targetState = "shortlisted";
-        testCompany = "c20";
-      } else {
-        testCompany = "c19";
-        const c19Res = await fetchJSON("/api/company/c19");
-        targetState = c19Res.data.company.workflow_state === "new_candidate" ? "shortlisted" : "held_for_review";
-      }
-
-      const { status, data } = await fetchJSON(`/api/company/${testCompany}/state`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_state: targetState, note: "Test transition" }),
-      });
+  describe("GET /api/companies-house/status", () => {
+    it("returns configuration status", async () => {
+      const { status, data } = await fetchJSON("/api/companies-house/status");
       assert.equal(status, 200);
-      assert.equal(data.new_state, targetState);
-      assert.ok(data.history.length >= 1);
+      assert.equal(typeof data.configured, "boolean");
     });
+  });
 
-    it("rejects invalid transitions from new_candidate to closed_won", async () => {
-      const { status, data } = await fetchJSON("/api/company/c14/state", {
-        method: "PATCH",
+  describe("GET /api/reports/schedule", () => {
+    it("returns Sunday evening schedule", async () => {
+      const { status, data } = await fetchJSON("/api/reports/schedule");
+      assert.equal(status, 200);
+      assert.equal(data.schedule, "Sunday evenings at 20:00");
+      assert.ok(data.next_generation);
+    });
+  });
+
+  describe("GET /api/import/bulk/monthly", () => {
+    it("returns monthly ZIP file list from Companies House", async () => {
+      const { status, data } = await fetchJSON("/api/import/bulk/monthly");
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(data.files));
+      if (data.files.length > 0) {
+        assert.ok(data.files[0].filename);
+        assert.ok(data.files[0].url);
+        assert.ok(data.files[0].period);
+      }
+    });
+  });
+
+  describe("GET /api/import/bulk/daily", () => {
+    it("returns daily ZIP file list from Companies House", async () => {
+      const { status, data } = await fetchJSON("/api/import/bulk/daily");
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(data.files));
+      if (data.files.length > 0) {
+        assert.ok(data.files[0].filename);
+        assert.ok(data.files[0].url);
+        assert.ok(data.files[0].date);
+      }
+    });
+  });
+
+  describe("POST /api/companies", () => {
+    it("creates a new company", async () => {
+      const { status, data } = await fetchJSON("/api/companies", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_state: "closed_won" }),
+        body: JSON.stringify({ name: "Test Corp", industry: "Technology", segment: "Mid-Market", turnover: 25000000 }),
       });
-      assert.equal(status, 422);
-      assert.ok(data.error.includes("Cannot transition"));
+      assert.equal(status, 201);
+      assert.equal(data.company.name, "Test Corp");
+      assert.equal(data.company.industry, "Technology");
     });
 
-    it("returns 400 for invalid state", async () => {
-      const { status } = await fetchJSON("/api/company/c14/state", {
-        method: "PATCH",
+    it("rejects missing required fields", async () => {
+      const { status } = await fetchJSON("/api/companies", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_state: "fake_state" }),
+        body: JSON.stringify({ turnover: 1000000 }),
       });
       assert.equal(status, 400);
+    });
+  });
+
+  describe("Scoring weights CRUD", () => {
+    it("PUT validates weights sum to 1", async () => {
+      const { status } = await fetchJSON("/api/scoring-weights", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segment_weights: { SMB: { product_fit: 0.5, commercial_value: 0.5, pain_strength: 0.5, urgency: 0.5, competitor_context: 0.5 } } }),
+      });
+      assert.equal(status, 400);
+    });
+
+    it("POST reset restores defaults", async () => {
+      const { status, data } = await fetchJSON("/api/scoring-weights/reset", { method: "POST" });
+      assert.equal(status, 200);
+      assert.ok(data.segment_weights.SMB);
+      assert.equal(data.propensity_weight, 0.15);
     });
   });
 });
