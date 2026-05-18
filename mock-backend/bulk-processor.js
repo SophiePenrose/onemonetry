@@ -66,47 +66,107 @@ function extractCompanyNumberFromFilename(filename) {
   return match ? match[1] : null;
 }
 
+// --- Scrape actual available files from CH download pages ---
+
+async function scrapeAvailableZips(pageUrl, linkPattern) {
+  try {
+    const res = await fetch(pageUrl);
+    if (!res.ok) return [];
+    const html = await res.text();
+    const matches = [...html.matchAll(new RegExp(`href="(${linkPattern})"`, "gi"))];
+    return matches.map((m) => m[1]);
+  } catch {
+    return [];
+  }
+}
+
 // --- Monthly ZIP URLs ---
 
-export function getMonthlyZipURLs(monthsBack = 24) {
-  const urls = [];
-  const now = new Date();
-  for (let i = 1; i <= monthsBack; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const filename = `Accounts_Monthly_Data-${year}-${month}.zip`;
-    urls.push({
-      filename,
-      url: `${CH_DOWNLOAD_BASE}/${filename}`,
-      period: `${year}-${month}`,
-      processed: isZipProcessed(filename),
-    });
+let monthlyCache = { files: [], fetched: 0 };
+
+export async function getMonthlyZipURLs() {
+  if (Date.now() - monthlyCache.fetched < 3600000 && monthlyCache.files.length > 0) {
+    return monthlyCache.files;
   }
-  return urls;
+
+  const currentFiles = await scrapeAvailableZips(
+    `${CH_DOWNLOAD_BASE}/en_monthlyaccountsdata.html`,
+    "Accounts_Monthly_Data-[^\"]+\\.zip"
+  );
+
+  const archiveFiles = await scrapeAvailableZips(
+    `${CH_DOWNLOAD_BASE}/historicmonthlyaccountsdata.html`,
+    "archive/Accounts_Monthly_Data-[^\"]+\\.zip"
+  );
+
+  const allFiles = [
+    ...currentFiles.map((f) => ({
+      filename: f,
+      url: `${CH_DOWNLOAD_BASE}/${f}`,
+      period: extractPeriodFromFilename(f),
+      source: "current",
+      processed: isZipProcessed(f),
+    })),
+    ...archiveFiles.map((f) => ({
+      filename: f.replace("archive/", ""),
+      url: `${CH_DOWNLOAD_BASE}/${f}`,
+      period: extractPeriodFromFilename(f),
+      source: "archive",
+      processed: isZipProcessed(f.replace("archive/", "")),
+    })),
+  ];
+
+  allFiles.sort((a, b) => b.period.localeCompare(a.period));
+  monthlyCache = { files: allFiles, fetched: Date.now() };
+  return allFiles;
+}
+
+function extractPeriodFromFilename(filename) {
+  const monthNames = {
+    January: "01", February: "02", March: "03", April: "04",
+    May: "05", June: "06", July: "07", August: "08",
+    September: "09", October: "10", November: "11", December: "12",
+  };
+  for (const [name, num] of Object.entries(monthNames)) {
+    const match = filename.match(new RegExp(`${name}(\\d{4})`));
+    if (match) return `${match[1]}-${num}`;
+  }
+  const rangeMatch = filename.match(/(\d{4})\.zip/);
+  if (rangeMatch) return `${rangeMatch[1]}-12`;
+  return "unknown";
 }
 
 // --- Daily ZIP URLs ---
 
-export function getDailyZipURLs(daysBack = 14) {
-  const urls = [];
-  const now = new Date();
-  for (let i = 1; i <= daysBack; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const day = d.getDay();
-    if (day === 0) continue; // no Sunday files
-    const dateStr = d.toISOString().slice(0, 10);
-    const filename = `Accounts_Bulk_Data-${dateStr}.zip`;
-    urls.push({
-      filename,
-      url: `${CH_DOWNLOAD_BASE}/${filename}`,
-      date: dateStr,
-      day_name: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day],
-      processed: isZipProcessed(filename),
-    });
+let dailyCache = { files: [], fetched: 0 };
+
+export async function getDailyZipURLs() {
+  if (Date.now() - dailyCache.fetched < 3600000 && dailyCache.files.length > 0) {
+    return dailyCache.files;
   }
-  return urls;
+
+  const files = await scrapeAvailableZips(
+    `${CH_DOWNLOAD_BASE}/en_accountsdata.html`,
+    "Accounts_Bulk_Data-[^\"]+\\.zip"
+  );
+
+  const result = files.map((f) => {
+    const dateMatch = f.match(/(\d{4}-\d{2}-\d{2})/);
+    const dateStr = dateMatch ? dateMatch[1] : "unknown";
+    const d = new Date(dateStr + "T00:00:00");
+    const dayName = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] || "";
+    return {
+      filename: f,
+      url: `${CH_DOWNLOAD_BASE}/${f}`,
+      date: dateStr,
+      day_name: dayName,
+      processed: isZipProcessed(f),
+    };
+  });
+
+  result.sort((a, b) => b.date.localeCompare(a.date));
+  dailyCache = { files: result, fetched: Date.now() };
+  return result;
 }
 
 // --- Download a ZIP file ---

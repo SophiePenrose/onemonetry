@@ -1000,14 +1000,22 @@ app.get("/api/import/jobs/:id", (req, res) => {
 
 // --- Bulk ZIP Processing ---
 
-app.get("/api/import/bulk/monthly", (req, res) => {
-  const months = parseInt(req.query.months) || 24;
-  res.json({ files: getMonthlyZipURLs(months) });
+app.get("/api/import/bulk/monthly", async (_req, res) => {
+  try {
+    const files = await getMonthlyZipURLs();
+    res.json({ files });
+  } catch (err) {
+    res.status(500).json({ error: err.message, files: [] });
+  }
 });
 
-app.get("/api/import/bulk/daily", (req, res) => {
-  const days = parseInt(req.query.days) || 14;
-  res.json({ files: getDailyZipURLs(days) });
+app.get("/api/import/bulk/daily", async (_req, res) => {
+  try {
+    const files = await getDailyZipURLs();
+    res.json({ files });
+  } catch (err) {
+    res.status(500).json({ error: err.message, files: [] });
+  }
 });
 
 app.post("/api/import/bulk/process", async (req, res) => {
