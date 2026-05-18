@@ -1,0 +1,7 @@
+node_modules
+.git
+*.md
+mock-backend/onemonetry.db*
+mock-backend/workflow_state.json
+mock-backend/weekly_reports.json
+mock-backend/exclusions.json
