@@ -154,8 +154,18 @@ function ReportDetail({ reportId, onBack, onNavigateToCompany }) {
         ← Back to Reports
       </button>
 
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <h2 style={{ margin: 0, fontSize: 20 }}>Week of {formatWeek(report.week_label)}</h2>
+        <a
+          href={`/api/export/report/${encodeURIComponent(reportId)}?format=csv`}
+          download
+          style={{
+            padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
+            background: "#fff", color: "#555", fontSize: 13, textDecoration: "none",
+          }}
+        >
+          ↓ Export CSV
+        </a>
       </div>
       <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>
         Generated {formatDate(report.generated_at)} · {report.companies.length} companies · {changedCount} status {changedCount === 1 ? "change" : "changes"} since generation

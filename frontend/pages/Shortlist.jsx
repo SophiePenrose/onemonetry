@@ -140,6 +140,17 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               fontSize: 13, width: 200,
             }}
           />
+          <a
+            href="/api/export/shortlist?format=csv"
+            download
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
+              background: "#fff", color: "#555", fontSize: 13, textDecoration: "none",
+              display: "inline-flex", alignItems: "center", cursor: "pointer",
+            }}
+          >
+            ↓ CSV
+          </a>
           {onShowAddCompany && (
             <button
               onClick={onShowAddCompany}

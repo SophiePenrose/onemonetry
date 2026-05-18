@@ -10,6 +10,8 @@ import {
   listReports,
   getExclusions as dbGetExclusions,
   setExclusions as dbSetExclusions,
+  getSetting,
+  setSetting,
   createImportJob,
   updateImportJob,
   getImportJob,
@@ -101,7 +103,7 @@ const VALID_SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 
 const LAYER_NAMES = ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"];
 
-const SEGMENT_WEIGHTS = {
+const DEFAULT_SEGMENT_WEIGHTS = {
   SMB: {
     product_fit: 0.35,
     commercial_value: 0.15,
@@ -125,9 +127,18 @@ const SEGMENT_WEIGHTS = {
   },
 };
 
-const DEFAULT_WEIGHTS = SEGMENT_WEIGHTS["Mid-Market"];
+const DEFAULT_PROPENSITY_WEIGHT = 0.15;
 
-const PROPENSITY_WEIGHT = 0.15;
+function getSegmentWeights() {
+  return getSetting("segment_weights", DEFAULT_SEGMENT_WEIGHTS);
+}
+
+function getPropensityWeight() {
+  return getSetting("propensity_weight", DEFAULT_PROPENSITY_WEIGHT);
+}
+
+const DEFAULT_WEIGHTS = DEFAULT_SEGMENT_WEIGHTS["Mid-Market"];
+const PROPENSITY_WEIGHT = DEFAULT_PROPENSITY_WEIGHT;
 
 const MERCHANT_MOTIONS = ["Merchant Acquiring", "Revolut Pay"];
 const MERCHANT_BOOST_MAX = 0.08;
@@ -142,7 +153,8 @@ function computeMerchantBoost(merchantSpend, motion) {
 }
 
 function getWeightsForSegment(segment) {
-  return SEGMENT_WEIGHTS[segment] || DEFAULT_WEIGHTS;
+  const weights = getSegmentWeights();
+  return weights[segment] || DEFAULT_WEIGHTS;
 }
 
 function computeCompositeScore(layers, weights = DEFAULT_WEIGHTS) {
@@ -209,8 +221,9 @@ function computeCompanyProfile(company) {
     ? Math.round((motionScores.reduce((s, m) => s + m.score, 0) / motionScores.length) * 100) / 100
     : 0;
 
+  const propWeight = getPropensityWeight();
   const baseScore = bestScore * 0.6 + avgScore * 0.4;
-  const adjustedScore = baseScore * (1 - PROPENSITY_WEIGHT) + propensity.score * PROPENSITY_WEIGHT;
+  const adjustedScore = baseScore * (1 - propWeight) + propensity.score * propWeight;
   const combinedScore = Math.round(adjustedScore * 100) / 100;
 
   return {
@@ -247,11 +260,49 @@ app.get("/api/workflow-states", (_req, res) => {
 
 app.get("/api/scoring-weights", (_req, res) => {
   res.json({
-    default_weights: DEFAULT_WEIGHTS,
-    segment_weights: SEGMENT_WEIGHTS,
+    segment_weights: getSegmentWeights(),
+    propensity_weight: getPropensityWeight(),
+    defaults: { segment_weights: DEFAULT_SEGMENT_WEIGHTS, propensity_weight: DEFAULT_PROPENSITY_WEIGHT },
     layers: LAYER_NAMES,
     segments: VALID_SEGMENTS,
-    propensity_weight: PROPENSITY_WEIGHT,
+  });
+});
+
+app.put("/api/scoring-weights", (req, res) => {
+  const { segment_weights, propensity_weight } = req.body;
+
+  if (segment_weights) {
+    for (const [seg, weights] of Object.entries(segment_weights)) {
+      if (!VALID_SEGMENTS.includes(seg)) continue;
+      const total = Object.values(weights).reduce((s, v) => s + v, 0);
+      if (Math.abs(total - 1) > 0.01) {
+        return res.status(400).json({ error: `${seg} weights must sum to 1.0 (got ${total.toFixed(2)})` });
+      }
+    }
+    setSetting("segment_weights", { ...getSegmentWeights(), ...segment_weights });
+  }
+
+  if (propensity_weight !== undefined) {
+    if (propensity_weight < 0 || propensity_weight > 0.5) {
+      return res.status(400).json({ error: "propensity_weight must be between 0 and 0.5" });
+    }
+    setSetting("propensity_weight", propensity_weight);
+  }
+
+  res.json({
+    segment_weights: getSegmentWeights(),
+    propensity_weight: getPropensityWeight(),
+    message: "Scoring weights updated. Rankings will reflect new weights.",
+  });
+});
+
+app.post("/api/scoring-weights/reset", (_req, res) => {
+  setSetting("segment_weights", DEFAULT_SEGMENT_WEIGHTS);
+  setSetting("propensity_weight", DEFAULT_PROPENSITY_WEIGHT);
+  res.json({
+    segment_weights: DEFAULT_SEGMENT_WEIGHTS,
+    propensity_weight: DEFAULT_PROPENSITY_WEIGHT,
+    message: "Scoring weights reset to defaults.",
   });
 });
 
@@ -1112,6 +1163,97 @@ app.post("/api/llm/extract", async (req, res) => {
     res.json({ company_id, product_motion: motion, evidence });
   } catch (err) {
     res.status(500).json({ error: "Evidence extraction failed", detail: err.message });
+  }
+});
+
+// --- Export ---
+
+app.get("/api/export/shortlist", (req, res) => {
+  const { format } = req.query;
+  const COMPANIES = loadCompanies();
+
+  const entries = COMPANIES
+    .filter((c) => {
+      const excl = isExcluded(c);
+      if (excl.excluded) return false;
+      const supp = isSuppressed(c.id);
+      if (supp.suppressed) return false;
+      return true;
+    })
+    .map((c) => {
+      const profile = computeCompanyProfile(c);
+      if (profile.eligible_motion_count === 0) return null;
+      const ws = getCompanyState(c.id);
+      return {
+        rank: 0,
+        name: c.name,
+        company_number: c.company_number,
+        industry: c.industry,
+        segment: profile.segment,
+        turnover: c.turnover,
+        employee_count: c.employee_count,
+        combined_score: profile.combined_score,
+        best_motion: profile.best_motion?.motion || "",
+        best_score: profile.best_motion?.score || 0,
+        eligible_motions: profile.motion_scores.map((m) => m.motion).join("; "),
+        motion_count: profile.eligible_motion_count,
+        workflow_state: ws.state,
+        propensity_warmth: profile.propensity.warmth,
+        propensity_score: profile.propensity.score,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.combined_score - a.combined_score)
+    .map((e, i) => ({ ...e, rank: i + 1 }));
+
+  if (format === "csv") {
+    const headers = Object.keys(entries[0] || {});
+    const csvLines = [headers.join(",")];
+    for (const row of entries) {
+      csvLines.push(headers.map((h) => {
+        const val = String(row[h] ?? "");
+        return val.includes(",") || val.includes('"') ? `"${val.replace(/"/g, '""')}"` : val;
+      }).join(","));
+    }
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="shortlist-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csvLines.join("\n"));
+  } else {
+    res.json({ companies: entries, exported_at: new Date().toISOString() });
+  }
+});
+
+app.get("/api/export/report/:id", (req, res) => {
+  const { id } = req.params;
+  const { format } = req.query;
+  const report = dbGetReport(id);
+  if (!report) return res.status(404).json({ error: "Report not found" });
+
+  const companies = report.companies.map((c) => {
+    const ws = getCompanyState(c.company_id);
+    return {
+      ...c,
+      current_workflow_state: ws.state,
+      state_changed: c.workflow_state_at_generation !== ws.state,
+    };
+  });
+
+  if (format === "csv") {
+    const headers = ["rank", "name", "company_number", "industry", "turnover", "best_motion", "score", "fit_level", "status_then", "status_now", "state_changed"];
+    const csvLines = [headers.join(",")];
+    companies.forEach((c, i) => {
+      csvLines.push([
+        i + 1, `"${c.name}"`, c.company_id, `"${c.industry}"`, c.turnover,
+        `"${c.best_motion}"`, c.score, c.fit_level,
+        c.workflow_state_at_generation, c.current_workflow_state,
+        c.state_changed,
+      ].join(","));
+    });
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="report-${report.week_label}.csv"`);
+    res.send(csvLines.join("\n"));
+  } else {
+    res.json({ report: { ...report, companies }, exported_at: new Date().toISOString() });
   }
 });
 
