@@ -96,24 +96,35 @@ export async function getMonthlyZipURLs() {
 
   const archiveFiles = await scrapeAvailableZips(
     `${CH_DOWNLOAD_BASE}/historicmonthlyaccountsdata.html`,
-    "archive/Accounts_Monthly_Data-[^\"]+\\.zip"
+    "(?:archive/)?Accounts_Monthly_Data-[^\"]+\\.zip"
   );
 
+  const seenFilenames = new Set();
+
   const allFiles = [
-    ...currentFiles.map((f) => ({
-      filename: f,
-      url: `${CH_DOWNLOAD_BASE}/${f}`,
-      period: extractPeriodFromFilename(f),
-      source: "current",
-      processed: isZipProcessed(f),
-    })),
-    ...archiveFiles.map((f) => ({
-      filename: f.replace("archive/", ""),
-      url: `${CH_DOWNLOAD_BASE}/${f}`,
-      period: extractPeriodFromFilename(f),
-      source: "archive",
-      processed: isZipProcessed(f.replace("archive/", "")),
-    })),
+    ...currentFiles.map((f) => {
+      const key = f.replace("archive/", "");
+      seenFilenames.add(key);
+      return {
+        filename: key,
+        url: `${CH_DOWNLOAD_BASE}/${f}`,
+        period: extractPeriodFromFilename(f),
+        source: "current",
+        processed: isZipProcessed(key),
+      };
+    }),
+    ...archiveFiles
+      .filter((f) => !seenFilenames.has(f.replace("archive/", "")))
+      .map((f) => {
+        const key = f.replace("archive/", "");
+        return {
+          filename: key,
+          url: `${CH_DOWNLOAD_BASE}/${f}`,
+          period: extractPeriodFromFilename(f),
+          source: "archive",
+          processed: isZipProcessed(key),
+        };
+      }),
   ];
 
   allFiles.sort((a, b) => b.period.localeCompare(a.period));
