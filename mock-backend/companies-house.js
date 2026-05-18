@@ -37,7 +37,10 @@ export async function lookupCompany(companyNumber) {
   const padded = companyNumber.toString().padStart(8, "0");
 
   if (!CH_API_KEY) {
-    return mockCompanyLookup(padded);
+    return {
+      error: true,
+      message: "COMPANIES_HOUSE_API_KEY not set. Please configure the API key to enable live lookups.",
+    };
   }
 
   const profile = await chFetch(`/company/${padded}`);
@@ -81,45 +84,7 @@ export async function lookupCompany(companyNumber) {
   };
 }
 
-function mockCompanyLookup(companyNumber) {
-  const mockData = {
-    "00445790": { name: "Tesco PLC", industry: "Retail", turnover: 65000000000, employees: 300000, sic: ["47110"] },
-    "00218442": { name: "British American Tobacco p.l.c.", industry: "Tobacco", turnover: 25000000000, employees: 52000, sic: ["12000"] },
-    "02400871": { name: "JD Sports Fashion Plc", industry: "Retail", turnover: 10000000000, employees: 60000, sic: ["47640"] },
-    "01397169": { name: "Associated British Foods plc", industry: "Food & Beverage", turnover: 19000000000, employees: 128000, sic: ["10890"] },
-    "03824658": { name: "Rightmove Group Limited", industry: "Technology", turnover: 365000000, employees: 800, sic: ["63120"] },
-  };
-
-  const mock = mockData[companyNumber];
-  if (mock) {
-    return {
-      company_number: companyNumber,
-      name: mock.name,
-      status: "active",
-      type: "plc",
-      sic_codes: mock.sic,
-      industry_hint: mock.industry,
-      turnover_hint: mock.turnover,
-      employee_hint: mock.employees,
-      recent_filings: [
-        { date: "2025-12-15", description: "Full accounts made up to 30 September 2025", type: "AA" },
-        { date: "2024-12-18", description: "Full accounts made up to 30 September 2024", type: "AA" },
-      ],
-      source: "mock",
-    };
-  }
-
-  return {
-    company_number: companyNumber,
-    name: `Company ${companyNumber}`,
-    status: "active",
-    type: "ltd",
-    sic_codes: [],
-    recent_filings: [],
-    source: "mock",
-    note: "No mock data available for this company number. Set COMPANIES_HOUSE_API_KEY for live lookups.",
-  };
-}
+// Mock lookup removed — all data comes from live Companies House API
 
 // --- CSV Import ---
 
