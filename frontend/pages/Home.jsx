@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
+import { PipelineFunnel, ScoreDistribution } from "../components/DashboardCharts";
 
 const STATE_META = {
   new_candidate: { label: "New", color: "#6c757d" },
@@ -74,12 +75,19 @@ Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
 
 export default function Home({ onNavigateToCompany }) {
   const [data, setData] = useState(null);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/dashboard")
-      .then((res) => res.json())
-      .then((d) => { setData(d); setLoading(false); })
+    Promise.all([
+      fetch("/api/dashboard").then((r) => r.json()),
+      fetch("/api/unified-shortlist").then((r) => r.json()),
+    ])
+      .then(([dash, shortlist]) => {
+        setData(dash);
+        setCompanies(shortlist.companies || []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
 
@@ -110,6 +118,11 @@ export default function Home({ onNavigateToCompany }) {
             return p ? <PipelineCard key={stateId} count={p.count} label={p.label} color={p.color} /> : null;
           })}
         </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+        <PipelineFunnel pipeline={data.pipeline} />
+        <ScoreDistribution companies={companies} />
       </div>
 
       <div style={{ marginBottom: 24 }}>

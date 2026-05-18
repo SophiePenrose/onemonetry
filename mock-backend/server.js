@@ -564,6 +564,7 @@ app.get("/api/company/:id", (req, res) => {
         competitors: company.competitors || [],
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
+        notes: getSetting(`notes_${company.id}`, ""),
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -596,6 +597,7 @@ app.get("/api/company/:id", (req, res) => {
         competitors: company.competitors || [],
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
+        notes: getSetting(`notes_${company.id}`, ""),
       },
     });
   }
@@ -679,6 +681,15 @@ function generateReportSnapshot(COMPANIES, topN = 20) {
   entries.sort((a, b) => b.score - a.score);
   return entries.slice(0, topN);
 }
+
+app.get("/api/reports/schedule", (_req, res) => {
+  const nextRun = getNextSundayEvening();
+  res.json({
+    schedule: "Sunday evenings at 20:00",
+    next_generation: nextRun.toISOString(),
+    note: "Report will be ready for Monday morning review.",
+  });
+});
 
 app.get("/api/reports", (_req, res) => {
   const rows = listReports();
@@ -1257,6 +1268,22 @@ app.get("/api/export/report/:id", (req, res) => {
   }
 });
 
+// --- Company Notes ---
+
+app.get("/api/company/:id/notes", (req, res) => {
+  const { id } = req.params;
+  const notes = getSetting(`notes_${id}`, "");
+  res.json({ company_id: id, notes });
+});
+
+app.put("/api/company/:id/notes", (req, res) => {
+  const { id } = req.params;
+  const { notes } = req.body;
+  if (notes === undefined) return res.status(400).json({ error: "notes field required" });
+  setSetting(`notes_${id}`, notes);
+  res.json({ company_id: id, notes, saved_at: new Date().toISOString() });
+});
+
 // --- Cadence, Stakeholder, Competitor CRUD ---
 
 app.post("/api/company/:id/cadence", (req, res) => {
@@ -1364,7 +1391,63 @@ if (fs.existsSync(frontendDist)) {
   console.log("Serving frontend from", frontendDist);
 }
 
+// --- Weekly Report Auto-Generation (Sunday evenings) ---
+
+let reportScheduleTimer = null;
+
+function getNextSundayEvening() {
+  const now = new Date();
+  const day = now.getDay();
+  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+  const next = new Date(now);
+  next.setDate(now.getDate() + daysUntilSunday);
+  next.setHours(20, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 7);
+  return next;
+}
+
+function scheduleWeeklyReport() {
+  const nextRun = getNextSundayEvening();
+  const delay = nextRun.getTime() - Date.now();
+
+  console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
+
+  reportScheduleTimer = setTimeout(() => {
+    generateAndSaveWeeklyReport();
+    scheduleWeeklyReport();
+  }, delay);
+}
+
+function generateAndSaveWeeklyReport() {
+  try {
+    const COMPANIES = loadCompanies();
+    const now = new Date();
+    const weekLabel = getWeekLabel(now);
+
+    const existing = getReportByWeek(weekLabel);
+    if (existing) {
+      console.log(`Weekly report for ${weekLabel} already exists, skipping.`);
+      return;
+    }
+
+    const snapshot = generateReportSnapshot(COMPANIES);
+    const report = {
+      id: `report-${weekLabel}`,
+      week_label: weekLabel,
+      generated_at: now.toISOString(),
+      companies: snapshot,
+    };
+
+    dbSaveReport(report);
+    console.log(`Weekly report generated: ${report.id} (${snapshot.length} companies)`);
+  } catch (err) {
+    console.error("Failed to auto-generate weekly report:", err.message);
+  }
+}
+
+
 app.listen(PORT, () => {
   console.log(`Onemonetry running on http://localhost:${PORT}`);
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
+  scheduleWeeklyReport();
 });

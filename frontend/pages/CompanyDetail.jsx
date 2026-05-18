@@ -5,6 +5,7 @@ import WorkflowPanel from "../components/WorkflowPanel";
 import CompetitorPanel from "../components/CompetitorPanel";
 import StakeholderPanel from "../components/StakeholderPanel";
 import CadenceLog from "../components/CadenceLog";
+import NotesPanel from "../components/NotesPanel";
 import EvidencePanel from "../components/EvidencePanel";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
@@ -174,6 +175,8 @@ export default function CompanyDetail({ companyId }) {
         companyId={companyId}
         motions={company.all_motion_scores || []}
       />
+
+      <NotesPanel companyId={companyId} initialNotes={company.notes} />
 
       <CadenceLog cadenceHistory={company.cadence_history} companyId={companyId} onEntryAdded={refreshCompany} />
 

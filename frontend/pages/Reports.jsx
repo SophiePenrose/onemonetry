@@ -256,6 +256,7 @@ export default function Reports({ onNavigateToCompany }) {
   const [selectedReportId, setSelectedReportId] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
+  const [schedule, setSchedule] = useState(null);
 
   function fetchReports() {
     fetch("/api/reports")
@@ -264,7 +265,10 @@ export default function Reports({ onNavigateToCompany }) {
       .catch(() => setLoading(false));
   }
 
-  useEffect(() => { fetchReports(); }, []);
+  useEffect(() => {
+    fetchReports();
+    fetch("/api/reports/schedule").then((r) => r.json()).then(setSchedule).catch(() => {});
+  }, []);
 
   async function handleGenerate() {
     setGenerating(true);
@@ -303,6 +307,12 @@ export default function Reports({ onNavigateToCompany }) {
 
   return (
     <div>
+      {schedule && (
+        <div style={{ background: "#eff6ff", borderRadius: 6, padding: "8px 14px", marginBottom: 14, fontSize: 12, color: "#1e40af", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>📅</span>
+          <span>Reports auto-generate <strong>{schedule.schedule}</strong>. Next: <strong>{new Date(schedule.next_generation).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</strong></span>
+        </div>
+      )}
       {error && <div style={{ color: "#c0392b", marginBottom: 12, fontSize: 13 }}>{error}</div>}
       <ReportList
         reports={reports}
