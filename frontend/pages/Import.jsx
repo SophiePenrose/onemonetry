@@ -39,6 +39,8 @@ export default function Import() {
   const [dailyFiles, setDailyFiles] = useState([]);
   const [autoPull, setAutoPull] = useState(null);
   const [bulkTab, setBulkTab] = useState("monthly");
+  const [resetting, setResetting] = useState(false);
+  const [resetResult, setResetResult] = useState(null);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -129,6 +131,31 @@ export default function Import() {
     } catch { alert("Lookup failed"); }
   }
 
+  async function handleResetDemoData() {
+    if (!confirm("Reset demo data? This will clear workflow/import state and remove imported Companies House records.")) {
+      return;
+    }
+
+    setResetting(true);
+    setResetResult(null);
+    try {
+      const res = await fetch("/api/admin/reset-demo-data", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Reset failed");
+
+      setSelectedJob(null);
+      setJobDetail(null);
+      refreshJobs();
+      refreshBulkFiles();
+      refreshAutoPull();
+      setResetResult({ success: true, ...data });
+    } catch (err) {
+      setResetResult({ success: false, error: err.message });
+    } finally {
+      setResetting(false);
+    }
+  }
+
   // --- Job Detail View ---
   if (selectedJob && jobDetail) {
     const { job, logs } = jobDetail;
@@ -201,8 +228,41 @@ export default function Import() {
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleLookup} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>🔍 Lookup</button>
           <button onClick={() => { refreshJobs(); refreshBulkFiles(); refreshAutoPull(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
+          <button
+            onClick={handleResetDemoData}
+            disabled={resetting}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: "1px solid #c0392b",
+              background: "#fff",
+              color: "#c0392b",
+              cursor: resetting ? "wait" : "pointer",
+              fontSize: 13,
+              opacity: resetting ? 0.6 : 1,
+            }}
+          >
+            {resetting ? "Resetting…" : "Reset Demo Data"}
+          </button>
         </div>
       </div>
+
+      {resetResult && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "10px 14px",
+            borderRadius: 6,
+            fontSize: 13,
+            background: resetResult.success ? "#d1fae5" : "#fee2e2",
+            color: resetResult.success ? "#065f46" : "#991b1b",
+          }}
+        >
+          {resetResult.success
+            ? `Reset complete. Removed ${resetResult.removed_imported_companies} imported companies.`
+            : `Reset failed: ${resetResult.error}`}
+        </div>
+      )}
 
       {/* CH Status */}
       {chStatus && (

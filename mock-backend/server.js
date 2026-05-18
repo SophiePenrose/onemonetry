@@ -18,6 +18,7 @@ import {
   listImportJobs,
   addImportLogEntry,
   getImportLogs,
+  resetDemoState,
 } from "./db.js";
 import {
   isCompaniesHouseConfigured,
@@ -246,6 +247,11 @@ function computeCompanyProfile(company) {
 function loadCompanies() {
   const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+function saveCompanies(companies) {
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(companies, null, 2));
 }
 
 // --- Routes ---
@@ -998,16 +1004,50 @@ app.get("/api/import/jobs/:id", (req, res) => {
   res.json({ job, logs });
 });
 
-// --- Bulk ZIP Processing ---
+app.post("/api/admin/reset-demo-data", (_req, res) => {
+  try {
+    stopAutoPull();
+    resetDemoState();
 
-app.get("/api/import/bulk/monthly", (req, res) => {
-  const months = parseInt(req.query.months) || 24;
-  res.json({ files: getMonthlyZipURLs(months) });
+    const companies = loadCompanies();
+    let removedImported = 0;
+    const retainedCompanies = companies.filter((company) => {
+      const isImported =
+        ["csv", "bulk_zip", "auto_pull"].includes(company.source) ||
+        (typeof company.id === "string" && company.id.startsWith("ch-"));
+      if (isImported) removedImported++;
+      return !isImported;
+    });
+    saveCompanies(retainedCompanies);
+
+    const processedFile = path.join(process.cwd(), "mock-backend", "data", "processed_zips.json");
+    if (fs.existsSync(processedFile)) {
+      fs.writeFileSync(processedFile, JSON.stringify({}, null, 2));
+    }
+
+    res.json({
+      message: "Demo data reset completed.",
+      removed_imported_companies: removedImported,
+      remaining_companies: retainedCompanies.length,
+      processed_zip_cache_cleared: true,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to reset demo data", detail: err.message });
+  }
 });
 
-app.get("/api/import/bulk/daily", (req, res) => {
+// --- Bulk ZIP Processing ---
+
+app.get("/api/import/bulk/monthly", async (req, res) => {
+  const months = parseInt(req.query.months) || 24;
+  const files = await getMonthlyZipURLs(months);
+  res.json({ files });
+});
+
+app.get("/api/import/bulk/daily", async (req, res) => {
   const days = parseInt(req.query.days) || 14;
-  res.json({ files: getDailyZipURLs(days) });
+  const files = await getDailyZipURLs(days);
+  res.json({ files });
 });
 
 app.post("/api/import/bulk/process", async (req, res) => {

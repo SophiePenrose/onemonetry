@@ -240,6 +240,23 @@ export function getImportLogs(jobId, limit = 100) {
   return db.prepare("SELECT * FROM import_log WHERE job_id = ? ORDER BY timestamp DESC LIMIT ?").all(jobId, limit);
 }
 
+export function resetDemoState() {
+  const tx = db.transaction(() => {
+    db.exec(`
+      DELETE FROM workflow_history;
+      DELETE FROM workflow_state;
+      DELETE FROM weekly_reports;
+      DELETE FROM exclusions;
+      DELETE FROM cadence_log;
+      DELETE FROM settings;
+      DELETE FROM import_log;
+      DELETE FROM import_jobs;
+      DELETE FROM sqlite_sequence;
+    `);
+  });
+  tx();
+}
+
 export function closeDb() {
   db.close();
 }

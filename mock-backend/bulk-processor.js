@@ -5,6 +5,7 @@ import { pipeline } from "stream/promises";
 // bulk-processor.js
 
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
+const ACCOUNTS_INDEX_URL = `${CH_DOWNLOAD_BASE}/en_accountsdata.html`;
 const TURNOVER_THRESHOLD = 20_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
 const PROCESSED_FILE = path.join(DATA_DIR, "processed_zips.json");
@@ -66,47 +67,115 @@ function extractCompanyNumberFromFilename(filename) {
   return match ? match[1] : null;
 }
 
-// --- Monthly ZIP URLs ---
+async function fetchAvailableAccountZipLinks() {
+  const res = await fetch(ACCOUNTS_INDEX_URL);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch accounts index: ${res.status}`);
+  }
 
-export function getMonthlyZipURLs(monthsBack = 24) {
-  const urls = [];
-  const now = new Date();
-  for (let i = 1; i <= monthsBack; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const filename = `Accounts_Monthly_Data-${year}-${month}.zip`;
-    urls.push({
+  const html = await res.text();
+  const hrefRegex = /href\s*=\s*["']([^"']+\.zip)["']/gi;
+  const seen = new Set();
+  const monthly = [];
+  const daily = [];
+
+  let match;
+  while ((match = hrefRegex.exec(html)) !== null) {
+    const href = match[1].trim();
+    const filename = href.split("/").pop();
+    if (!filename || seen.has(filename)) continue;
+
+    const monthlyMatch = filename.match(/^Accounts_Monthly_Data-(.+)\.zip$/i);
+    const dailyMatch = filename.match(/^Accounts_Bulk_Data-(\d{4}-\d{2}-\d{2})\.zip$/);
+
+    if (!monthlyMatch && !dailyMatch) continue;
+    seen.add(filename);
+
+    const url = href.startsWith("http") ? href : `${CH_DOWNLOAD_BASE}/${filename}`;
+
+    if (monthlyMatch) {
+      const token = monthlyMatch[1];
+      monthly.push({
+        filename,
+        url,
+        period: token,
+      });
+      continue;
+    }
+
+    const dateStr = dailyMatch[1];
+    const day = new Date(`${dateStr}T00:00:00Z`).getUTCDay();
+    daily.push({
       filename,
-      url: `${CH_DOWNLOAD_BASE}/${filename}`,
-      period: `${year}-${month}`,
-      processed: isZipProcessed(filename),
+      url,
+      date: dateStr,
+      day_name: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day],
     });
   }
-  return urls;
+
+  monthly.sort((a, b) => b.filename.localeCompare(a.filename));
+  daily.sort((a, b) => b.date.localeCompare(a.date));
+
+  return { monthly, daily };
+}
+
+// --- Monthly ZIP URLs ---
+
+export async function getMonthlyZipURLs(monthsBack = 24) {
+  try {
+    const { monthly } = await fetchAvailableAccountZipLinks();
+    return monthly.slice(0, monthsBack).map((m) => ({
+      ...m,
+      processed: isZipProcessed(m.filename),
+    }));
+  } catch {
+    const urls = [];
+    const now = new Date();
+    for (let i = 1; i <= monthsBack; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const filename = `Accounts_Monthly_Data-${year}-${month}.zip`;
+      urls.push({
+        filename,
+        url: `${CH_DOWNLOAD_BASE}/${filename}`,
+        period: `${year}-${month}`,
+        processed: isZipProcessed(filename),
+      });
+    }
+    return urls;
+  }
 }
 
 // --- Daily ZIP URLs ---
 
-export function getDailyZipURLs(daysBack = 14) {
-  const urls = [];
-  const now = new Date();
-  for (let i = 1; i <= daysBack; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const day = d.getDay();
-    if (day === 0) continue; // no Sunday files
-    const dateStr = d.toISOString().slice(0, 10);
-    const filename = `Accounts_Bulk_Data-${dateStr}.zip`;
-    urls.push({
-      filename,
-      url: `${CH_DOWNLOAD_BASE}/${filename}`,
-      date: dateStr,
-      day_name: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day],
-      processed: isZipProcessed(filename),
-    });
+export async function getDailyZipURLs(daysBack = 14) {
+  try {
+    const { daily } = await fetchAvailableAccountZipLinks();
+    return daily.slice(0, daysBack).map((d) => ({
+      ...d,
+      processed: isZipProcessed(d.filename),
+    }));
+  } catch {
+    const urls = [];
+    const now = new Date();
+    for (let i = 1; i <= daysBack; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const day = d.getDay();
+      if (day === 0) continue; // no Sunday files
+      const dateStr = d.toISOString().slice(0, 10);
+      const filename = `Accounts_Bulk_Data-${dateStr}.zip`;
+      urls.push({
+        filename,
+        url: `${CH_DOWNLOAD_BASE}/${filename}`,
+        date: dateStr,
+        day_name: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day],
+        processed: isZipProcessed(filename),
+      });
+    }
+    return urls;
   }
-  return urls;
 }
 
 // --- Download a ZIP file ---
@@ -244,7 +313,7 @@ export function startAutoPull(intervalMs, processCallback) {
   autoPullInterval = setInterval(async () => {
     autoPullStatus.last_run = new Date().toISOString();
     try {
-      const dailyZips = getDailyZipURLs(7);
+      const dailyZips = await getDailyZipURLs(7);
       const unprocessed = dailyZips.filter((z) => !z.processed);
 
       if (unprocessed.length === 0) {
