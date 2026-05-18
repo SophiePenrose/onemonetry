@@ -15,5 +15,9 @@
 - The **frontend Vite dev server** proxies `/api` requests to `http://localhost:8000`, so the mock-backend must be running before the frontend can fetch data.
 - Start the backend **before** the frontend to avoid proxy errors on initial page load.
 - Both services use `npm` (lockfiles are `package-lock.json`).
-- There are **no lint, test, or build CI scripts** configured in either `package.json`. `npm run build` in `frontend/` runs `vite build`.
+- Available scripts per service:
+  - **mock-backend**: `npm run lint` (eslint), `npm run test` (node --test — **integration tests that require the server to be running on port 8000**).
+  - **frontend**: `npm run lint` (eslint), `npm run test` (vitest run), `npm run build` (vite build), `npm run dev` (vite dev server).
+- The mock-backend tests are **integration tests** — they call `fetch` against `http://localhost:8000`, so you must start the backend server before running `npm run test` in `mock-backend/`.
+- The frontend test suite has 1 pre-existing failure (`CompetitorPanel > renders empty state` — text mismatch between test and component). 12 of 13 tests pass.
 - The mock data has 3 companies in `mock-backend/companies.json` with two product motions: `FX` and `Cards`.
