@@ -1,194 +1,153 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { PipelineFunnel, ScoreDistribution } from "../components/DashboardCharts";
-
-const STATE_META = {
-  new_candidate: { label: "New", color: "#6c757d" },
-  shortlisted: { label: "Shortlisted", color: "#0075EB" },
-  selected_for_outreach: { label: "Outreach", color: "#6f42c1" },
-  in_cadence: { label: "In Cadence", color: "#e67e22" },
-  active_opportunity: { label: "Active Opp", color: "#20c997" },
-  closed_won: { label: "Won", color: "#0a8754" },
-  closed_lost: { label: "Lost", color: "#c0392b" },
-  revisit_later: { label: "Revisit", color: "#95a5a6" },
-  held_for_review: { label: "Held", color: "#f39c12" },
-};
 
 function formatTurnover(value) {
+  if (value >= 1_000_000_000) return `£${(value / 1_000_000_000).toFixed(1)}B`;
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
   return `£${value}`;
 }
 
-function PipelineCard({ count, label, color }) {
+function StatCard({ label, value, color, sub }) {
   return (
     <div style={{
-      background: "#fff", borderRadius: 8, padding: "14px 16px",
-      boxShadow: "0 1px 3px rgba(0,0,0,0.06)", borderLeft: `4px solid ${color}`,
-      minWidth: 110, flex: "1 1 0",
+      background: "#fff", borderRadius: 8, padding: "16px 18px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06)", borderLeft: `4px solid ${color || "#0075EB"}`,
+      flex: "1 1 0", minWidth: 140,
     }}>
-      <div style={{ fontSize: 28, fontWeight: 700, color }}>{count}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, color: color || "#0075EB" }}>{value}</div>
       <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{label}</div>
+      {sub && <div style={{ fontSize: 11, color: "#aaa", marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }
 
-PipelineCard.propTypes = { count: PropTypes.number.isRequired, label: PropTypes.string.isRequired, color: PropTypes.string.isRequired };
-
-function MotionSummaryBar({ motionSummary }) {
-  const motions = Object.entries(motionSummary)
-    .filter(([, s]) => s.total > 0)
-    .sort(([, a], [, b]) => b.avg_score - a.avg_score);
-
-  return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      {motions.map(([motion, s]) => (
-        <div key={motion} style={{
-          background: "#fff", borderRadius: 6, padding: "8px 14px",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.06)", fontSize: 13,
-          display: "flex", alignItems: "center", gap: 8,
-        }}>
-          <span style={{ fontWeight: 600 }}>{motion}</span>
-          <span style={{ color: "#888" }}>{s.total} co.</span>
-          <span style={{ fontWeight: 600, color: "#0075EB" }}>{s.avg_score.toFixed(2)} avg</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-MotionSummaryBar.propTypes = { motionSummary: PropTypes.object.isRequired };
-
-function Badge({ text, bg }) {
-  return (
-    <span style={{
-      display: "inline-block", padding: "2px 10px", borderRadius: 12,
-      fontSize: 11, fontWeight: 600, color: "#fff", background: bg || "#888",
-      whiteSpace: "nowrap",
-    }}>
-      {text}
-    </span>
-  );
-}
-
-Badge.propTypes = { text: PropTypes.string.isRequired, bg: PropTypes.string };
+StatCard.propTypes = { label: PropTypes.string.isRequired, value: PropTypes.node.isRequired, color: PropTypes.string, sub: PropTypes.string };
 
 export default function Home({ onNavigateToCompany }) {
   const [data, setData] = useState(null);
-  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/dashboard").then((r) => r.json()),
-      fetch("/api/unified-shortlist").then((r) => r.json()),
-    ])
-      .then(([dash, shortlist]) => {
-        setData(dash);
-        setCompanies(shortlist.companies || []);
-        setLoading(false);
-      })
+    fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ color: "#888", padding: 24 }}>Loading dashboard…</div>;
   if (!data) return <div style={{ color: "#c0392b", padding: 24 }}>Failed to load dashboard.</div>;
 
-  const pipelineOrder = ["shortlisted", "selected_for_outreach", "in_cadence", "active_opportunity", "closed_won"];
-  const secondaryStates = ["new_candidate", "closed_lost", "revisit_later", "held_for_review"];
+  const turnoverDist = data.turnover_distribution || {};
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 20 }}>Workspace</h2>
-        <span style={{ color: "#888", fontSize: 14 }}>{data.total_companies} companies in universe</span>
+        <span style={{ color: "#888", fontSize: 14 }}>
+          {data.total_companies?.toLocaleString()} mid-market companies · {data.total_filings?.toLocaleString()} filings
+        </span>
       </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>Pipeline</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {pipelineOrder.map((stateId) => {
-            const p = data.pipeline[stateId];
-            return p ? <PipelineCard key={stateId} count={p.count} label={p.label} color={p.color} /> : null;
-          })}
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-          {secondaryStates.map((stateId) => {
-            const p = data.pipeline[stateId];
-            return p ? <PipelineCard key={stateId} count={p.count} label={p.label} color={p.color} /> : null;
-          })}
-        </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+        <StatCard label="Mid-Market Companies" value={data.total_companies?.toLocaleString()} color="#0075EB" sub={`£${(data.threshold / 1e6).toFixed(0)}M+ turnover`} />
+        <StatCard label="Total Filings" value={data.total_filings?.toLocaleString()} color="#0a8754" />
+        <StatCard label="Monitored" value={data.total_monitored?.toLocaleString()} color="#6f42c1" sub="Tracked for new filings" />
+        <StatCard label="Below Threshold" value={data.monitor_stats?.below_threshold || 0} color="#e67e22" sub="Previously £15M+, now lower" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
-        <PipelineFunnel pipeline={data.pipeline} />
-        <ScoreDistribution companies={companies} />
-      </div>
+        <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <h4 style={{ margin: "0 0 14px", fontSize: 15 }}>Turnover Distribution</h4>
+          {Object.entries(turnoverDist).map(([label, bucket]) => {
+            const maxCount = Math.max(...Object.values(turnoverDist).map((b) => b.count), 1);
+            const width = (bucket.count / maxCount) * 100;
+            return (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: "#888", minWidth: 100, textAlign: "right" }}>{label}</span>
+                <div style={{ flex: 1, background: "#f0f2f5", borderRadius: 4, height: 24, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.max(width, bucket.count > 0 ? 3 : 0)}%`, height: "100%", background: "#0075EB", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {bucket.count > 0 && <span style={{ color: "#fff", fontSize: 11, fontWeight: 600 }}>{bucket.count}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>Motion Coverage</div>
-        <MotionSummaryBar motionSummary={data.motion_summary} />
+        <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <h4 style={{ margin: "0 0 14px", fontSize: 15 }}>Data Pipeline</h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <span style={{ color: "#888" }}>Active companies</span>
+              <span style={{ fontWeight: 600 }}>{data.monitor_stats?.active?.toLocaleString()}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <span style={{ color: "#888" }}>Inactive / Dissolved</span>
+              <span style={{ fontWeight: 600 }}>{data.monitor_stats?.inactive || 0}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <span style={{ color: "#888" }}>No filings found</span>
+              <span style={{ fontWeight: 600 }}>{data.monitor_stats?.no_filings || 0}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <span style={{ color: "#888" }}>Needs weekly check</span>
+              <span style={{ fontWeight: 600 }}>{data.monitor_stats?.needs_check?.toLocaleString()}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0" }}>
+              <span style={{ color: "#888" }}>Threshold</span>
+              <span style={{ fontWeight: 600 }}>£{(data.threshold / 1e6).toFixed(0)}M+</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 10 }}>
-          Active Prospects
-          {data.active_prospects.length > 0 && (
-            <span style={{ fontWeight: 400, color: "#888", marginLeft: 8 }}>
-              {data.active_prospects.length} in play
-            </span>
-          )}
-        </div>
-
-        {data.active_prospects.length === 0 ? (
-          <div style={{
-            background: "#fff", borderRadius: 8, padding: 32, textAlign: "center",
-            color: "#888", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-          }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-            <div style={{ fontSize: 14 }}>No active prospects yet</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>Go to the Shortlist tab and start shortlisting companies.</div>
-          </div>
-        ) : (
+        <h4 style={{ margin: "0 0 12px", fontSize: 15 }}>Top Companies by Turnover</h4>
+        {data.top_companies?.length > 0 ? (
           <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
             <thead>
               <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
+                <th style={{ padding: "10px 16px" }}>#</th>
                 <th style={{ padding: "10px 16px" }}>Company</th>
-                <th style={{ padding: "10px 16px" }}>Industry</th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>Segment</th>
                 <th style={{ padding: "10px 16px", textAlign: "right" }}>Turnover</th>
-                <th style={{ padding: "10px 16px", textAlign: "center" }}>Status</th>
-                <th style={{ padding: "10px 16px" }}>Best Motion</th>
-                <th style={{ padding: "10px 16px", textAlign: "right" }}>Score</th>
-                <th style={{ padding: "10px 16px", textAlign: "center" }}>Motions</th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>Filings</th>
               </tr>
             </thead>
             <tbody>
-              {data.active_prospects.map((p) => {
-                const sm = STATE_META[p.workflow_state] || STATE_META.new_candidate;
-                return (
-                  <tr
-                    key={p.id}
-                    style={{ borderBottom: "1px solid #eee", cursor: "pointer" }}
-                    onClick={() => onNavigateToCompany && onNavigateToCompany(p.id)}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    <td style={{ padding: "10px 16px", fontWeight: 600 }}>
-                      <a href="#" onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(p.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
-                        {p.name}
-                      </a>
-                    </td>
-                    <td style={{ padding: "10px 16px", color: "#666", fontSize: 13 }}>{p.industry}</td>
-                    <td style={{ padding: "10px 16px", textAlign: "right", fontSize: 13 }}>{formatTurnover(p.turnover)}</td>
-                    <td style={{ padding: "10px 16px", textAlign: "center" }}><Badge text={sm.label} bg={sm.color} /></td>
-                    <td style={{ padding: "10px 16px", fontSize: 13 }}>{p.best_motion}</td>
-                    <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600 }}>{p.best_score.toFixed(2)}</td>
-                    <td style={{ padding: "10px 16px", textAlign: "center", fontSize: 13 }}>{p.motion_count}</td>
-                  </tr>
-                );
-              })}
+              {data.top_companies.map((c, idx) => (
+                <tr
+                  key={c.id}
+                  style={{ borderBottom: "1px solid #eee", cursor: "pointer" }}
+                  onClick={() => onNavigateToCompany && onNavigateToCompany(c.id)}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <td style={{ padding: "10px 16px", color: "#888", fontSize: 13 }}>{idx + 1}</td>
+                  <td style={{ padding: "10px 16px", fontWeight: 600 }}>
+                    <a href="#" onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(c.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
+                      {c.name}
+                    </a>
+                    <div style={{ fontSize: 11, color: "#aaa" }}>{c.company_number}</div>
+                  </td>
+                  <td style={{ padding: "10px 16px", textAlign: "center" }}>
+                    <span style={{
+                      display: "inline-block", padding: "2px 8px", borderRadius: 10,
+                      fontSize: 11, fontWeight: 600, color: "#fff",
+                      background: c.segment === "Enterprise" ? "#6f42c1" : c.segment === "Mid-Market" ? "#0075EB" : "#6b7280",
+                    }}>{c.segment === "Enterprise" ? "ENT" : c.segment === "Mid-Market" ? "MM" : "SMB"}</span>
+                  </td>
+                  <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700, fontSize: 14 }}>{formatTurnover(c.turnover)}</td>
+                  <td style={{ padding: "10px 16px", textAlign: "center", fontSize: 13 }}>{c.filing_count}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 8, padding: 24, textAlign: "center", color: "#888" }}>
+            No companies loaded yet. Import data from the Import tab.
+          </div>
         )}
       </div>
     </div>

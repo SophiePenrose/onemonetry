@@ -12,6 +12,7 @@ let autoPullStatus = {
 };
 
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours
+const MONTHLY_CHECK_INTERVAL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export function getAutoPullStatus() {
   return {
@@ -28,13 +29,56 @@ export function startAutoPull() {
   autoPullStatus.next_run = new Date(Date.now() + CHECK_INTERVAL).toISOString();
 
   console.log(`[AutoPull] Started — checking every 12 hours for new daily files`);
+  console.log(`[AutoPull] Monthly check also enabled — processes new monthly files when available`);
 
   autoPullTimer = setInterval(() => runAutoPullCycle(), CHECK_INTERVAL);
 
-  // Also run immediately on first start
+  // Run immediately on first start (daily only — monthly on schedule)
   setTimeout(() => runAutoPullCycle(), 5000);
 
+  // Monthly check — run on the 5th of each month
+  scheduleMonthlyCheck();
+
   return autoPullStatus;
+}
+
+function scheduleMonthlyCheck() {
+  const now = new Date();
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 5, 3, 0, 0);
+  const delay = nextMonth.getTime() - Date.now();
+  console.log(`[AutoPull] Monthly check scheduled for: ${nextMonth.toISOString()}`);
+
+  setTimeout(async () => {
+    console.log(`[AutoPull] Running monthly check...`);
+    await runMonthlyCheck();
+    scheduleMonthlyCheck();
+  }, delay);
+}
+
+async function runMonthlyCheck() {
+  try {
+    const { getMonthlyZipURLs } = await import("./bulk-processor.js");
+    const monthlyFiles = await getMonthlyZipURLs();
+    const unprocessed = monthlyFiles.filter((f) => !f.processed && f.source === "current");
+
+    if (unprocessed.length === 0) {
+      console.log(`[AutoPull] No new monthly files to process`);
+      return;
+    }
+
+    console.log(`[AutoPull] Found ${unprocessed.length} new monthly files`);
+    for (const file of unprocessed) {
+      console.log(`[AutoPull] Processing monthly: ${file.filename}`);
+      try {
+        const result = await processZipInChunks(file.url, file.filename, `monthly:${file.period}`, {});
+        console.log(`[AutoPull] ✅ Monthly ${file.filename}: ${result.qualifying} qualifying from ${result.total_files} files`);
+      } catch (err) {
+        console.log(`[AutoPull] ❌ Monthly ${file.filename}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.log(`[AutoPull] Monthly check error: ${err.message}`);
+  }
 }
 
 export function stopAutoPull() {

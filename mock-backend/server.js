@@ -47,6 +47,9 @@ import {
   getFilingsForCompany,
   getFilingCount,
   getMonitoredCompanyCount,
+  getShortlistCompanies,
+  getShortlistCount,
+  getMonitoredCompany,
 } from "./db.js";
 
 const app = express();
@@ -338,141 +341,94 @@ app.put("/api/exclusions", (req, res) => {
 });
 
 app.get("/api/dashboard", (_req, res) => {
-  const COMPANIES = loadCompanies();
+  const stats = getMonitorStats();
+  const totalCompanies = getShortlistCount(getTurnoverThreshold());
 
   const pipeline = {};
   for (const s of WORKFLOW_STATES) {
     pipeline[s.id] = { count: 0, label: s.label, color: s.color };
   }
+  pipeline.new_candidate.count = totalCompanies;
 
-  const motionSummary = {};
-  for (const motion of VALID_MOTIONS) {
-    motionSummary[motion] = { total: 0, avg_score: 0, top_company: null };
-  }
+  const turnoverBuckets = {
+    "£500M+": { min: 500_000_000, count: 0 },
+    "£100M-£500M": { min: 100_000_000, max: 500_000_000, count: 0 },
+    "£50M-£100M": { min: 50_000_000, max: 100_000_000, count: 0 },
+    "£25M-£50M": { min: 25_000_000, max: 50_000_000, count: 0 },
+    "£15M-£25M": { min: 15_000_000, max: 25_000_000, count: 0 },
+  };
 
-  const activeProspects = [];
-  const activeStates = ["shortlisted", "selected_for_outreach", "in_cadence", "active_opportunity"];
-
-  for (const company of COMPANIES) {
-    const ws = getCompanyState(company.id);
-    if (pipeline[ws.state]) pipeline[ws.state].count++;
-
-    for (const motion of company.motions) {
-      const fit = company.product_fit[motion];
-      if (!fit?.eligible) continue;
-      const layers = fit.layers || {};
-      const score = computeCompositeScore(layers);
-      motionSummary[motion].total++;
-      motionSummary[motion].avg_score += score;
-      if (!motionSummary[motion].top_company || score > motionSummary[motion].top_company.score) {
-        motionSummary[motion].top_company = { id: company.id, name: company.name, score };
-      }
-    }
-
-    if (activeStates.includes(ws.state)) {
-      const bestMotion = company.motions.reduce((best, motion) => {
-        const fit = company.product_fit[motion];
-        if (!fit?.eligible) return best;
-        const score = computeCompositeScore(fit.layers || {});
-        return !best || score > best.score ? { motion, score, fit_level: fit.fit_level } : best;
-      }, null);
-
-      if (bestMotion) {
-        activeProspects.push({
-          id: company.id,
-          name: company.name,
-          industry: company.industry,
-          turnover: company.turnover,
-          workflow_state: ws.state,
-          best_motion: bestMotion.motion,
-          best_score: bestMotion.score,
-          best_fit_level: bestMotion.fit_level,
-          motion_count: company.motions.filter((m) => company.product_fit[m]?.eligible).length,
-          last_activity: ws.history?.length > 0
-            ? ws.history[ws.history.length - 1].timestamp
-            : null,
-        });
-      }
+  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 });
+  for (const c of topCompanies) {
+    const t = c.latest_turnover || 0;
+    for (const [, bucket] of Object.entries(turnoverBuckets)) {
+      if (t >= bucket.min && (!bucket.max || t < bucket.max)) { bucket.count++; break; }
     }
   }
 
-  for (const motion of VALID_MOTIONS) {
-    const s = motionSummary[motion];
-    if (s.total > 0) s.avg_score = Math.round((s.avg_score / s.total) * 100) / 100;
-  }
-
-  activeProspects.sort((a, b) => b.best_score - a.best_score);
+  const top10 = topCompanies.slice(0, 10).map((c) => ({
+    id: `ch-${c.company_number}`,
+    company_number: c.company_number,
+    name: c.company_name || `Company ${c.company_number}`,
+    turnover: c.latest_turnover,
+    segment: guessTurnoverSegment(c.latest_turnover),
+    filing_count: c.filing_count || 0,
+  }));
 
   res.json({
-    total_companies: COMPANIES.length,
+    total_companies: totalCompanies,
+    total_filings: getFilingCount(),
+    total_monitored: getMonitoredCompanyCount(),
     pipeline,
-    motion_summary: motionSummary,
-    active_prospects: activeProspects,
+    turnover_distribution: turnoverBuckets,
+    top_companies: top10,
+    monitor_stats: stats,
+    threshold: getTurnoverThreshold(),
   });
 });
 
 app.get("/api/unified-shortlist", (req, res) => {
-  const { state_filter, show_suppressed } = req.query;
-  const COMPANIES = loadCompanies();
+  const { limit, offset } = req.query;
+  const pageLimit = parseInt(limit) || 100;
+  const pageOffset = parseInt(offset) || 0;
 
-  let excludedCount = 0;
-  let suppressedCount = 0;
-  const entries = [];
+  const companies = getShortlistCompanies({
+    min_turnover: getTurnoverThreshold(),
+    limit: pageLimit,
+    offset: pageOffset,
+  });
 
-  for (const company of COMPANIES) {
-    const excl = isExcluded(company);
-    if (excl.excluded) { excludedCount++; continue; }
+  const totalCount = getShortlistCount(getTurnoverThreshold());
 
-    const ws = getCompanyState(company.id);
-    const supp = isSuppressed(company.id);
-    if (supp.suppressed) {
-      suppressedCount++;
-      if (show_suppressed !== "true") continue;
-    }
-
-    if (state_filter && VALID_STATE_IDS.includes(state_filter) && ws.state !== state_filter) continue;
-
-    const profile = computeCompanyProfile(company);
-    if (profile.eligible_motion_count === 0) continue;
-
-    entries.push({
-      id: company.id,
-      name: company.name,
-      industry: company.industry,
-      turnover: company.turnover,
-      employee_count: company.employee_count,
-      segment: profile.segment,
-      combined_score: profile.combined_score,
-      base_score: profile.base_score,
-      propensity_score: profile.propensity.score,
-      propensity_warmth: profile.propensity.warmth,
-      best_motion: profile.best_motion?.motion || null,
-      best_score: profile.best_motion?.score || 0,
-      best_fit_level: profile.best_motion?.fit_level || null,
-      eligible_motions: profile.motion_scores.map((m) => ({
-        motion: m.motion,
-        score: m.score,
-        fit_level: m.fit_level,
-      })),
-      motion_count: profile.eligible_motion_count,
-      has_merchant_spend: !!profile.merchant_spend,
+  const entries = companies.map((c, idx) => {
+    const ws = getCompanyState(c.company_number);
+    const segment = guessTurnoverSegment(c.latest_turnover);
+    return {
+      id: `ch-${c.company_number}`,
+      company_number: c.company_number,
+      name: c.company_name || `Company ${c.company_number}`,
+      industry: "—",
+      turnover: c.latest_turnover,
+      employee_count: 0,
+      segment,
+      combined_score: c.latest_turnover ? Math.round((Math.min(c.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0,
+      filing_count: c.filing_count || 0,
+      latest_filing_date: c.latest_filing_date,
       workflow_state: ws.state,
-      suppressed: supp.suppressed,
-      suppression_reason: supp.reason || null,
-      rank: 0,
-    });
-  }
-
-  entries.sort((a, b) => b.combined_score - a.combined_score);
-  entries.forEach((e, idx) => { e.rank = idx + 1; });
+      below_threshold: c.below_threshold === 1,
+      source: c.source,
+      rank: pageOffset + idx + 1,
+    };
+  });
 
   res.json({
     companies: entries,
     meta: {
-      total: COMPANIES.length,
-      excluded: excludedCount,
-      suppressed: suppressedCount,
+      total: totalCount,
       showing: entries.length,
+      limit: pageLimit,
+      offset: pageOffset,
+      threshold: getTurnoverThreshold(),
     },
   });
 });
@@ -545,9 +501,52 @@ app.get("/api/shortlist", (req, res) => {
 app.get("/api/company/:id", (req, res) => {
   const { id } = req.params;
   const { product_motion } = req.query;
+
+  const companyNumber = id.startsWith("ch-") ? id.replace("ch-", "") : id;
   const COMPANIES = loadCompanies();
-  const company = COMPANIES.find((c) => c.id === id);
+  let company = COMPANIES.find((c) => c.id === id || c.company_number === companyNumber);
+
   if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      const filings = getFilingsForCompany(companyNumber);
+      const ws = getCompanyState(id);
+      const segment = guessTurnoverSegment(monitored.latest_turnover);
+      const chLink = `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`;
+
+      return res.json({
+        company: {
+          id: `ch-${companyNumber}`,
+          company_number: companyNumber,
+          name: monitored.company_name || `Company ${companyNumber}`,
+          industry: "—",
+          turnover: monitored.latest_turnover,
+          employee_count: 0,
+          segment,
+          latest_annual_report_url: `${chLink}/filing-history`,
+          companies_house_url: chLink,
+          combined_score: monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0,
+          workflow_state: ws.state,
+          workflow_history: ws.history || [],
+          below_threshold: monitored.below_threshold === 1,
+          source: monitored.source,
+          filings: filings.map((f) => ({
+            date: f.filing_date,
+            turnover: f.turnover,
+            balance_sheet_date: f.balance_sheet_date,
+            description: f.description,
+            source: f.source,
+          })),
+          filing_count: filings.length,
+          notes: getSetting(`notes_${id}`, ""),
+          competitors: [],
+          stakeholders: [],
+          cadence_history: [],
+          all_motion_scores: [],
+          propensity: { score: 0.3, warmth: "cold", signals: ["Imported from accounts data — no engagement yet"] },
+        },
+      });
+    }
     return res.status(404).json({ error: "Company not found" });
   }
 

@@ -344,6 +344,37 @@ export function getMonitoredCompanyCount() {
   return db.prepare("SELECT COUNT(*) as count FROM company_monitor").get().count;
 }
 
+// --- Shortlist from Monitor Data ---
+
+export function getShortlistCompanies(filters = {}) {
+  let sql = `
+    SELECT cm.*, 
+      (SELECT COUNT(*) FROM company_filings cf WHERE cf.company_number = cm.company_number) as filing_count,
+      (SELECT cf.filing_date FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_date,
+      (SELECT cf.turnover FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_turnover
+    FROM company_monitor cm
+    WHERE cm.status = 'active'
+    AND cm.latest_turnover >= ?
+  `;
+  const params = [filters.min_turnover || 15000000];
+
+  if (filters.below_threshold) {
+    sql = sql.replace("AND cm.latest_turnover >= ?", "");
+    params.shift();
+    sql += " AND cm.below_threshold = 1";
+  }
+
+  sql += " ORDER BY cm.latest_turnover DESC";
+  if (filters.limit) { sql += " LIMIT ?"; params.push(filters.limit); }
+  if (filters.offset) { sql += " OFFSET ?"; params.push(filters.offset); }
+
+  return db.prepare(sql).all(...params);
+}
+
+export function getShortlistCount(minTurnover = 15000000) {
+  return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
+}
+
 // --- Company Groups ---
 
 export function createGroup(name, parentCompanyNumber) {
