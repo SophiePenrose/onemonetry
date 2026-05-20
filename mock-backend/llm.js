@@ -20,10 +20,14 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
     return {
       source: "no_filing_data",
       summary: "No filing text available for analysis. Process accounts data first.",
+      turnover_trend: "unknown",
       themes: [],
       pain_indicators: [],
       opportunities: [],
       risks: [],
+      recommended_approach: "Upload filing data or wait for next accounts processing cycle.",
+      international_exposure: { present: false, details: "No filing data to assess" },
+      key_people: [],
     };
   }
 
@@ -38,6 +42,7 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
@@ -65,7 +70,7 @@ POSITIVE SIGNALS: New CFO/FD, recent acquisition, headcount growth 5%+, cost red
 
 NEGATIVE SIGNALS: Going concern doubt, in administration, purely domestic (no FX need), strong incumbent bank relationship with credit lines.
 
-Return ONLY valid JSON with these fields:
+Return ONLY raw valid JSON (no markdown code fences, no commentary) with these fields:
 - summary: string (2-3 sentence business description)
 - turnover_trend: string ("growing"|"stable"|"declining"|"unknown")
 - themes: array of { theme: string, evidence: string }
@@ -97,7 +102,8 @@ Return ONLY valid JSON with these fields:
       return { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "Empty response" };
     }
 
-    const parsed = JSON.parse(content);
+    const cleaned = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
     return { ...parsed, source: "llm", model: OPENAI_MODEL, analysed_at: new Date().toISOString() };
   } catch (err) {
     console.error("LLM analysis error:", err.message);
@@ -117,7 +123,7 @@ Turnover: £${turnover ? (turnover / 1e6).toFixed(1) + "M" : "Unknown"}
 ${truncated}
 --- END ---
 
-Based on this filing, provide a structured analysis for a Revolut Business mid-market account executive looking to identify prospecting opportunities.`;
+Based on this filing, provide a structured JSON analysis for a Revolut Business mid-market account executive looking to identify prospecting opportunities. Return raw JSON only.`;
 }
 
 function generateFallbackAnalysis(companyName, companyNumber, turnover, filingText) {
