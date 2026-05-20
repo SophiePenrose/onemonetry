@@ -226,8 +226,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               <th style={{ padding: "10px 14px" }}>Company</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
-              <th style={{ padding: "10px 14px", textAlign: "center" }}>Filings</th>
-              <th style={{ padding: "10px 14px" }}>Latest Filing</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
+              <th style={{ padding: "10px 14px" }}>Best Motion</th>
+              <th style={{ padding: "10px 14px" }}>Growth</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
             </tr>
           </thead>
@@ -256,14 +257,21 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <SegmentBadge segment={c.segment} />
                   </td>
-                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 14, fontVariantNumeric: "tabular-nums" }}>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 13 }}>
                     {c.turnover ? `£${(c.turnover / 1e6).toFixed(1)}M` : "—"}
                   </td>
-                  <td style={{ padding: "10px 14px", textAlign: "center", fontSize: 13 }}>
-                    {c.filing_count || 0}
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 15, color: c.composite_score ? "#0075EB" : "#ccc" }}>
+                    {c.composite_score ? c.composite_score.toFixed(2) : "—"}
                   </td>
-                  <td style={{ padding: "10px 14px", fontSize: 13, color: "#666" }}>
-                    {c.latest_filing_date || "—"}
+                  <td style={{ padding: "10px 14px", fontSize: 12 }}>
+                    {c.best_motion ? (
+                      <span style={{ padding: "2px 8px", borderRadius: 8, background: "#eff6ff", color: "#0075EB", fontWeight: 500 }}>
+                        {c.best_motion}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: c.growth_trend === "strong_growth" ? "#0a8754" : c.growth_trend === "declining" ? "#c0392b" : "#888" }}>
+                    {c.growth_trend || "—"}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />

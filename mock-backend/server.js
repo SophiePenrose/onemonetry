@@ -32,6 +32,7 @@ import {
   stopAutoPull,
 } from "./daily-autopull.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
+import { scoreCompany, getStoredScore, batchScoreCompanies } from "./scoring-engine.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -403,23 +404,37 @@ app.get("/api/unified-shortlist", (req, res) => {
   const entries = companies.map((c, idx) => {
     const ws = getCompanyState(c.company_number);
     const segment = guessTurnoverSegment(c.latest_turnover);
+    const stored = getStoredScore(c.company_number);
+
     return {
       id: `ch-${c.company_number}`,
       company_number: c.company_number,
       name: c.company_name || `Company ${c.company_number}`,
       industry: "—",
       turnover: c.latest_turnover,
-      employee_count: 0,
+      employee_count: stored?.employees || 0,
       segment,
-      combined_score: c.latest_turnover ? Math.round((Math.min(c.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0,
+      composite_score: stored?.composite_score || null,
+      best_motion: stored?.layers?.product_fit?.best_motion || null,
+      product_fit_score: stored?.layers?.product_fit?.score || null,
+      growth_trend: stored?.growth?.trend || null,
       filing_count: c.filing_count || 0,
       latest_filing_date: c.latest_filing_date,
       workflow_state: ws.state,
       below_threshold: c.below_threshold === 1,
+      scored: !!stored,
       source: c.source,
       rank: pageOffset + idx + 1,
     };
   });
+
+  entries.sort((a, b) => {
+    if (a.composite_score !== null && b.composite_score !== null) return b.composite_score - a.composite_score;
+    if (a.composite_score !== null) return -1;
+    if (b.composite_score !== null) return 1;
+    return b.turnover - a.turnover;
+  });
+  entries.forEach((e, i) => { e.rank = pageOffset + i + 1; });
 
   res.json({
     companies: entries,
@@ -429,6 +444,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       limit: pageLimit,
       offset: pageOffset,
       threshold: getTurnoverThreshold(),
+      scored_count: entries.filter((e) => e.scored).length,
     },
   });
 });
@@ -1082,6 +1098,46 @@ app.post("/api/import/bulk/process", async (req, res) => {
     });
     addImportLogEntry(jobId, null, null, "error", err.message);
   }
+});
+
+// --- Scoring Engine ---
+
+app.post("/api/score/company", (req, res) => {
+  const { company_number } = req.body;
+  if (!company_number) return res.status(400).json({ error: "company_number required" });
+
+  const result = scoreCompany(company_number);
+  if (!result) return res.status(404).json({ error: "Company not found in monitor" });
+
+  res.json(result);
+});
+
+app.post("/api/score/batch", (req, res) => {
+  const { limit } = req.body;
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 100 });
+  const results = batchScoreCompanies(companies);
+  res.json({
+    scored: results.length,
+    top_10: results.slice(0, 10).map((r) => ({
+      company_number: r.company_number,
+      name: r.company_name,
+      turnover: r.turnover,
+      composite_score: r.composite_score,
+      best_motion: r.layers.product_fit.best_motion,
+      product_fit: r.layers.product_fit.score,
+      growth: r.growth.trend,
+    })),
+  });
+});
+
+app.get("/api/score/:number", (req, res) => {
+  const stored = getStoredScore(req.params.number);
+  if (!stored) {
+    const fresh = scoreCompany(req.params.number);
+    if (!fresh) return res.status(404).json({ error: "Company not found" });
+    return res.json(fresh);
+  }
+  res.json(stored);
 });
 
 // --- Twice-Weekly Auto-Pull (Method 1) ---
