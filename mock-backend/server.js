@@ -25,13 +25,12 @@ import {
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
 } from "./companies-house.js";
+import { getMonthlyZipURLs, getDailyZipURLs } from "./bulk-processor.js";
 import {
-  getMonthlyZipURLs,
-  getDailyZipURLs,
   getAutoPullStatus,
   startAutoPull,
   stopAutoPull,
-} from "./bulk-processor.js";
+} from "./daily-autopull.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import {
   runWeeklyMonitorBatch,
@@ -1083,43 +1082,15 @@ app.post("/api/import/bulk/process", async (req, res) => {
   }
 });
 
-// --- Auto-pull Schedule ---
+// --- Twice-Weekly Auto-Pull (Method 1) ---
 
 app.get("/api/import/autopull/status", (_req, res) => {
   res.json(getAutoPullStatus());
 });
 
 app.post("/api/import/autopull/start", (_req, res) => {
-  const TWELVE_HOURS = 12 * 60 * 60 * 1000;
-  const status = startAutoPull(TWELVE_HOURS, async (companies) => {
-    const COMPANIES = loadCompanies();
-    const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
-    for (const co of companies) {
-      if (existingNumbers.has(co.company_number)) continue;
-      COMPANIES.push({
-        id: `ch-${co.company_number}`,
-        name: `Company ${co.company_number}`,
-        company_number: co.company_number,
-        industry: "Unknown",
-        segment: guessTurnoverSegment(co.turnover),
-        turnover: co.turnover,
-        employee_count: 0,
-        latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${co.company_number}/filing-history`,
-        motions: [],
-        product_fit: {},
-        competitors: [],
-        stakeholders: [],
-        cadence_history: [],
-        response_propensity: { score: 0.2, warmth: "cold", signals: ["Auto-imported from daily accounts data"] },
-        source: "auto_pull",
-        imported_at: new Date().toISOString(),
-      });
-      existingNumbers.add(co.company_number);
-    }
-    const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-    fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
-  });
-  res.json({ message: "Auto-pull started (every 12 hours)", ...status });
+  const status = startAutoPull();
+  res.json({ message: "Auto-pull started — checking every 12 hours for new daily CH files", ...status });
 });
 
 app.post("/api/import/autopull/stop", (_req, res) => {
@@ -1501,5 +1472,8 @@ function generateAndSaveWeeklyReport() {
 app.listen(PORT, () => {
   console.log(`Onemonetry running on http://localhost:${PORT}`);
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
+  console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
   scheduleWeeklyReport();
+  startAutoPull();
+  console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);
 });
