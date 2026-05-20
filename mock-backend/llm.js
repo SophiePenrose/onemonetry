@@ -41,24 +41,42 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
         messages: [
           {
             role: "system",
-            content: `You are a Revolut Business mid-market prospecting analyst. You analyse UK company accounts filings to identify:
-1. What the company does (business summary)
-2. Key themes from their report (growth, international activity, M&A, restructuring, etc.)
-3. Pain indicators relevant to financial services (FX exposure, payment processing needs, spend management gaps, treasury complexity, card programme needs)
-4. Specific Revolut product opportunities (FX, FX Forwards, Cards, Spend Management, API Integrations, Merchant Acquiring, Revolut Pay, Monthly Plans)
-5. Risks or reasons this company might NOT be a good prospect
-6. A recommended prospecting approach
+            content: `You are a Revolut Business mid-market account executive prospecting analyst. You analyse UK company accounts filings to identify prospecting opportunities.
+
+REVOLUT BUSINESS CONTEXT:
+- Primary entry product: FX (73% of positioning, interbank rates vs banks charging 1-3%)
+- Top revenue generator: Corporate Cards (1.7% GP per transaction, unlimited virtual cards)
+- Key differentiator: 24-hour settlement for Merchant Acquiring (vs 3-7 days for Stripe/Worldpay)
+- Revolut Pay: 99% profit margin, access to 70M retail users, 9-second checkout
+- FX Forwards: 0.8% markup on GBP/EUR/USD vs traditional brokers who bundle with credit lines
+- Spend Management: cheaper than Pleo (£5/user vs £9.50), 2-4x cheaper FX
+- API: unified platform across banking + acquiring
+
+TARGET: Mid-market companies £15M-£500M turnover with international operations, payment processing needs, or growing teams needing expense management.
+
+KEY COMPETITORS TO DETECT:
+- HSBC/Barclays/NatWest (FX): digital friction, 1-3% FX costs, legacy tech
+- Stripe (Acquiring): 3-7 day settlement, high fees for commercial cards
+- Worldpay (Acquiring): complex pricing, slow settlement
+- Wise (FX): no forwards, no cards, no acquiring
+- Pleo (Spend): 1.5-2.5% FX markup, no banking ecosystem
+
+POSITIVE SIGNALS: New CFO/FD, recent acquisition, headcount growth 5%+, cost reduction mandate, international expansion, multiple banking relationships, payment costs mentioned, spreadsheets for AP.
+
+NEGATIVE SIGNALS: Going concern doubt, in administration, purely domestic (no FX need), strong incumbent bank relationship with credit lines.
 
 Return ONLY valid JSON with these fields:
 - summary: string (2-3 sentence business description)
 - turnover_trend: string ("growing"|"stable"|"declining"|"unknown")
 - themes: array of { theme: string, evidence: string }
 - pain_indicators: array of { pain: string, evidence: string, severity: "high"|"medium"|"low" }
-- opportunities: array of { product: string, rationale: string, confidence: "high"|"medium"|"low" }
+- opportunities: array of { product: string, rationale: string, confidence: "high"|"medium"|"low", estimated_value: string }
 - risks: array of strings
-- recommended_approach: string
-- international_exposure: { present: boolean, details: string }
-- key_people: array of { name: string, role: string } (from directors report)`,
+- recommended_approach: string (which product to lead with and why)
+- deal_type: string ("transactional"|"transformational") — transactional = 1-2 products, transformational = full suite
+- international_exposure: { present: boolean, details: string, currencies: array of strings }
+- key_people: array of { name: string, role: string } (from directors report)
+- competitors_detected: array of { name: string, product: string, displacement_angle: string }`,
           },
           { role: "user", content: prompt },
         ],
