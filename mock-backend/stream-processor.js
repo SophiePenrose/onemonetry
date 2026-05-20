@@ -75,18 +75,22 @@ export function extractReadableText(htmlContent) {
 
 export function extractCompanyName(htmlContent) {
   const patterns = [
+    /REGISTERED NUMBER[^)]*\)\s*([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP|HOLDINGS|COMPANY|SERVICES))/i,
+    /([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP|HOLDINGS))\s*\(REGISTERED/i,
+    /([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP|HOLDINGS))\s*(?:STRATEGIC REPORT|REPORT OF THE DIRECTORS|FINANCIAL STATEMENTS)/i,
     /<title[^>]*>([^<]+)<\/title>/i,
-    /REGISTERED NUMBER[^)]*\)\s*([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP))/i,
-    /([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP))\s*(?:\(REGISTERED|\(COMPANY)/i,
   ];
 
   for (const pat of patterns) {
     const match = htmlContent.match(pat);
     if (match) {
       let name = match[1].trim();
-      name = name.replace(/\s*-\s*(?:Limited company accounts|Annual accounts).*$/i, "");
+      name = name.replace(/\s*-\s*(?:Limited company accounts|Annual accounts|Accounts|Period Ending|Filing).*$/i, "");
+      name = name.replace(/\s*-\s*Final Accounts.*$/i, "");
+      name = name.replace(/\s*STRATEGIC REPORT.*$/i, "");
       name = name.replace(/\s+/g, " ").trim();
-      if (name.length > 3 && name.length < 100) return name;
+      if (name.toLowerCase().startsWith("accounts")) continue;
+      if (name.length > 3 && name.length < 80) return name;
     }
   }
   return null;
