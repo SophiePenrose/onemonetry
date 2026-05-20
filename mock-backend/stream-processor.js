@@ -48,6 +48,50 @@ export function extractTurnoverFromContent(content) {
   return values.length > 0 ? Math.max(...values) : null;
 }
 
+export function extractReadableText(htmlContent) {
+  let text = htmlContent
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const startMarkers = ["STRATEGIC REPORT", "DIRECTORS' REPORT", "REPORT OF THE DIRECTORS", "COMPANY INFORMATION"];
+  let startIdx = text.length;
+  for (const marker of startMarkers) {
+    const idx = text.toUpperCase().indexOf(marker);
+    if (idx >= 0 && idx < startIdx) startIdx = idx;
+  }
+
+  if (startIdx < text.length) {
+    text = text.substring(startIdx);
+  } else {
+    const regIdx = text.indexOf("REGISTERED NUMBER");
+    if (regIdx >= 0) text = text.substring(regIdx);
+  }
+
+  return text.substring(0, 30000);
+}
+
+export function extractCompanyName(htmlContent) {
+  const patterns = [
+    /<title[^>]*>([^<]+)<\/title>/i,
+    /REGISTERED NUMBER[^)]*\)\s*([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP))/i,
+    /([A-Z][A-Z\s&'.,()-]+(?:LIMITED|LTD|PLC|LLP|GROUP))\s*(?:\(REGISTERED|\(COMPANY)/i,
+  ];
+
+  for (const pat of patterns) {
+    const match = htmlContent.match(pat);
+    if (match) {
+      let name = match[1].trim();
+      name = name.replace(/\s*-\s*(?:Limited company accounts|Annual accounts).*$/i, "");
+      name = name.replace(/\s+/g, " ").trim();
+      if (name.length > 3 && name.length < 100) return name;
+    }
+  }
+  return null;
+}
+
 export function extractCompanyNumberFromFilename(filename) {
   const match = filename.match(/Prod\d+_\d+_(\d{8})_/);
   return match ? match[1] : null;
@@ -140,6 +184,9 @@ export async function processAccountsZip(zipPath, source, onProgress) {
 
       qualifying++;
 
+      const extractedText = extractReadableText(content);
+      const companyName = extractCompanyName(content);
+
       upsertFiling({
         company_number: companyNumber,
         filing_date: bsDate,
@@ -150,14 +197,14 @@ export async function processAccountsZip(zipPath, source, onProgress) {
         balance_sheet_date: bsDate,
         source,
         source_file: name,
-        raw_data: content.length > 50000 ? null : content,
+        raw_data: extractedText,
       });
 
       const existing = getMonitoredCompany(companyNumber);
       const prevTurnover = existing?.latest_turnover || null;
       upsertMonitoredCompany({
         company_number: companyNumber,
-        company_name: existing?.company_name || `Company ${companyNumber}`,
+        company_name: companyName || existing?.company_name || `Company ${companyNumber}`,
         latest_turnover: turnover,
         status: "active",
         source,
