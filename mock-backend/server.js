@@ -1171,33 +1171,45 @@ app.post("/api/monitor/scheduler/stop", (_req, res) => {
   res.json({ message: "Weekly monitor stopped", ...status });
 });
 
-// --- LLM Evidence Extraction ---
+// --- LLM Company Analysis ---
 
-import { extractEvidence, isLLMConfigured } from "./llm.js";
+import { analyseCompany, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
   res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
 });
 
-app.post("/api/llm/extract", async (req, res) => {
-  const { company_id, product_motion } = req.body;
-  if (!company_id) {
-    return res.status(400).json({ error: "Missing company_id" });
+app.post("/api/llm/analyse", async (req, res) => {
+  const { company_number } = req.body;
+  if (!company_number) {
+    return res.status(400).json({ error: "company_number required" });
   }
 
-  const COMPANIES = loadCompanies();
-  const company = COMPANIES.find((c) => c.id === company_id);
-  if (!company) {
-    return res.status(404).json({ error: "Company not found" });
-  }
-
-  const motion = product_motion || company.motions?.[0] || "FX";
+  const monitored = getMonitoredCompany(company_number);
+  const name = monitored?.company_name || `Company ${company_number}`;
+  const turnover = monitored?.latest_turnover || null;
 
   try {
-    const evidence = await extractEvidence(company, motion);
-    res.json({ company_id, product_motion: motion, evidence });
+    const analysis = await analyseCompany(company_number, name, turnover);
+    res.json({ company_number, company_name: name, analysis });
   } catch (err) {
-    res.status(500).json({ error: "Evidence extraction failed", detail: err.message });
+    res.status(500).json({ error: "Analysis failed", detail: err.message });
+  }
+});
+
+// Backward compat
+app.post("/api/llm/extract", async (req, res) => {
+  const { company_id } = req.body;
+  if (!company_id) return res.status(400).json({ error: "Missing company_id" });
+
+  const companyNumber = company_id.startsWith("ch-") ? company_id.replace("ch-", "") : company_id;
+  const monitored = getMonitoredCompany(companyNumber);
+
+  try {
+    const analysis = await analyseCompany(companyNumber, monitored?.company_name, monitored?.latest_turnover);
+    res.json({ company_id, evidence: analysis });
+  } catch (err) {
+    res.status(500).json({ error: "Analysis failed", detail: err.message });
   }
 });
 
