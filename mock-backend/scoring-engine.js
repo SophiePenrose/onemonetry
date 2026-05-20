@@ -175,10 +175,11 @@ const POSITIVE_SIGNALS = [
 
 // --- Negative / disqualification signals ---
 const NEGATIVE_SIGNALS = [
-  { pattern: /(?:going\s+concern|material\s+uncertainty|doubt.*ability\s+to\s+continue)/i, signal: "Going concern doubt", weight: -0.3 },
-  { pattern: /(?:in\s+(?:administration|liquidation|receivership))/i, signal: "Distressed", weight: -0.5 },
-  { pattern: /(?:dormant|no\s+(?:significant\s+)?trading)/i, signal: "Dormant/Non-trading", weight: -0.5 },
-  { pattern: /(?:winding\s+up|cease[d]?\s+trading|closure)/i, signal: "Winding up", weight: -0.5 },
+  { pattern: /material\s+uncertainty.*(?:going\s+concern|ability\s+to\s+continue)/i, signal: "Going concern doubt", weight: -0.3 },
+  { pattern: /(?:doubt|uncertain).*(?:ability\s+to\s+continue\s+as\s+a\s+going\s+concern)/i, signal: "Going concern doubt", weight: -0.3 },
+  { pattern: /(?:company|entity)\s+(?:is\s+)?(?:in\s+)?(?:administration|liquidation|receivership)/i, signal: "Distressed", weight: -0.5 },
+  { pattern: /(?:company|entity)\s+(?:has\s+been|is|was)\s+dormant/i, signal: "Dormant/Non-trading", weight: -0.5 },
+  { pattern: /(?:ceased?\s+trading|closure\s+of\s+(?:the\s+)?(?:business|company|operations))/i, signal: "Ceased trading", weight: -0.5 },
 ];
 
 // --- Main scoring functions ---
