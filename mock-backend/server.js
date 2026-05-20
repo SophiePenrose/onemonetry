@@ -35,6 +35,9 @@ import {
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
 import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
+import { generateFullSequence } from "./email-generator.js";
+import { validateEmail, isCompanyExcluded } from "./email-qc.js";
+import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -1558,6 +1561,91 @@ app.patch("/api/email/sequence/:id/step/:stepNumber", (req, res) => {
 app.delete("/api/email/sequence/:id", (req, res) => {
   deleteSequence(req.params.id);
   res.json({ success: true });
+});
+
+// --- Advanced Email Generation (LLM + Archetypes + QC) ---
+
+app.get("/api/email/archetypes", (_req, res) => {
+  res.json({ archetypes: ARCHETYPES });
+});
+
+app.post("/api/email/generate-advanced", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, motion } = req.body;
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name required" });
+  }
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—", segment: "Mid-Market" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+
+  try {
+    const result = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+    });
+
+    if (result.error) return res.status(400).json(result);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/email/validate", (req, res) => {
+  const { subject, body, is_initial } = req.body;
+  if (!body) return res.status(400).json({ error: "body is required" });
+
+  const result = validateEmail({ subject: subject || "", body }, { isInitialOutreach: is_initial !== false });
+  res.json(result);
+});
+
+app.post("/api/email/check-exclusion", (req, res) => {
+  const { company_id } = req.body;
+  if (!company_id) return res.status(400).json({ error: "company_id required" });
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { turnover: monitored.latest_turnover, status: monitored.status, industry: "—" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const result = isCompanyExcluded(company, analysis);
+  res.json(result);
+});
+
+app.get("/api/email/triggers/:companyId", (req, res) => {
+  const companyNumber = req.params.companyId.replace("ch-", "");
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === req.params.companyId) || { turnover: 0, industry: "—" };
+
+  const triggers = detectTriggers(company, analysis, score);
+  const archetype = selectArchetype(triggers, analysis, company);
+  res.json({ triggers, recommended_archetype: archetype });
 });
 
 // --- Enhanced Scoring with LLM ---
