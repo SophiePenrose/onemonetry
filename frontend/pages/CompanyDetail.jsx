@@ -6,7 +6,7 @@ import CompetitorPanel from "../components/CompetitorPanel";
 import StakeholderPanel from "../components/StakeholderPanel";
 import CadenceLog from "../components/CadenceLog";
 import NotesPanel from "../components/NotesPanel";
-import EvidencePanel from "../components/EvidencePanel";
+import CompanyAnalysis from "../components/CompanyAnalysis";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
 
@@ -171,9 +171,9 @@ export default function CompanyDetail({ companyId }) {
 
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />
 
-      <EvidencePanel
-        companyId={companyId}
-        motions={company.all_motion_scores || []}
+      <CompanyAnalysis
+        companyNumber={company.company_number || companyId.replace("ch-", "")}
+        initialAnalysis={company.analysis}
       />
 
       <NotesPanel companyId={companyId} initialNotes={company.notes} />

@@ -541,6 +541,7 @@ app.get("/api/company/:id", (req, res) => {
           latest_filing_text: filings[0]?.raw_data || null,
           filing_count: filings.length,
           notes: getSetting(`notes_${id}`, ""),
+          analysis: getSetting(`analysis_${companyNumber}`, null),
           competitors: [],
           stakeholders: [],
           cadence_history: [],
