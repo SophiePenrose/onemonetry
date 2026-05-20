@@ -21,9 +21,8 @@ export function getTurnoverThreshold() {
 export function extractTurnoverFromContent(content) {
   const patterns = [
     /<ix:nonFraction[^>]*name="[^"]*(?:Turnover|Revenue|TotalRevenue|NetRevenue|GrossRevenue)[^"]*"[^>]*?>([\d,.\s]+)<\/ix:nonFraction>/gi,
+    /<ix:nonFraction[^>]*name="[^"]*(?:Turnover|Revenue)[^"]*"[^>]*>([\d,.\s]+)</gi,
     /<[^>]*name="[^"]*(?:uk-gaap:Turnover|frs-102:TurnoverRevenue|frs-101:Revenue|core:Turnover|ifrs-full:Revenue)[^"]*"[^>]*>([\d,.\s]+)</gi,
-    /<[^>]*name="[^"]*Turnover[^"]*"[^>]*>([\d,.\s]+)</gi,
-    /<[^>]*name="[^"]*Revenue[^"]*"[^>]*>([\d,.\s]+)</gi,
   ];
 
   const values = [];
@@ -36,8 +35,17 @@ export function extractTurnoverFromContent(content) {
     }
   }
 
-  if (values.length === 0) return null;
-  return Math.max(...values);
+  if (values.length > 0) return Math.max(...values);
+
+  const plainPattern = /(?:turnover|total revenue)[^<]*?[\s:£]+([\d,]+(?:\.\d+)?)\s*(?:thousand|000)?/gi;
+  let plainMatch;
+  while ((plainMatch = plainPattern.exec(content)) !== null) {
+    let val = parseFloat(plainMatch[1].replace(/,/g, ""));
+    if (plainMatch[0].toLowerCase().includes("thousand")) val *= 1000;
+    if (!isNaN(val) && val > 0) values.push(val);
+  }
+
+  return values.length > 0 ? Math.max(...values) : null;
 }
 
 export function extractCompanyNumberFromFilename(filename) {
@@ -100,6 +108,7 @@ export async function processAccountsZip(zipPath, source, onProgress) {
   let processed = 0;
   let qualifying = 0;
   let belowThreshold = 0;
+  let noTurnoverData = 0;
   let parseErrors = 0;
   const qualifyingCompanies = [];
 
@@ -118,7 +127,7 @@ export async function processAccountsZip(zipPath, source, onProgress) {
       const turnover = extractTurnoverFromContent(content);
 
       if (turnover === null) {
-        parseErrors++;
+        noTurnoverData++;
         continue;
       }
 
@@ -164,7 +173,7 @@ export async function processAccountsZip(zipPath, source, onProgress) {
     }
 
     if (i % 500 === 0 && onProgress) {
-      onProgress({ processed, totalFiles, qualifying, belowThreshold, parseErrors, percent: Math.round((i / totalFiles) * 100) });
+      onProgress({ processed, totalFiles, qualifying, belowThreshold, noTurnoverData, parseErrors, percent: Math.round((i / totalFiles) * 100) });
     }
   }
 
@@ -173,6 +182,7 @@ export async function processAccountsZip(zipPath, source, onProgress) {
     processed,
     qualifying,
     below_threshold: belowThreshold,
+    no_turnover_data: noTurnoverData,
     parse_errors: parseErrors,
     companies: qualifyingCompanies,
   };
