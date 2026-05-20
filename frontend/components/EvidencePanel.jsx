@@ -13,6 +13,12 @@ const CONFIDENCE_META = {
   low: { label: "Low confidence", color: "#c0392b", icon: "●○○" },
 };
 
+const SEVERITY_COLORS = {
+  high: { bg: "#fee2e2", color: "#991b1b" },
+  medium: { bg: "#fef3c7", color: "#92400e" },
+  low: { bg: "#f3f4f6", color: "#6b7280" },
+};
+
 export default function EvidencePanel({ companyId, motions }) {
   const [selectedMotion, setSelectedMotion] = useState(motions?.[0]?.motion || null);
   const [evidence, setEvidence] = useState(null);
@@ -40,13 +46,17 @@ export default function EvidencePanel({ companyId, motions }) {
     }
   }
 
+  const motionOpportunity = evidence?.opportunities?.find(
+    (o) => o.product?.toLowerCase() === selectedMotion?.toLowerCase()
+  );
+
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <h3 style={{ fontSize: 16, margin: 0 }}>AI Evidence Extraction</h3>
         {evidence?.source && (
           <span style={{ fontSize: 11, color: "#888", background: "#f3f4f6", padding: "2px 8px", borderRadius: 8 }}>
-            {evidence.source === "llm" ? `via ${evidence.model}` : "mock evidence"}
+            {evidence.source === "llm" ? `via ${evidence.model}` : evidence.source}
           </span>
         )}
       </div>
@@ -79,50 +89,52 @@ export default function EvidencePanel({ companyId, motions }) {
 
       {!evidence && !loading && !error && (
         <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>
-          Select a product motion and click "Extract Evidence" to generate an AI-powered analysis.
+          Select a product motion and click &quot;Extract Evidence&quot; to generate an AI-powered analysis.
         </div>
       )}
 
       {evidence && (
         <div>
-          {/* Fit Assessment */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Fit Assessment</div>
-            <div style={{ fontSize: 14, color: "#333", lineHeight: 1.5 }}>{evidence.fit_assessment}</div>
-          </div>
-
-          {/* Confidence */}
-          {evidence.confidence && (
+          {/* Summary / Fit Assessment */}
+          {evidence.summary && (
             <div style={{ marginBottom: 16 }}>
-              {(() => {
-                const cm = CONFIDENCE_META[evidence.confidence] || CONFIDENCE_META.medium;
-                return (
-                  <span style={{ fontSize: 12, fontWeight: 600, color: cm.color }}>
-                    {cm.icon} {cm.label}
-                  </span>
-                );
-              })()}
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Summary</div>
+              <div style={{ fontSize: 14, color: "#333", lineHeight: 1.5 }}>{evidence.summary}</div>
             </div>
           )}
 
-          {/* Evidence Snippets */}
-          {evidence.evidence_snippets?.length > 0 && (
+          {/* Motion-specific opportunity confidence */}
+          {motionOpportunity && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Evidence Snippets</div>
-              {evidence.evidence_snippets.map((s, idx) => {
-                const rc = RELEVANCE_COLORS[s.relevance] || RELEVANCE_COLORS.medium;
-                return (
-                  <div key={idx} style={{ marginBottom: 8, padding: "8px 12px", background: "#fafbfc", borderRadius: 6, borderLeft: `3px solid ${rc.color}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#888" }}>{s.source}</span>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: rc.color, background: rc.bg, padding: "1px 6px", borderRadius: 6, textTransform: "capitalize" }}>
-                        {s.relevance}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 13, color: "#333" }}>{s.text}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>
+                {selectedMotion} Fit Assessment
+              </div>
+              <div style={{ fontSize: 13, color: "#333", background: "#f8f9fb", padding: "10px 12px", borderRadius: 6 }}>
+                <div style={{ marginBottom: 6 }}>{motionOpportunity.rationale}</div>
+                {(() => {
+                  const cm = CONFIDENCE_META[motionOpportunity.confidence] || CONFIDENCE_META.medium;
+                  return (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: cm.color }}>
+                      {cm.icon} {cm.label}
+                    </span>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* Themes as evidence snippets */}
+          {evidence.themes?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Evidence Themes</div>
+              {evidence.themes.map((t, idx) => (
+                <div key={idx} style={{ marginBottom: 8, padding: "8px 12px", background: "#fafbfc", borderRadius: 6, borderLeft: "3px solid #0075EB" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>{t.theme}</span>
                   </div>
-                );
-              })}
+                  <div style={{ fontSize: 13, color: "#555" }}>{t.evidence}</div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -130,20 +142,42 @@ export default function EvidencePanel({ companyId, motions }) {
           {evidence.pain_indicators?.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Pain Indicators</div>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {evidence.pain_indicators.map((p, idx) => (
-                  <li key={idx} style={{ fontSize: 13, color: "#555", marginBottom: 3 }}>{p}</li>
-                ))}
-              </ul>
+              {evidence.pain_indicators.map((p, idx) => {
+                const sc = SEVERITY_COLORS[p.severity] || SEVERITY_COLORS.medium;
+                return (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: sc.color, background: sc.bg, padding: "2px 8px", borderRadius: 8, textTransform: "capitalize" }}>
+                      {p.severity}
+                    </span>
+                    <span style={{ fontSize: 13, color: "#333" }}>{typeof p === "string" ? p : p.pain}</span>
+                    {p.evidence && <span style={{ fontSize: 12, color: "#888" }}>— {p.evidence}</span>}
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {/* Recommended Angle */}
-          {evidence.recommended_angle && (
+          {/* Recommended Approach */}
+          {(evidence.recommended_approach || evidence.recommended_angle) && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Recommended Outreach Angle</div>
               <div style={{ fontSize: 13, color: "#333", background: "#eff6ff", padding: "8px 12px", borderRadius: 6, borderLeft: "3px solid #0075EB" }}>
-                {evidence.recommended_angle}
+                {evidence.recommended_approach || evidence.recommended_angle}
+              </div>
+            </div>
+          )}
+
+          {/* International Exposure */}
+          {evidence.international_exposure?.present && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>International Exposure</div>
+              <div style={{ fontSize: 13, color: "#333" }}>
+                {evidence.international_exposure.details}
+                {evidence.international_exposure.currencies?.length > 0 && (
+                  <span style={{ marginLeft: 8, color: "#888" }}>
+                    ({evidence.international_exposure.currencies.join(", ")})
+                  </span>
+                )}
               </div>
             </div>
           )}

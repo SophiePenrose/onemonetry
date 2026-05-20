@@ -1,4 +1,5 @@
 import { getFilingsForCompany, getMonitoredCompany, getSetting, setSetting } from "./db.js";
+import { analyseCompany } from "./llm.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 
@@ -409,11 +410,96 @@ export function getStoredScore(companyNumber) {
   return getSetting(`score_${companyNumber}`, null);
 }
 
+export function integrateAnalysis(baseResult, analysis) {
+  if (!analysis || analysis.source === "no_filing_data" || analysis.source === "no_data") return baseResult;
+
+  let boost = 0;
+  const llmMotionBoosts = {};
+
+  if (analysis.opportunities) {
+    for (const opp of analysis.opportunities) {
+      const motionKey = Object.keys(PRODUCT_GP_WEIGHTS).find(
+        (k) => k.toLowerCase() === opp.product?.toLowerCase() || opp.product?.toLowerCase().includes(k.toLowerCase())
+      );
+      if (motionKey && baseResult.all_motion_scores[motionKey]) {
+        const confBoost = opp.confidence === "high" ? 0.15 : opp.confidence === "medium" ? 0.08 : 0.03;
+        llmMotionBoosts[motionKey] = (llmMotionBoosts[motionKey] || 0) + confBoost;
+      }
+    }
+  }
+
+  if (analysis.pain_indicators) {
+    const highPains = analysis.pain_indicators.filter((p) => p.severity === "high").length;
+    const medPains = analysis.pain_indicators.filter((p) => p.severity === "medium").length;
+    boost += highPains * 0.04 + medPains * 0.02;
+  }
+
+  if (analysis.international_exposure?.present) boost += 0.03;
+  if (analysis.competitors_detected?.length > 0) {
+    const weakComps = analysis.competitors_detected.filter((c) =>
+      c.displacement_angle?.toLowerCase().includes("high") || c.displacement_angle?.toLowerCase().includes("cost")
+    ).length;
+    boost += weakComps * 0.02;
+  }
+
+  for (const [motion, extraScore] of Object.entries(llmMotionBoosts)) {
+    if (baseResult.all_motion_scores[motion]) {
+      baseResult.all_motion_scores[motion].score = Math.min(baseResult.all_motion_scores[motion].score + extraScore, 1);
+      baseResult.all_motion_scores[motion].llm_boost = extraScore;
+    }
+  }
+
+  const newComposite = Math.min(Math.round((baseResult.composite_score + boost) * 100) / 100, 1);
+  baseResult.composite_score = newComposite;
+  baseResult.llm_integrated = true;
+  baseResult.analysis_summary = analysis.summary || null;
+  baseResult.recommended_approach = analysis.recommended_approach || null;
+
+  if (analysis.competitors_detected?.length > 0) {
+    baseResult.llm_competitors = analysis.competitors_detected;
+  }
+  if (analysis.key_people?.length > 0) {
+    baseResult.key_people = analysis.key_people;
+  }
+
+  setSetting(`score_${baseResult.company_number}`, baseResult);
+  return baseResult;
+}
+
+export async function scoreCompanyWithLLM(companyNumber) {
+  const baseResult = scoreCompany(companyNumber);
+  if (!baseResult) return null;
+
+  const monitored = getMonitoredCompany(companyNumber);
+  const analysis = await analyseCompany(companyNumber, monitored?.company_name, monitored?.latest_turnover);
+
+  if (analysis) {
+    setSetting(`analysis_${companyNumber}`, analysis);
+  }
+
+  return integrateAnalysis(baseResult, analysis);
+}
+
 export function batchScoreCompanies(companies) {
   const results = [];
   for (const company of companies) {
     const score = scoreCompany(company.company_number);
     if (score) results.push(score);
+  }
+  results.sort((a, b) => b.composite_score - a.composite_score);
+  return results;
+}
+
+export async function batchScoreWithLLM(companies, concurrency = 2) {
+  const results = [];
+  for (let i = 0; i < companies.length; i += concurrency) {
+    const batch = companies.slice(i, i + concurrency);
+    const batchResults = await Promise.all(
+      batch.map((c) => scoreCompanyWithLLM(c.company_number).catch(() => null))
+    );
+    for (const r of batchResults) {
+      if (r) results.push(r);
+    }
   }
   results.sort((a, b) => b.composite_score - a.composite_score);
   return results;

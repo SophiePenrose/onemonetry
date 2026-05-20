@@ -33,7 +33,8 @@ import {
   stopAutoPull,
 } from "./daily-autopull.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
-import { scoreCompany, getStoredScore, batchScoreCompanies } from "./scoring-engine.js";
+import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
+import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -1472,6 +1473,130 @@ app.delete("/api/company/:id/competitors/:idx", (req, res) => {
   fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
 
   res.json({ deleted: true, remaining: company.competitors.length });
+});
+
+// --- Email Sequence Endpoints ---
+
+app.get("/api/email/templates", (_req, res) => {
+  const templates = {};
+  for (const [motion, tmpl] of Object.entries(SEQUENCE_TEMPLATES)) {
+    templates[motion] = {
+      steps: tmpl.steps.length,
+      persona_hooks: Object.keys(tmpl.persona_hooks),
+    };
+  }
+  res.json({ templates });
+});
+
+app.post("/api/email/generate", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
+  if (!company_id || !stakeholder_name || !motion) {
+    return res.status(400).json({ error: "company_id, stakeholder_name, and motion are required" });
+  }
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+
+  const sequence = generateSequence({
+    companyId: company_id,
+    companyName: company.name,
+    stakeholderName: stakeholder_name,
+    stakeholderRole: stakeholder_role,
+    stakeholderEmail: stakeholder_email,
+    motion,
+    analysis,
+    turnover: company.turnover,
+    employeeCount: company.employee_count,
+    industry: company.industry,
+  });
+
+  if (!sequence) return res.status(400).json({ error: `No template available for motion: ${motion}` });
+
+  res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+});
+
+app.get("/api/email/sequences/:companyId", (req, res) => {
+  const sequences = getSequencesForCompany(req.params.companyId);
+  res.json({ sequences });
+});
+
+app.get("/api/email/sequence/:id", (req, res) => {
+  const sequence = getSequence(req.params.id);
+  if (!sequence) return res.status(404).json({ error: "Sequence not found" });
+  res.json({ sequence });
+});
+
+app.patch("/api/email/sequence/:id/step/:stepNumber", (req, res) => {
+  const { id, stepNumber } = req.params;
+  const { status, subject, body } = req.body;
+
+  if (status) {
+    updateStepStatus(id, parseInt(stepNumber), status);
+  }
+  if (subject !== undefined || body !== undefined) {
+    const seq = getSequence(id);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+    const step = seq.steps.find((s) => s.step_number === parseInt(stepNumber));
+    if (!step) return res.status(404).json({ error: "Step not found" });
+    updateStepContent(id, parseInt(stepNumber), subject || step.subject, body || step.body);
+  }
+
+  res.json({ success: true });
+});
+
+app.delete("/api/email/sequence/:id", (req, res) => {
+  deleteSequence(req.params.id);
+  res.json({ success: true });
+});
+
+// --- Enhanced Scoring with LLM ---
+
+app.post("/api/score/company-llm", async (req, res) => {
+  const { company_number } = req.body;
+  if (!company_number) return res.status(400).json({ error: "company_number required" });
+
+  try {
+    const result = await scoreCompanyWithLLM(company_number);
+    if (!result) return res.status(404).json({ error: "Company not found in monitor" });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/score/batch-llm", async (req, res) => {
+  const { limit, concurrency } = req.body;
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 20 });
+
+  try {
+    const results = await batchScoreWithLLM(companies, concurrency || 2);
+    res.json({
+      scored: results.length,
+      top_10: results.slice(0, 10).map((r) => ({
+        company_number: r.company_number,
+        name: r.company_name,
+        turnover: r.turnover,
+        composite_score: r.composite_score,
+        best_motion: r.layers.product_fit.best_motion,
+        product_fit: r.layers.product_fit.score,
+        growth: r.growth.trend,
+        llm_integrated: r.llm_integrated || false,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- Serve frontend in production ---
