@@ -28,11 +28,27 @@ import {
 import {
   getMonthlyZipURLs,
   getDailyZipURLs,
-  processAccountsZip,
   getAutoPullStatus,
   startAutoPull,
   stopAutoPull,
 } from "./bulk-processor.js";
+import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
+import {
+  runWeeklyMonitorBatch,
+  importMonitorListFromCSV,
+  getWeeklyMonitorStatus,
+  startWeeklyMonitor,
+  stopWeeklyMonitor,
+  isMonitorRunning,
+  getMonitorProgress,
+} from "./company-monitor.js";
+import {
+  getMonitorStats,
+  getMonitoredCompanies as dbGetMonitoredCompanies,
+  getFilingsForCompany,
+  getFilingCount,
+  getMonitoredCompanyCount,
+} from "./db.js";
 
 const app = express();
 app.use(express.json());
@@ -1028,79 +1044,34 @@ app.post("/api/import/bulk/process", async (req, res) => {
   res.status(202).json({ job_id: jobId, status: "processing", filename });
 
   try {
-    const result = await processAccountsZip(url, filename, (progress) => {
-      updateImportJob(jobId, {
-        status: "running",
-        metadata: JSON.stringify({ ...progress }),
-      });
+    const result = await processZipInChunks(url, filename, `bulk:${filename}`, {
+      onDownloadProgress: (progress) => {
+        updateImportJob(jobId, {
+          status: "running",
+          metadata: JSON.stringify({ stage: "downloading", ...progress }),
+        });
+      },
+      onProcessProgress: (progress) => {
+        updateImportJob(jobId, {
+          status: "running",
+          metadata: JSON.stringify({ stage: "processing", ...progress }),
+        });
+      },
     });
 
-    if (result.error) {
-      updateImportJob(jobId, {
-        status: "failed",
-        completed_at: new Date().toISOString(),
-        metadata: JSON.stringify({ error: result.message, stage: result.stage }),
-      });
-      addImportLogEntry(jobId, null, null, "error", `${result.stage}: ${result.message}`);
-      return;
-    }
-
-    if (result.skipped) {
-      updateImportJob(jobId, {
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        metadata: JSON.stringify({ skipped: true, reason: result.reason }),
-      });
-      return;
-    }
-
-    const COMPANIES = loadCompanies();
-    const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
-    let imported = 0;
-
     for (const co of result.companies) {
-      if (existingNumbers.has(co.company_number)) {
-        addImportLogEntry(jobId, co.company_number, null, "skipped", "Already in universe", co.turnover);
-        continue;
-      }
-
-      const newCompany = {
-        id: `ch-${co.company_number}`,
-        name: `Company ${co.company_number}`,
-        company_number: co.company_number,
-        industry: "Unknown",
-        segment: guessTurnoverSegment(co.turnover),
-        turnover: co.turnover,
-        employee_count: 0,
-        latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${co.company_number}/filing-history`,
-        motions: [],
-        product_fit: {},
-        competitors: [],
-        stakeholders: [],
-        cadence_history: [],
-        response_propensity: { score: 0.2, warmth: "cold", signals: ["Imported from bulk accounts data"] },
-        source: "bulk_zip",
-        source_file: co.source_file,
-        imported_at: new Date().toISOString(),
-      };
-
-      COMPANIES.push(newCompany);
-      existingNumbers.add(co.company_number);
-      addImportLogEntry(jobId, co.company_number, newCompany.name, "imported", `£${(co.turnover / 1e6).toFixed(1)}M turnover from ${filename}`, co.turnover);
-      imported++;
+      addImportLogEntry(jobId, co.company_number, null, "imported",
+        `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
     }
-
-    const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-    fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
 
     updateImportJob(jobId, {
       status: "completed",
       completed_at: new Date().toISOString(),
-      total_items: result.stats.total_files,
-      processed_items: result.stats.total_files,
-      imported_items: imported,
-      skipped_items: result.stats.below_threshold + (result.companies.length - imported),
-      error_count: result.stats.parse_errors,
+      total_items: result.total_files,
+      processed_items: result.processed,
+      imported_items: result.qualifying,
+      skipped_items: result.below_threshold,
+      error_count: result.parse_errors,
     });
   } catch (err) {
     updateImportJob(jobId, {
@@ -1108,6 +1079,7 @@ app.post("/api/import/bulk/process", async (req, res) => {
       completed_at: new Date().toISOString(),
       metadata: JSON.stringify({ error: err.message }),
     });
+    addImportLogEntry(jobId, null, null, "error", err.message);
   }
 });
 
@@ -1153,6 +1125,78 @@ app.post("/api/import/autopull/start", (_req, res) => {
 app.post("/api/import/autopull/stop", (_req, res) => {
   const status = stopAutoPull();
   res.json({ message: "Auto-pull stopped", ...status });
+});
+
+// --- Company Monitor (Method 2) ---
+
+app.get("/api/monitor/status", (_req, res) => {
+  res.json({
+    ...getWeeklyMonitorStatus(),
+    running: isMonitorRunning(),
+    progress: getMonitorProgress(),
+    threshold: getTurnoverThreshold(),
+    filing_count: getFilingCount(),
+  });
+});
+
+app.get("/api/monitor/companies", (req, res) => {
+  const { status, below_threshold, no_filings, limit, offset } = req.query;
+  const companies = dbGetMonitoredCompanies({
+    status: status || undefined,
+    below_threshold: below_threshold === "true" ? true : undefined,
+    no_filings: no_filings === "true" ? true : undefined,
+    limit: parseInt(limit) || 100,
+    offset: parseInt(offset) || 0,
+  });
+  res.json({ companies, stats: getMonitorStats() });
+});
+
+app.get("/api/monitor/companies/:number/filings", (req, res) => {
+  const filings = getFilingsForCompany(req.params.number);
+  res.json({ filings });
+});
+
+app.post("/api/monitor/import-list", async (req, res) => {
+  const { csv_content, source } = req.body;
+  if (!csv_content) return res.status(400).json({ error: "csv_content required" });
+
+  try {
+    const result = await importMonitorListFromCSV(csv_content, source || "csv_list");
+    const totalMonitored = getMonitoredCompanyCount();
+    res.json({
+      message: `Imported ${result.imported} companies to monitor list`,
+      total_parsed: result.total_parsed,
+      imported: result.imported,
+      skipped: result.skipped,
+      total_monitored: totalMonitored,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/monitor/run", async (req, res) => {
+  const batchSize = parseInt(req.body?.batch_size) || 50;
+
+  if (isMonitorRunning()) {
+    return res.status(409).json({ error: "Monitor already running", progress: getMonitorProgress() });
+  }
+
+  res.status(202).json({ message: `Starting monitor check for up to ${batchSize} companies`, batch_size: batchSize });
+
+  runWeeklyMonitorBatch(batchSize).catch((err) => {
+    console.error("Monitor batch error:", err.message);
+  });
+});
+
+app.post("/api/monitor/scheduler/start", (_req, res) => {
+  const status = startWeeklyMonitor();
+  res.json({ message: "Weekly monitor started (Saturday evenings)", ...status });
+});
+
+app.post("/api/monitor/scheduler/stop", (_req, res) => {
+  const status = stopWeeklyMonitor();
+  res.json({ message: "Weekly monitor stopped", ...status });
 });
 
 // --- LLM Evidence Extraction ---
