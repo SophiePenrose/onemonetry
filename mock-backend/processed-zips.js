@@ -1,8 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function getDataDir() {
-  return process.env.PROCESSED_ZIPS_DATA_DIR || path.join(process.cwd(), "mock-backend", "data");
+  return process.env.PROCESSED_ZIPS_DATA_DIR || path.join(__dirname, "data");
 }
 
 function getProcessedFilePath() {

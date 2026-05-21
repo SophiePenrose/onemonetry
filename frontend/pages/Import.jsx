@@ -28,6 +28,17 @@ function StatusBadge({ status }) {
   return <Badge text={m.label} bg={m.bg} color="#fff" />;
 }
 
+function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "calculating...";
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
 export default function Import() {
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
@@ -37,7 +48,9 @@ export default function Import() {
   const [uploadResult, setUploadResult] = useState(null);
   const [monthlyFiles, setMonthlyFiles] = useState([]);
   const [dailyFiles, setDailyFiles] = useState([]);
+  const [bulkFilesError, setBulkFilesError] = useState(false);
   const [autoPull, setAutoPull] = useState(null);
+  const [bulkBackfill, setBulkBackfill] = useState(null);
   const [bulkTab, setBulkTab] = useState("monthly");
   const fileRef = useRef(null);
 
@@ -46,6 +59,14 @@ export default function Import() {
     refreshJobs();
     refreshBulkFiles();
     refreshAutoPull();
+    refreshBulkBackfillStatus();
+
+    const interval = setInterval(() => {
+      refreshJobs();
+      refreshBulkBackfillStatus();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   function refreshJobs() {
@@ -53,12 +74,28 @@ export default function Import() {
   }
 
   function refreshBulkFiles() {
-    fetch("/api/import/bulk/monthly").then((r) => r.json()).then((d) => setMonthlyFiles(d.files || [])).catch(() => {});
-    fetch("/api/import/bulk/daily").then((r) => r.json()).then((d) => setDailyFiles(d.files || [])).catch(() => {});
+    Promise.all([
+      fetch("/api/import/bulk/monthly").then((r) => r.json()),
+      fetch("/api/import/bulk/daily").then((r) => r.json()),
+    ])
+      .then(([monthly, daily]) => {
+        setMonthlyFiles(monthly.files || []);
+        setDailyFiles(daily.files || []);
+        setBulkFilesError(false);
+      })
+      .catch(() => {
+        setMonthlyFiles([]);
+        setDailyFiles([]);
+        setBulkFilesError(true);
+      });
   }
 
   function refreshAutoPull() {
     fetch("/api/import/autopull/status").then((r) => r.json()).then(setAutoPull).catch(() => {});
+  }
+
+  function refreshBulkBackfillStatus() {
+    fetch("/api/import/bulk/process-remaining/status").then((r) => r.json()).then(setBulkBackfill).catch(() => {});
   }
 
   function loadJobDetail(jobId) {
@@ -115,6 +152,67 @@ export default function Import() {
       refreshAutoPull();
     } catch {
       alert("Failed to toggle auto-pull");
+    }
+  }
+
+  async function handleProcessAllRemaining() {
+    try {
+      const res = await fetch("/api/import/bulk/process-remaining", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          include_daily: true,
+          include_monthly: true,
+          include_monthly_archive: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start bulk backfill");
+      setTimeout(refreshBulkBackfillStatus, 800);
+      setTimeout(refreshJobs, 1000);
+    } catch (err) {
+      alert(err.message || "Failed to start bulk backfill");
+    }
+  }
+
+  async function handleStopProcessAllRemaining() {
+    try {
+      await fetch("/api/import/bulk/process-remaining/stop", { method: "POST" });
+      setTimeout(refreshBulkBackfillStatus, 600);
+    } catch {
+      alert("Failed to request stop");
+    }
+  }
+
+  async function handleProcessNextHistoricBatch() {
+    try {
+      const res = await fetch("/api/import/bulk/process-next-historic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_size: 3, inter_file_delay_ms: 3000 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start historic batch");
+      setTimeout(refreshBulkBackfillStatus, 800);
+      setTimeout(refreshJobs, 1000);
+    } catch (err) {
+      alert(err.message || "Failed to start historic batch");
+    }
+  }
+
+  async function handleProcessLast24Months() {
+    try {
+      const res = await fetch("/api/import/bulk/process-last-24-months", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inter_file_delay_ms: 2500 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start last-24-months processing");
+      setTimeout(refreshBulkBackfillStatus, 800);
+      setTimeout(refreshJobs, 1000);
+    } catch (err) {
+      alert(err.message || "Failed to start last-24-months processing");
     }
   }
 
@@ -235,6 +333,71 @@ export default function Import() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <h3 style={{ fontSize: 16, margin: 0 }}>Phase 2: Bulk Accounts Data</h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={handleProcessAllRemaining}
+              disabled={bulkBackfill?.running}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: bulkBackfill?.running ? "#9ca3af" : "#0a8754",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: bulkBackfill?.running ? "not-allowed" : "pointer",
+              }}
+            >
+              Process All Remaining
+            </button>
+            <button
+              onClick={handleProcessNextHistoricBatch}
+              disabled={bulkBackfill?.running}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #0b4f8a",
+                background: bulkBackfill?.running ? "#f3f4f6" : "#fff",
+                color: bulkBackfill?.running ? "#9ca3af" : "#0b4f8a",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: bulkBackfill?.running ? "not-allowed" : "pointer",
+              }}
+            >
+              Process Next Historic Batch (3)
+            </button>
+            <button
+              onClick={handleProcessLast24Months}
+              disabled={bulkBackfill?.running}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #0a8754",
+                background: bulkBackfill?.running ? "#f3f4f6" : "#fff",
+                color: bulkBackfill?.running ? "#9ca3af" : "#0a8754",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: bulkBackfill?.running ? "not-allowed" : "pointer",
+              }}
+            >
+              Process Last 24 Months
+            </button>
+            {bulkBackfill?.running && (
+              <button
+                onClick={handleStopProcessAllRemaining}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #c0392b",
+                  background: "#fff",
+                  color: "#c0392b",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Stop Backfill
+              </button>
+            )}
             <span style={{ fontSize: 12, color: "#888" }}>Auto-pull:</span>
             <button onClick={toggleAutoPull} style={{
               padding: "4px 14px", borderRadius: 14, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer",
@@ -249,6 +412,15 @@ export default function Import() {
           <div style={{ fontSize: 12, color: "#0a8754", background: "#d1fae5", padding: "6px 12px", borderRadius: 6, marginBottom: 12 }}>
             Auto-pull active — checking for new daily files every 12 hours.
             {autoPull.next_run && <span> Next run: {new Date(autoPull.next_run).toLocaleString()}</span>}
+          </div>
+        )}
+
+        {bulkBackfill?.running && (
+          <div style={{ fontSize: 12, color: "#0b4f8a", background: "#e6f3ff", padding: "8px 12px", borderRadius: 6, marginBottom: 12 }}>
+            Backfill running — processed {bulkBackfill.job?.processed_items || 0} / {bulkBackfill.job?.total_items || 0} ZIP files.
+            {bulkBackfill.job?.metadata?.current_file && <span> Current: {bulkBackfill.job.metadata.current_file}</span>}
+            <span> · ETA: {formatDuration(bulkBackfill.job?.metadata?.eta_seconds)}</span>
+            <span> · Elapsed: {formatDuration(bulkBackfill.job?.metadata?.elapsed_seconds)}</span>
           </div>
         )}
 
@@ -269,6 +441,12 @@ export default function Import() {
           ))}
         </div>
 
+        {bulkFilesError && (
+          <div style={{ fontSize: 12, color: "#991b1b", background: "#fee2e2", padding: "8px 12px", borderRadius: 6, marginBottom: 12 }}>
+            Could not load bulk ZIP data. Backend may be offline.
+          </div>
+        )}
+
         <div style={{ maxHeight: 300, overflowY: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr style={{ background: "#f0f2f5", color: "#555" }}>
@@ -278,6 +456,13 @@ export default function Import() {
               <th style={{ padding: "6px 12px", textAlign: "right" }}>Action</th>
             </tr></thead>
             <tbody>
+              {!bulkFilesError && bulkFiles.length === 0 && (
+                <tr>
+                  <td colSpan={4} style={{ padding: "16px 12px", textAlign: "center", color: "#888" }}>
+                    No {bulkTab} data available yet.
+                  </td>
+                </tr>
+              )}
               {bulkFiles.map((f) => (
                 <tr key={f.filename} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 12px", fontFamily: "monospace", fontSize: 11 }}>{f.filename}</td>

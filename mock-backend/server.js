@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import {
   getCompanyWorkflowState,
   setCompanyWorkflowState,
@@ -61,6 +62,220 @@ import {
   getShortlistCount,
   getMonitoredCompany,
 } from "./db.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, "..");
+const COMPANIES_FILE = path.join(__dirname, "companies.json");
+
+let bulkBackfillRunner = {
+  running: false,
+  cancelRequested: false,
+  jobId: null,
+  startedAt: null,
+};
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parsePositiveInt(value) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+function normalizeBackfillOptions(raw = {}) {
+  const monthlySource = raw.monthly_source === "archive" || raw.monthly_source === "current"
+    ? raw.monthly_source
+    : "all";
+
+  return {
+    include_daily: raw.include_daily !== false,
+    include_monthly: raw.include_monthly !== false,
+    include_monthly_archive: raw.include_monthly_archive === true,
+    monthly_source: monthlySource,
+    min_period: typeof raw.min_period === "string" ? raw.min_period : null,
+    max_period: typeof raw.max_period === "string" ? raw.max_period : null,
+    max_files_per_run: parsePositiveInt(raw.max_files_per_run),
+    inter_file_delay_ms: parsePositiveInt(raw.inter_file_delay_ms) || 2000,
+  };
+}
+
+async function getRemainingZipFilesForBackfill(options) {
+  const files = [];
+
+  if (options.include_monthly) {
+    const monthlyFiles = await getMonthlyZipURLs();
+    files.push(
+      ...monthlyFiles
+        .filter((f) => !f.processed)
+        .filter((f) => options.include_monthly_archive || f.source === "current")
+        .filter((f) => {
+          if (options.monthly_source === "archive") return f.source === "archive";
+          if (options.monthly_source === "current") return f.source === "current";
+          return true;
+        })
+        .filter((f) => !options.min_period || f.period >= options.min_period)
+        .filter((f) => !options.max_period || f.period <= options.max_period)
+        .map((f) => ({
+          ...f,
+          kind: "monthly",
+          sort_key: `monthly:${f.period || "unknown"}:${f.filename}`,
+        }))
+    );
+  }
+
+  if (options.include_daily) {
+    const dailyFiles = await getDailyZipURLs();
+    files.push(
+      ...dailyFiles
+        .filter((f) => !f.processed)
+        .map((f) => ({
+          ...f,
+          kind: "daily",
+          sort_key: `daily:${f.date || "unknown"}:${f.filename}`,
+        }))
+    );
+  }
+
+  files.sort((a, b) => a.sort_key.localeCompare(b.sort_key));
+  return files;
+}
+
+async function runBulkBackfillJob(jobId, rawOptions = {}) {
+  const options = normalizeBackfillOptions(rawOptions);
+  const startedMs = Date.now();
+  bulkBackfillRunner = {
+    running: true,
+    cancelRequested: false,
+    jobId,
+    startedAt: new Date().toISOString(),
+  };
+
+  let completedFiles = 0;
+  let importedItems = 0;
+  let skippedItems = 0;
+  let errorCount = 0;
+
+  try {
+    const files = await getRemainingZipFilesForBackfill(options);
+    const targetFiles = options.max_files_per_run ? files.slice(0, options.max_files_per_run) : files;
+
+    const buildBackfillMetadata = (currentFile = null, progress = null) => {
+      const elapsedSeconds = Math.max(Math.round((Date.now() - startedMs) / 1000), 0);
+      const remainingFiles = Math.max(targetFiles.length - completedFiles, 0);
+      const averageSecondsPerFile = completedFiles > 0 ? elapsedSeconds / completedFiles : null;
+      const etaSeconds = averageSecondsPerFile ? Math.round(averageSecondsPerFile * remainingFiles) : null;
+
+      return {
+        ...options,
+        mode: "resume_unprocessed",
+        current_file: currentFile,
+        total_files: targetFiles.length,
+        completed_files: completedFiles,
+        remaining_files: remainingFiles,
+        elapsed_seconds: elapsedSeconds,
+        eta_seconds: etaSeconds,
+        progress,
+      };
+    };
+
+    updateImportJob(jobId, {
+      status: "running",
+      total_items: targetFiles.length,
+      processed_items: 0,
+      imported_items: 0,
+      skipped_items: 0,
+      error_count: 0,
+      metadata: JSON.stringify(buildBackfillMetadata(null, null)),
+    });
+
+    if (targetFiles.length === 0) {
+      updateImportJob(jobId, {
+        status: "completed",
+        completed_at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    for (const file of targetFiles) {
+      if (bulkBackfillRunner.cancelRequested) {
+        break;
+      }
+
+      updateImportJob(jobId, {
+        status: "running",
+        metadata: JSON.stringify(buildBackfillMetadata(file.filename, null)),
+      });
+
+      try {
+        const source = file.kind === "monthly" ? `monthly:${file.period}` : `daily:${file.date}`;
+        const result = await processZipInChunks(file.url, file.filename, source, {
+          onProcessProgress: (progress) => {
+            updateImportJob(jobId, {
+              status: "running",
+              metadata: JSON.stringify(buildBackfillMetadata(file.filename, progress)),
+            });
+          },
+        });
+
+        completedFiles += 1;
+        importedItems += result.qualifying || 0;
+        skippedItems += (result.below_threshold || 0) + (result.no_turnover_data || 0);
+        errorCount += result.parse_errors || 0;
+
+        addImportLogEntry(
+          jobId,
+          null,
+          null,
+          "imported",
+          `Processed ${file.filename}: ${result.qualifying || 0} qualifying from ${result.total_files || 0} filings`,
+          null
+        );
+      } catch (err) {
+        completedFiles += 1;
+        errorCount += 1;
+        addImportLogEntry(jobId, null, null, "error", `Failed ${file.filename}: ${err.message}`, null);
+      }
+
+      updateImportJob(jobId, {
+        status: "running",
+        processed_items: completedFiles,
+        imported_items: importedItems,
+        skipped_items: skippedItems,
+        error_count: errorCount,
+      });
+
+      if (!bulkBackfillRunner.cancelRequested && options.inter_file_delay_ms > 0) {
+        await sleep(options.inter_file_delay_ms);
+      }
+    }
+
+    updateImportJob(jobId, {
+      status: bulkBackfillRunner.cancelRequested ? "failed" : "completed",
+      completed_at: new Date().toISOString(),
+      metadata: JSON.stringify({
+        ...buildBackfillMetadata(null, null),
+        cancelled: bulkBackfillRunner.cancelRequested,
+      }),
+    });
+  } catch (err) {
+    updateImportJob(jobId, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      metadata: JSON.stringify({ ...options, mode: "resume_unprocessed", error: err.message }),
+    });
+    addImportLogEntry(jobId, null, null, "error", `Backfill failed: ${err.message}`, null);
+  } finally {
+    bulkBackfillRunner = {
+      running: false,
+      cancelRequested: false,
+      jobId: null,
+      startedAt: null,
+    };
+  }
+}
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -310,8 +525,7 @@ function computeCompanyProfile(company) {
 // --- Data loading ---
 
 function loadCompanies() {
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  return JSON.parse(fs.readFileSync(COMPANIES_FILE, "utf-8"));
 }
 
 // --- Routes ---
@@ -910,8 +1124,7 @@ app.post("/api/companies", (req, res) => {
   };
 
   COMPANIES.push(newCompany);
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.status(201).json({ company: newCompany });
 });
@@ -1022,8 +1235,7 @@ async function processCSVImport(jobId, companyNumbers) {
     if (isCompaniesHouseConfigured()) await new Promise((r) => setTimeout(r, 500));
   }
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   updateImportJob(jobId, {
     status: "completed",
@@ -1145,6 +1357,133 @@ app.post("/api/import/bulk/process", async (req, res) => {
     });
     addImportLogEntry(jobId, null, null, "error", err.message);
   }
+});
+
+app.post("/api/import/bulk/process-remaining", async (req, res) => {
+  if (bulkBackfillRunner.running) {
+    return res.status(409).json({
+      error: "A bulk backfill job is already running",
+      job_id: bulkBackfillRunner.jobId,
+    });
+  }
+
+  const options = normalizeBackfillOptions(req.body || {});
+  const jobId = `bulk-remaining-${Date.now()}`;
+
+  createImportJob(jobId, "bulk_remaining", 0, {
+    ...options,
+    mode: "resume_unprocessed",
+  });
+
+  res.status(202).json({
+    job_id: jobId,
+    status: "running",
+    message: "Started processing all remaining unprocessed ZIP files",
+    options,
+  });
+
+  runBulkBackfillJob(jobId, options).catch((err) => {
+    console.error("[BulkBackfill] Unexpected failure:", err.message);
+  });
+});
+
+app.post("/api/import/bulk/process-next-historic", async (req, res) => {
+  if (bulkBackfillRunner.running) {
+    return res.status(409).json({
+      error: "A bulk backfill job is already running",
+      job_id: bulkBackfillRunner.jobId,
+    });
+  }
+
+  const requestedBatch = parsePositiveInt(req.body?.batch_size);
+  const requestedDelay = parsePositiveInt(req.body?.inter_file_delay_ms);
+  const options = normalizeBackfillOptions({
+    include_daily: false,
+    include_monthly: true,
+    include_monthly_archive: true,
+    monthly_source: "archive",
+    max_files_per_run: requestedBatch || 3,
+    inter_file_delay_ms: requestedDelay || 3000,
+  });
+
+  const jobId = `bulk-historic-${Date.now()}`;
+  createImportJob(jobId, "bulk_historic_batch", 0, {
+    ...options,
+    mode: "historic_batch",
+  });
+
+  res.status(202).json({
+    job_id: jobId,
+    status: "running",
+    message: `Started historic batch (${options.max_files_per_run} archive monthly ZIPs)` ,
+    options,
+  });
+
+  runBulkBackfillJob(jobId, options).catch((err) => {
+    console.error("[BulkBackfill] Historic batch failed:", err.message);
+  });
+});
+
+app.post("/api/import/bulk/process-last-24-months", async (req, res) => {
+  if (bulkBackfillRunner.running) {
+    return res.status(409).json({
+      error: "A bulk backfill job is already running",
+      job_id: bulkBackfillRunner.jobId,
+    });
+  }
+
+  const requestedDelay = parsePositiveInt(req.body?.inter_file_delay_ms);
+  const now = new Date();
+  const startDate = new Date(now.getFullYear(), now.getMonth() - 23, 1);
+  const minPeriod = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}`;
+  const maxPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const options = normalizeBackfillOptions({
+    include_daily: false,
+    include_monthly: true,
+    include_monthly_archive: true,
+    monthly_source: "all",
+    min_period: minPeriod,
+    max_period: maxPeriod,
+    max_files_per_run: 24,
+    inter_file_delay_ms: requestedDelay || 2500,
+  });
+
+  const jobId = `bulk-last24-${Date.now()}`;
+  createImportJob(jobId, "bulk_last24_months", 0, {
+    ...options,
+    mode: "last_24_months",
+  });
+
+  res.status(202).json({
+    job_id: jobId,
+    status: "running",
+    message: `Started monthly processing for last 24 months (${minPeriod} to ${maxPeriod})`,
+    options,
+  });
+
+  runBulkBackfillJob(jobId, options).catch((err) => {
+    console.error("[BulkBackfill] Last24 failed:", err.message);
+  });
+});
+
+app.get("/api/import/bulk/process-remaining/status", (_req, res) => {
+  const job = bulkBackfillRunner.jobId ? getImportJob(bulkBackfillRunner.jobId) : null;
+  res.json({
+    running: bulkBackfillRunner.running,
+    cancel_requested: bulkBackfillRunner.cancelRequested,
+    job_id: bulkBackfillRunner.jobId,
+    started_at: bulkBackfillRunner.startedAt,
+    job,
+  });
+});
+
+app.post("/api/import/bulk/process-remaining/stop", (_req, res) => {
+  if (!bulkBackfillRunner.running) {
+    return res.json({ running: false, message: "No backfill job is running" });
+  }
+  bulkBackfillRunner.cancelRequested = true;
+  return res.json({ running: true, job_id: bulkBackfillRunner.jobId, message: "Stop requested" });
 });
 
 // --- Scoring Engine ---
@@ -1440,8 +1779,7 @@ app.post("/api/company/:id/cadence", (req, res) => {
   if (!company.cadence_history) company.cadence_history = [];
   company.cadence_history.push(entry);
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.status(201).json({ entry, total: company.cadence_history.length });
 });
@@ -1459,8 +1797,7 @@ app.post("/api/company/:id/stakeholders", (req, res) => {
   if (!company.stakeholders) company.stakeholders = [];
   company.stakeholders.push(stakeholder);
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.status(201).json({ stakeholder, total: company.stakeholders.length });
 });
@@ -1477,8 +1814,7 @@ app.delete("/api/company/:id/stakeholders/:idx", (req, res) => {
   }
 
   company.stakeholders.splice(index, 1);
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.json({ deleted: true, remaining: company.stakeholders.length });
 });
@@ -1496,8 +1832,7 @@ app.post("/api/company/:id/competitors", (req, res) => {
   if (!company.competitors) company.competitors = [];
   company.competitors.push(competitor);
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.status(201).json({ competitor, total: company.competitors.length });
 });
@@ -1514,8 +1849,7 @@ app.delete("/api/company/:id/competitors/:idx", (req, res) => {
   }
 
   company.competitors.splice(index, 1);
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(COMPANIES, null, 2));
 
   res.json({ deleted: true, remaining: company.competitors.length });
 });
@@ -1882,7 +2216,7 @@ app.post("/api/score/batch-llm", async (req, res) => {
 
 // --- Serve frontend in production ---
 
-const frontendDist = path.join(process.cwd(), "frontend", "dist");
+const frontendDist = path.join(REPO_ROOT, "frontend", "dist");
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
   app.get("*", (_req, res) => {
@@ -1955,4 +2289,25 @@ app.listen(PORT, () => {
   scheduleWeeklyReport();
   startAutoPull();
   console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);
+
+  const staleBackfill = listImportJobs().find((job) =>
+    (job.type === "bulk_remaining" || job.type === "bulk_historic_batch" || job.type === "bulk_last24_months") && job.status === "running"
+  );
+  if (staleBackfill && !bulkBackfillRunner.running) {
+    const options = normalizeBackfillOptions(staleBackfill.metadata || {});
+    const isLegacyUnboundedFullBackfill =
+      staleBackfill.type === "bulk_remaining"
+      && !options.max_files_per_run
+      && !options.min_period
+      && !options.max_period;
+
+    if (isLegacyUnboundedFullBackfill) {
+      console.log(`[BulkBackfill] Skipping auto-resume for legacy unbounded job ${staleBackfill.id} to avoid OOM. Start a bounded job (last 24 months or historic batch) manually.`);
+    } else {
+      console.log(`[BulkBackfill] Resuming interrupted job ${staleBackfill.id}`);
+      runBulkBackfillJob(staleBackfill.id, options).catch((err) => {
+        console.error("[BulkBackfill] Resume failed:", err.message);
+      });
+    }
+  }
 });
