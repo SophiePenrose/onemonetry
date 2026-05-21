@@ -39,6 +39,9 @@ import { generateFullSequence } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
+import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
+import { scoreAllStakeholders, getOutreachReadiness } from "./stakeholder-scoring.js";
+import { runMigrations } from "./migrations.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -61,7 +64,45 @@ import {
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+app.use(authMiddleware);
 const PORT = 8000;
+
+// --- Authentication ---
+
+app.get("/api/auth/status", (_req, res) => {
+  res.json({ configured: isAuthConfigured(), needs_setup: !isAuthConfigured() });
+});
+
+app.post("/api/auth/setup", (req, res) => {
+  if (isAuthConfigured()) {
+    return res.status(400).json({ error: "Auth already configured. Use login instead." });
+  }
+  const { password } = req.body;
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
+  }
+  setupAuth(password);
+  const token = createSession(req.headers["user-agent"]);
+  res.json({ success: true, token });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: "Password required" });
+
+  if (!verifyPassword(password)) {
+    return res.status(401).json({ error: "Invalid password" });
+  }
+
+  const token = createSession(req.headers["user-agent"]);
+  res.json({ success: true, token });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const token = req.headers["x-auth-token"];
+  if (token) destroySession(token);
+  res.json({ success: true });
+});
 
 const VALID_MOTIONS = [
   "FX",
@@ -1650,6 +1691,37 @@ app.get("/api/email/triggers/:companyId", (req, res) => {
   res.json({ triggers, recommended_archetype: archetype });
 });
 
+// --- Stakeholder Assessment ---
+
+app.get("/api/stakeholders/:companyId", (req, res) => {
+  const companyNumber = req.params.companyId.replace("ch-", "");
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === req.params.companyId) || { name: `Company ${companyNumber}` };
+
+  if (!analysis?.key_people?.length) {
+    const monitored = getMonitoredCompany(companyNumber);
+    return res.json({
+      readiness: getOutreachReadiness([]),
+      stakeholders: [],
+      company_name: monitored?.company_name || company.name,
+    });
+  }
+
+  const filingDate = analysis.analysed_at || null;
+  const scored = scoreAllStakeholders(analysis.key_people, company, filingDate);
+  const readiness = getOutreachReadiness(scored);
+
+  res.json({
+    readiness,
+    stakeholders: scored,
+    company_name: company.name,
+    source: "companies_house_filing",
+    filing_date: filingDate,
+  });
+});
+
 // --- YAMM Export & Sequence Management ---
 
 app.get("/api/email/export/csv/:sequenceId", (req, res) => {
@@ -1839,8 +1911,10 @@ function generateAndSaveWeeklyReport() {
 
 
 app.listen(PORT, () => {
+  runMigrations();
   console.log(`Onemonetry running on http://localhost:${PORT}`);
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
+  console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
   scheduleWeeklyReport();
   startAutoPull();
