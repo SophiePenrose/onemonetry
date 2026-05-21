@@ -5,66 +5,12 @@
 
 import { validateEmail, APPROVED_CLAIMS, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, getPersonaGuidance, getSectorAngle, COMPETITOR_DISPLACEMENT } from "./email-archetypes.js";
+import { SYSTEM_PROMPT, selectInferencePattern, detectAccountHealth } from "./email-system-prompt.js";
 import { getSetting } from "./db.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-const SYSTEM_PROMPT = `You are an email generation agent for the Revolut Business mid-market prospecting tool. Generate compliant, high-converting outbound emails scoring 95%+ on Revolut's QC scorecard.
-
-HARD RULES:
-- NEVER use: "always free", "free forever", "we're the best", "cheapest in the market", "nobody else does this", "the only platform that", "best/lowest/fastest/most secure" (superlatives), "100% guaranteed", "unlimited cards/accounts", "you'll definitely save", "guaranteed savings", "limited time only", "sign up now or miss out", "last chance", "act now", "save thousands/millions", "60-80% cheaper"
-- ALWAYS qualify "interbank rate" with "during market hours within plan allowance" or append ²
-- NEVER use: Dear, Sirs, synergy, leverage, circle back, touch base, low-hanging fruit, deep dive, ideate
-- NEVER use emojis
-- Max 1 exclamation mark per email
-- No "hope you're well", "sorry to bother", "just checking in", "I never heard back", "per my previous email"
-
-APPROVED CLAIMS (use ONLY these numbers):
-- 70M total customers
-- 20,000+ new businesses join monthly
-- 99.99%+ platform uptime
-- 6% saved on spend (disclaimer: illustrative, not guaranteed)
-- 88% faster expense management
-- Exchange at interbank rate (during market hours within plan allowance)
-- 0% markup on FX within plan allowance
-- FX is 2–4x cheaper than Pleo
-- Up to 200 virtual cards
-- 24-hour settlement (vs 3–7 days from traditional acquirers)
-- Like-for-like settlement in 34 currencies
-- 9-second checkout with Revolut Pay
-- Access to 70M+ retail users via Revolut Pay
-
-TONE (4 pillars): Trustworthy, Empowering, Sophisticated, Smart.
-- Contractions OK (we're, you'll, you've)
-- "You/your/your team" — never "users", "clients"
-- Confident and direct
-- Open with: Hey, Hi, Hello — NEVER "Dear"
-- No buzzwords, no padding, no fluff
-
-STRUCTURE (5-block for cold outreach):
-1. HOOK: 1 sentence, max 15 words. Specific observation.
-2. CONTEXT/PAIN: 1–2 sentences, 20–30 words. Tie to business challenge.
-3. VALUE PROP: 1–2 sentences, 25–40 words. One specific approved data point.
-4. SOCIAL PROOF (optional): 1 sentence.
-5. ASK: 1 sentence, 10–20 words. Interest-based, NOT meeting-based.
-
-WORD LIMITS:
-- Cold initial: 75–110 words
-- Follow-up: 60–120 words
-- Breakup: 40–80 words
-- Subject: 3–7 words, max 45 characters
-
-OUTPUT FORMAT: Return raw JSON (no markdown):
-{
-  "subject": "string",
-  "body": "string",
-  "archetype_used": "string",
-  "claims_used": ["string"],
-  "disclaimers_needed": [number],
-  "qc_self_check": "string (any potential issues)"
-}`;
 
 export async function generateLLMEmail(params) {
   const { company, contact, analysis, score, archetype, trigger, senderName, stepNumber, totalSteps } = params;
@@ -78,8 +24,11 @@ export async function generateLLMEmail(params) {
   const displacement = analysis?.competitors_detected?.length > 0
     ? COMPETITOR_DISPLACEMENT[analysis.competitors_detected[0].name]
     : null;
+  const inferenceData = selectInferencePattern(company, analysis);
+  const accountHealth = detectAccountHealth(analysis, score);
 
-  const userPrompt = buildUserPrompt(params, persona, sector, displacement);
+  const enrichedParams = { ...params, inferenceData, accountHealth };
+  const userPrompt = buildUserPrompt(enrichedParams, persona, sector, displacement);
 
   try {
     const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
@@ -281,8 +230,25 @@ The "proof of research" principle: the prospect should think "how do they know t
 - Lead with value, ask permission second`);
   }
 
+  if (params.inferenceData?.best_pattern) {
+    parts.push(`\nINFERENCE PATTERN TO USE (adapt to this company's specifics — do NOT copy verbatim):
+"${params.inferenceData.best_pattern.inference}"
+This is how an insider would describe their situation. Adapt the language to match their specific data.`);
+  }
+
+  if (params.accountHealth) {
+    parts.push(`\nACCOUNT HEALTH: ${params.accountHealth}
+Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sensitive — do NOT lead with loss. Focus on controllable costs." : params.accountHealth === "post_acquisition" ? "Frame around integration and consolidation opportunity." : params.accountHealth === "healthy_growing" ? "Be confident and forward-looking." : ""}`);
+  }
+
   parts.push(`\nSender name: ${params.senderName || "[Your Name]"}`);
-  parts.push(`\nReturn raw JSON: { "subject": "...", "body": "...", "archetype_used": "...", "claims_used": [...], "disclaimers_needed": [...], "qc_self_check": "..." }`);
+  parts.push(`\nIMPORTANT REMINDERS:
+- Savings estimates MUST include caveat: "(based on estimated FX volume from filed accounts; actual savings depend on your current provider's rates and would require a brief review to confirm)"
+- Do NOT merely cite data. SYNTHESISE it into an insight about their business.
+- The first sentence must make the prospect think "how do they know that?"
+- Use industry-specific terminology (not generic business language)
+- End with a genuine question, not a meeting request`);
+  parts.push(`\nReturn raw JSON: { "subject": "...", "body": "...", "footer": "...", "word_count": N, "personalisation_audit": {...}, "claims_used": [...], "disclaimers_needed": [...], "qc_self_check": "..." }`);
 
   return parts.join("\n");
 }

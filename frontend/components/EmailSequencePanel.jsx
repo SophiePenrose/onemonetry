@@ -8,6 +8,63 @@ const STATUS_META = {
   replied: { label: "Replied", color: "#0a8754", bg: "#d1fae5" },
 };
 
+function CopyButton({ subject, body, footer }) {
+  const [copied, setCopied] = React.useState(null);
+
+  async function handleCopy(type) {
+    let text;
+    if (type === "subject") {
+      text = subject;
+    } else {
+      const fullBody = footer ? `${body}\n\n${footer}` : body;
+      text = fullBody;
+    }
+
+    try {
+      const htmlContent = text.replace(/\n/g, "<br>");
+      const blob = new Blob([htmlContent], { type: "text/html" });
+      const plainBlob = new Blob([text], { type: "text/plain" });
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": blob,
+          "text/plain": plainBlob,
+        }),
+      ]);
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      await navigator.clipboard.writeText(text);
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    }
+  }
+
+  const btnStyle = (active) => ({
+    padding: "3px 10px", borderRadius: 4, fontSize: 11, cursor: "pointer",
+    border: active ? "1px solid #0a8754" : "1px solid #ddd",
+    background: active ? "#d1fae5" : "#fff",
+    color: active ? "#0a8754" : "#555",
+    fontWeight: 600,
+  });
+
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      <button onClick={() => handleCopy("subject")} style={btnStyle(copied === "subject")}>
+        {copied === "subject" ? "✓ Subject" : "Copy Subject"}
+      </button>
+      <button onClick={() => handleCopy("body")} style={btnStyle(copied === "body")}>
+        {copied === "body" ? "✓ Body" : "Copy Body"}
+      </button>
+    </div>
+  );
+}
+
+CopyButton.propTypes = {
+  subject: PropTypes.string,
+  body: PropTypes.string,
+  footer: PropTypes.string,
+};
+
 export default function EmailSequencePanel({ companyId, companyName, stakeholders, keyPeople, motions }) {
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState({});
@@ -217,25 +274,31 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                               <span style={{ fontSize: 11, fontWeight: 600, color: sm.color, background: sm.bg, padding: "1px 8px", borderRadius: 8 }}>
                                 {sm.label}
                               </span>
+                              {step.status === "pending" && step.send_delay_days > 0 && (
+                                <span style={{ fontSize: 10, color: "#c27b00", fontStyle: "italic" }}>
+                                  Send on: {new Date(Date.now() + step.send_delay_days * 86400000).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+                                </span>
+                              )}
                             </div>
                             <div style={{ display: "flex", gap: 4 }}>
+                              <CopyButton subject={step.subject} body={step.body} footer={step.footer} />
                               {step.status === "pending" && (
                                 <button onClick={() => handleMarkStatus(seq.id, step.step_number, "sent")} style={{
-                                  padding: "2px 8px", borderRadius: 4, border: "1px solid #ddd", background: "#fff", fontSize: 11, cursor: "pointer",
+                                  padding: "3px 10px", borderRadius: 4, border: "1px solid #0075EB", background: "#eff6ff", fontSize: 11, cursor: "pointer", color: "#0075EB", fontWeight: 600,
                                 }}>Mark Sent</button>
                               )}
                               {step.status === "sent" && (
                                 <>
                                   <button onClick={() => handleMarkStatus(seq.id, step.step_number, "opened")} style={{
-                                    padding: "2px 8px", borderRadius: 4, border: "1px solid #ddd", background: "#fff", fontSize: 11, cursor: "pointer",
+                                    padding: "3px 10px", borderRadius: 4, border: "1px solid #ddd", background: "#fff", fontSize: 11, cursor: "pointer",
                                   }}>Opened</button>
                                   <button onClick={() => handleMarkStatus(seq.id, step.step_number, "replied")} style={{
-                                    padding: "2px 8px", borderRadius: 4, border: "1px solid #0a8754", background: "#d1fae5", fontSize: 11, cursor: "pointer", color: "#0a8754",
-                                  }}>Replied</button>
+                                    padding: "3px 10px", borderRadius: 4, border: "1px solid #0a8754", background: "#d1fae5", fontSize: 11, cursor: "pointer", color: "#0a8754", fontWeight: 600,
+                                  }}>Replied!</button>
                                 </>
                               )}
                               <button onClick={() => setEditingStep(isEditing ? null : `${seq.id}-${step.step_number}`)} style={{
-                                padding: "2px 8px", borderRadius: 4, border: "1px solid #ddd", background: "#fff", fontSize: 11, cursor: "pointer",
+                                padding: "3px 10px", borderRadius: 4, border: "1px solid #ddd", background: "#fff", fontSize: 11, cursor: "pointer",
                               }}>
                                 {isEditing ? "Cancel" : "Edit"}
                               </button>
