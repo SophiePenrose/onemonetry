@@ -40,7 +40,7 @@ import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
 import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
-import { scoreAllStakeholders, getOutreachReadiness } from "./stakeholder-scoring.js";
+import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
 import { runMigrations } from "./migrations.js";
 import {
   runWeeklyMonitorBatch,
@@ -1612,9 +1612,21 @@ app.get("/api/email/archetypes", (_req, res) => {
 });
 
 app.post("/api/email/generate-advanced", async (req, res) => {
-  const { company_id, stakeholder_name, stakeholder_role, motion, merchant_spend } = req.body;
+  const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, merchant_spend, force } = req.body;
   if (!company_id || !stakeholder_name) {
     return res.status(400).json({ error: "company_id and stakeholder_name required" });
+  }
+
+  if (!force) {
+    const dupCheck = checkDuplicateContact(stakeholder_name, stakeholder_email, company_id);
+    if (dupCheck.duplicate) {
+      return res.status(409).json({
+        error: "Duplicate contact",
+        detail: dupCheck.reason,
+        existing_sequence: dupCheck.existing?.sequence_id,
+        hint: "Set force=true to override, or check /api/email/active-contacts/" + company_id,
+      });
+    }
   }
 
   const companyNumber = company_id.replace("ch-", "");
@@ -1643,6 +1655,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     });
 
     if (result.error) return res.status(400).json(result);
+    registerActiveContact(stakeholder_name, stakeholder_email || null, company_id, result.archetype + "-" + Date.now());
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1691,34 +1704,57 @@ app.get("/api/email/triggers/:companyId", (req, res) => {
   res.json({ triggers, recommended_archetype: archetype });
 });
 
+// --- Active Contacts (Duplicate Detection) ---
+
+app.get("/api/email/active-contacts/:companyId", (req, res) => {
+  const contacts = getActiveContactsForCompany(req.params.companyId);
+  res.json({ contacts, count: contacts.length });
+});
+
 // --- Stakeholder Assessment ---
 
 app.get("/api/stakeholders/:companyId", (req, res) => {
   const companyNumber = req.params.companyId.replace("ch-", "");
   const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
 
   const COMPANIES = loadCompanies();
-  const company = COMPANIES.find((c) => c.id === req.params.companyId) || { name: `Company ${companyNumber}` };
+  let company = COMPANIES.find((c) => c.id === req.params.companyId);
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) company = { name: monitored.company_name || `Company ${companyNumber}`, turnover: monitored.latest_turnover };
+  }
+  if (!company) company = { name: `Company ${companyNumber}` };
 
   if (!analysis?.key_people?.length) {
-    const monitored = getMonitoredCompany(companyNumber);
     return res.json({
       readiness: getOutreachReadiness([]),
       stakeholders: [],
-      company_name: monitored?.company_name || company.name,
+      company_name: company.name,
+      active_contacts: getActiveContactsForCompany(req.params.companyId),
     });
   }
 
-  const filingDate = analysis.analysed_at || null;
-  const scored = scoreAllStakeholders(analysis.key_people, company, filingDate);
+  const context = {
+    company,
+    analysis,
+    motion: score?.layers?.product_fit?.best_motion || "FX",
+    filingDate: analysis.analysed_at || null,
+  };
+
+  const scored = scoreAllStakeholders(analysis.key_people, context);
   const readiness = getOutreachReadiness(scored);
+  const activeContacts = getActiveContactsForCompany(req.params.companyId);
 
   res.json({
     readiness,
     stakeholders: scored,
+    active_contacts: activeContacts,
     company_name: company.name,
     source: "companies_house_filing",
-    filing_date: filingDate,
+    filing_date: analysis.analysed_at,
+    primary_motion: context.motion,
+    note: "Stakeholders scored on 5 dimensions: decision_authority (0-30), relevance (0-25), reachability (0-20), timing (0-15), influence_network (0-10). Final score = composite × data_confidence.",
   });
 });
 
