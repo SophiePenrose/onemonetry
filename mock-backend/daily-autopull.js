@@ -1,6 +1,8 @@
 import { getDailyZipURLs } from "./bulk-processor.js";
+import { getDailyAutoPullPlan } from "./daily-autopull-planner.js";
 import { processZipInChunks } from "./stream-processor.js";
 import { createImportJob, updateImportJob, addImportLogEntry, getFilingCount, getMonitoredCompanyCount } from "./db.js";
+import { markZipsProcessed } from "./processed-zips.js";
 
 let autoPullTimer = null;
 let autoPullStatus = {
@@ -95,7 +97,25 @@ async function runAutoPullCycle() {
 
   try {
     const dailyFiles = await getDailyZipURLs();
-    const unprocessed = dailyFiles.filter((f) => !f.processed);
+    const plan = getDailyAutoPullPlan(dailyFiles);
+    const unprocessed = plan.filesToProcess;
+
+    if (plan.initializedBaseline) {
+      const filenames = plan.filesToBaseline.map((file) => file.filename);
+      markZipsProcessed(filenames, {
+        source: "daily_autopull_baseline",
+        reason: "Initialized auto-pull baseline; future runs process newly published daily files only",
+      });
+      console.log(`[AutoPull] Initialized daily ZIP baseline with ${filenames.length} existing files; future checks will process newly published files`);
+      autoPullStatus.last_result = {
+        message: "Initialized daily ZIP baseline",
+        checked_at: new Date().toISOString(),
+        files_checked: dailyFiles.length,
+        files_baselined: filenames.length,
+      };
+      autoPullStatus.next_run = new Date(Date.now() + CHECK_INTERVAL).toISOString();
+      return;
+    }
 
     if (unprocessed.length === 0) {
       console.log(`[AutoPull] No new files to process`);

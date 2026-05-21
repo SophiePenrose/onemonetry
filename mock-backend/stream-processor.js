@@ -3,15 +3,7 @@ import path from "path";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import { upsertFiling, upsertMonitoredCompany, getMonitoredCompany } from "./db.js";
-
-const PROCESSED_FILE = path.join(process.cwd(), "mock-backend", "data", "processed_zips.json");
-
-function markZipProcessed(filename, stats) {
-  let processed = {};
-  try { processed = JSON.parse(fs.readFileSync(PROCESSED_FILE, "utf-8")); } catch { /* first run */ }
-  processed[filename] = { processed_at: new Date().toISOString(), ...stats };
-  fs.writeFileSync(PROCESSED_FILE, JSON.stringify(processed, null, 2));
-}
+import { markZipProcessed } from "./processed-zips.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
