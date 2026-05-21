@@ -33,7 +33,15 @@ import {
   stopAutoPull,
 } from "./daily-autopull.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
-import { scoreCompany, getStoredScore, batchScoreCompanies } from "./scoring-engine.js";
+import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
+import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
+import { generateFullSequence } from "./email-generator.js";
+import { validateEmail, isCompanyExcluded } from "./email-qc.js";
+import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
+import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
+import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
+import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
+import { runMigrations } from "./migrations.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -56,7 +64,45 @@ import {
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+app.use(authMiddleware);
 const PORT = 8000;
+
+// --- Authentication ---
+
+app.get("/api/auth/status", (_req, res) => {
+  res.json({ configured: isAuthConfigured(), needs_setup: !isAuthConfigured() });
+});
+
+app.post("/api/auth/setup", (req, res) => {
+  if (isAuthConfigured()) {
+    return res.status(400).json({ error: "Auth already configured. Use login instead." });
+  }
+  const { password } = req.body;
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
+  }
+  setupAuth(password);
+  const token = createSession(req.headers["user-agent"]);
+  res.json({ success: true, token });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: "Password required" });
+
+  if (!verifyPassword(password)) {
+    return res.status(401).json({ error: "Invalid password" });
+  }
+
+  const token = createSession(req.headers["user-agent"]);
+  res.json({ success: true, token });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const token = req.headers["x-auth-token"];
+  if (token) destroySession(token);
+  res.json({ success: true });
+});
 
 const VALID_MOTIONS = [
   "FX",
@@ -1474,6 +1520,366 @@ app.delete("/api/company/:id/competitors/:idx", (req, res) => {
   res.json({ deleted: true, remaining: company.competitors.length });
 });
 
+// --- Email Sequence Endpoints ---
+
+app.get("/api/email/templates", (_req, res) => {
+  const templates = {};
+  for (const [motion, tmpl] of Object.entries(SEQUENCE_TEMPLATES)) {
+    templates[motion] = {
+      steps: tmpl.steps.length,
+      persona_hooks: Object.keys(tmpl.persona_hooks),
+    };
+  }
+  res.json({ templates });
+});
+
+app.post("/api/email/generate", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
+  if (!company_id || !stakeholder_name || !motion) {
+    return res.status(400).json({ error: "company_id, stakeholder_name, and motion are required" });
+  }
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+
+  const sequence = generateSequence({
+    companyId: company_id,
+    companyName: company.name,
+    stakeholderName: stakeholder_name,
+    stakeholderRole: stakeholder_role,
+    stakeholderEmail: stakeholder_email,
+    motion,
+    analysis,
+    turnover: company.turnover,
+    employeeCount: company.employee_count,
+    industry: company.industry,
+  });
+
+  if (!sequence) return res.status(400).json({ error: `No template available for motion: ${motion}` });
+
+  res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+});
+
+app.get("/api/email/sequences/:companyId", (req, res) => {
+  const sequences = getSequencesForCompany(req.params.companyId);
+  res.json({ sequences });
+});
+
+app.get("/api/email/sequence/:id", (req, res) => {
+  const sequence = getSequence(req.params.id);
+  if (!sequence) return res.status(404).json({ error: "Sequence not found" });
+  res.json({ sequence });
+});
+
+app.patch("/api/email/sequence/:id/step/:stepNumber", (req, res) => {
+  const { id, stepNumber } = req.params;
+  const { status, subject, body } = req.body;
+
+  if (status) {
+    updateStepStatus(id, parseInt(stepNumber), status);
+  }
+  if (subject !== undefined || body !== undefined) {
+    const seq = getSequence(id);
+    if (!seq) return res.status(404).json({ error: "Sequence not found" });
+    const step = seq.steps.find((s) => s.step_number === parseInt(stepNumber));
+    if (!step) return res.status(404).json({ error: "Step not found" });
+    updateStepContent(id, parseInt(stepNumber), subject || step.subject, body || step.body);
+  }
+
+  res.json({ success: true });
+});
+
+app.delete("/api/email/sequence/:id", (req, res) => {
+  deleteSequence(req.params.id);
+  res.json({ success: true });
+});
+
+// --- Advanced Email Generation (LLM + Archetypes + QC) ---
+
+app.get("/api/email/archetypes", (_req, res) => {
+  res.json({ archetypes: ARCHETYPES });
+});
+
+app.post("/api/email/generate-advanced", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, merchant_spend, force } = req.body;
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name required" });
+  }
+
+  if (!force) {
+    const dupCheck = checkDuplicateContact(stakeholder_name, stakeholder_email, company_id);
+    if (dupCheck.duplicate) {
+      return res.status(409).json({
+        error: "Duplicate contact",
+        detail: dupCheck.reason,
+        existing_sequence: dupCheck.existing?.sequence_id,
+        hint: "Set force=true to override, or check /api/email/active-contacts/" + company_id,
+      });
+    }
+  }
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—", segment: "Mid-Market" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+
+  try {
+    const result = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: merchant_spend || null,
+    });
+
+    if (result.error) return res.status(400).json(result);
+    registerActiveContact(stakeholder_name, stakeholder_email || null, company_id, result.archetype + "-" + Date.now());
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/email/validate", (req, res) => {
+  const { subject, body, is_initial } = req.body;
+  if (!body) return res.status(400).json({ error: "body is required" });
+
+  const result = validateEmail({ subject: subject || "", body }, { isInitialOutreach: is_initial !== false });
+  res.json(result);
+});
+
+app.post("/api/email/check-exclusion", (req, res) => {
+  const { company_id } = req.body;
+  if (!company_id) return res.status(400).json({ error: "company_id required" });
+
+  const companyNumber = company_id.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = { turnover: monitored.latest_turnover, status: monitored.status, industry: "—" };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const result = isCompanyExcluded(company, analysis);
+  res.json(result);
+});
+
+app.get("/api/email/triggers/:companyId", (req, res) => {
+  const companyNumber = req.params.companyId.replace("ch-", "");
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === req.params.companyId) || { turnover: 0, industry: "—" };
+
+  const triggers = detectTriggers(company, analysis, score);
+  const archetype = selectArchetype(triggers, analysis, company);
+  res.json({ triggers, recommended_archetype: archetype });
+});
+
+// --- Active Contacts (Duplicate Detection) ---
+
+app.get("/api/email/active-contacts/:companyId", (req, res) => {
+  const contacts = getActiveContactsForCompany(req.params.companyId);
+  res.json({ contacts, count: contacts.length });
+});
+
+// --- Stakeholder Assessment ---
+
+app.get("/api/stakeholders/:companyId", (req, res) => {
+  const companyNumber = req.params.companyId.replace("ch-", "");
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === req.params.companyId);
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) company = { name: monitored.company_name || `Company ${companyNumber}`, turnover: monitored.latest_turnover };
+  }
+  if (!company) company = { name: `Company ${companyNumber}` };
+
+  if (!analysis?.key_people?.length) {
+    return res.json({
+      readiness: getOutreachReadiness([]),
+      stakeholders: [],
+      company_name: company.name,
+      active_contacts: getActiveContactsForCompany(req.params.companyId),
+    });
+  }
+
+  const context = {
+    company,
+    analysis,
+    motion: score?.layers?.product_fit?.best_motion || "FX",
+    filingDate: analysis.analysed_at || null,
+  };
+
+  const scored = scoreAllStakeholders(analysis.key_people, context);
+  const readiness = getOutreachReadiness(scored);
+  const activeContacts = getActiveContactsForCompany(req.params.companyId);
+
+  res.json({
+    readiness,
+    stakeholders: scored,
+    active_contacts: activeContacts,
+    company_name: company.name,
+    source: "companies_house_filing",
+    filing_date: analysis.analysed_at,
+    primary_motion: context.motion,
+    note: "Stakeholders scored on 5 dimensions: decision_authority (0-30), relevance (0-25), reachability (0-20), timing (0-15), influence_network (0-10). Final score = composite × data_confidence.",
+  });
+});
+
+// --- YAMM Export & Sequence Management ---
+
+app.get("/api/email/export/csv/:sequenceId", (req, res) => {
+  const exported = exportSequenceForYAMM(req.params.sequenceId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+  if (!exported) return res.status(404).json({ error: "Sequence not found" });
+
+  const csv = generateCSV(exported.rows);
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="sequence-${req.params.sequenceId}.csv"`);
+  res.send(csv);
+});
+
+app.get("/api/email/export/json/:sequenceId", (req, res) => {
+  const exported = exportSequenceForYAMM(req.params.sequenceId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+  if (!exported) return res.status(404).json({ error: "Sequence not found" });
+
+  res.json({
+    metadata: exported.metadata,
+    sheets_data: generateGoogleSheetsJSON(exported.rows),
+    raw_rows: exported.rows,
+  });
+});
+
+app.get("/api/email/export/company/:companyId", (req, res) => {
+  const rows = exportMultipleSequencesForYAMM(req.params.companyId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+
+  if (req.query.format === "csv") {
+    const csv = generateCSV(rows);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="company-${req.params.companyId}-sequences.csv"`);
+    return res.send(csv);
+  }
+
+  res.json({
+    total_emails: rows.length,
+    needs_email: rows.filter((r) => r.needs_email).length,
+    sheets_data: generateGoogleSheetsJSON(rows),
+  });
+});
+
+app.post("/api/email/sequence/:id/reply", (req, res) => {
+  const { reply_type } = req.body;
+  if (!["positive", "negative", "ooo", "wrong_person", "send_info"].includes(reply_type)) {
+    return res.status(400).json({ error: "reply_type must be: positive, negative, ooo, wrong_person, send_info" });
+  }
+
+  const result = pauseSequenceOnReply(req.params.id, reply_type);
+  res.json(result);
+});
+
+app.post("/api/email/sequence/:id/resume", (req, res) => {
+  const result = resumeSequence(req.params.id);
+  res.json(result);
+});
+
+app.patch("/api/email/sequence/:id/stakeholder", (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "email is required" });
+
+  const seq = getSequence(req.params.id);
+  if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+  import("./db.js").then(({ default: database }) => {
+    database.prepare("UPDATE email_sequences SET stakeholder_email = ?, updated_at = datetime('now') WHERE id = ?").run(email, req.params.id);
+    res.json({ success: true, email });
+  });
+});
+
+// --- Enhanced Scoring with LLM ---
+
+app.post("/api/score/company-llm", async (req, res) => {
+  const { company_number } = req.body;
+  if (!company_number) return res.status(400).json({ error: "company_number required" });
+
+  try {
+    const result = await scoreCompanyWithLLM(company_number);
+    if (!result) return res.status(404).json({ error: "Company not found in monitor" });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/score/batch-llm", async (req, res) => {
+  const { limit, concurrency } = req.body;
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 20 });
+
+  try {
+    const results = await batchScoreWithLLM(companies, concurrency || 2);
+    res.json({
+      scored: results.length,
+      top_10: results.slice(0, 10).map((r) => ({
+        company_number: r.company_number,
+        name: r.company_name,
+        turnover: r.turnover,
+        composite_score: r.composite_score,
+        best_motion: r.layers.product_fit.best_motion,
+        product_fit: r.layers.product_fit.score,
+        growth: r.growth.trend,
+        llm_integrated: r.llm_integrated || false,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Serve frontend in production ---
 
 const frontendDist = path.join(process.cwd(), "frontend", "dist");
@@ -1541,8 +1947,10 @@ function generateAndSaveWeeklyReport() {
 
 
 app.listen(PORT, () => {
-  console.log(`Onemonetry running on http://localhost:${PORT}`);
+  runMigrations();
+  console.log(`Prospector running on http://localhost:${PORT}`);
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
+  console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
   scheduleWeeklyReport();
   startAutoPull();

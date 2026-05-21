@@ -47,11 +47,12 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", background: "#f6f7f9", minHeight: "100vh" }}>
-      <header style={{ background: "#0075EB", color: "#fff", padding: "16px 24px", display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 20, cursor: "pointer" }} onClick={navigateHome}>
-          Onemonetry
+      <header style={{ background: "#191B22", color: "#fff", padding: "16px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 20, cursor: "pointer", letterSpacing: "-0.5px" }} onClick={navigateHome}>
+          Prospector
         </span>
-        <span style={{ opacity: 0.7, fontSize: 14 }}>Prospecting Workspace</span>
+        <span style={{ opacity: 0.5, fontSize: 13 }}>Mid-Market Intelligence</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.4, fontWeight: 500 }}>Revolut Business</span>
       </header>
 
       <nav style={{ display: "flex", gap: 0, background: "#fff", borderBottom: "1px solid #e0e3e8", padding: "0 24px" }}>
