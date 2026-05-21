@@ -38,6 +38,7 @@ import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus
 import { generateFullSequence } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
+import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -1647,6 +1648,89 @@ app.get("/api/email/triggers/:companyId", (req, res) => {
   const triggers = detectTriggers(company, analysis, score);
   const archetype = selectArchetype(triggers, analysis, company);
   res.json({ triggers, recommended_archetype: archetype });
+});
+
+// --- YAMM Export & Sequence Management ---
+
+app.get("/api/email/export/csv/:sequenceId", (req, res) => {
+  const exported = exportSequenceForYAMM(req.params.sequenceId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+  if (!exported) return res.status(404).json({ error: "Sequence not found" });
+
+  const csv = generateCSV(exported.rows);
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="sequence-${req.params.sequenceId}.csv"`);
+  res.send(csv);
+});
+
+app.get("/api/email/export/json/:sequenceId", (req, res) => {
+  const exported = exportSequenceForYAMM(req.params.sequenceId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+  if (!exported) return res.status(404).json({ error: "Sequence not found" });
+
+  res.json({
+    metadata: exported.metadata,
+    sheets_data: generateGoogleSheetsJSON(exported.rows),
+    raw_rows: exported.rows,
+  });
+});
+
+app.get("/api/email/export/company/:companyId", (req, res) => {
+  const rows = exportMultipleSequencesForYAMM(req.params.companyId, {
+    startDate: req.query.start_date,
+    senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
+    title: req.query.title || "Account Executive",
+    sendTime: req.query.send_time || "08:30",
+  });
+
+  if (req.query.format === "csv") {
+    const csv = generateCSV(rows);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="company-${req.params.companyId}-sequences.csv"`);
+    return res.send(csv);
+  }
+
+  res.json({
+    total_emails: rows.length,
+    needs_email: rows.filter((r) => r.needs_email).length,
+    sheets_data: generateGoogleSheetsJSON(rows),
+  });
+});
+
+app.post("/api/email/sequence/:id/reply", (req, res) => {
+  const { reply_type } = req.body;
+  if (!["positive", "negative", "ooo", "wrong_person", "send_info"].includes(reply_type)) {
+    return res.status(400).json({ error: "reply_type must be: positive, negative, ooo, wrong_person, send_info" });
+  }
+
+  const result = pauseSequenceOnReply(req.params.id, reply_type);
+  res.json(result);
+});
+
+app.post("/api/email/sequence/:id/resume", (req, res) => {
+  const result = resumeSequence(req.params.id);
+  res.json(result);
+});
+
+app.patch("/api/email/sequence/:id/stakeholder", (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "email is required" });
+
+  const seq = getSequence(req.params.id);
+  if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+  import("./db.js").then(({ default: database }) => {
+    database.prepare("UPDATE email_sequences SET stakeholder_email = ?, updated_at = datetime('now') WHERE id = ?").run(email, req.params.id);
+    res.json({ success: true, email });
+  });
 });
 
 // --- Enhanced Scoring with LLM ---

@@ -193,6 +193,130 @@ Return raw JSON (no markdown fences):
 }`;
 
 export const INFERENCE_PATTERNS = {
+  travel: [
+    {
+      condition: "advance_bookings AND multi_currency AND seasonal",
+      inference: "Booking 3-5 months ahead in EUR and USD creates a natural hedge requirement — but most travel companies your size are spot-trading each booking's currency need individually through their bank, rather than batching forward cover around peak season cash flows.",
+    },
+    {
+      condition: "gds_payments AND international_suppliers",
+      inference: "GDS supplier payments and international hotel contracts mean your payment timing is dictated by the booking cycle, not your treasury cycle. That mismatch is where FX cost accumulates invisibly across thousands of small transactions.",
+    },
+    {
+      condition: "expansion_new_destinations AND fx_exposure",
+      inference: "Adding new destinations usually means adding new currency corridors — and each new corridor starts with spot execution through the bank until someone notices the margin compression at year-end.",
+    },
+  ],
+  retail: [
+    {
+      condition: "international_suppliers AND fixed_pricing",
+      inference: "Fixed retail pricing with variable import costs in EUR/USD creates a margin squeeze that's invisible until the season turns and stock is already committed. Most retailers your size discover their FX cost was 1-2% of COGS only when they model it at year-end.",
+    },
+    {
+      condition: "multi_site AND employee_expenses",
+      inference: "Running expenses across multiple retail sites means fragmented card spend that's reconciled site-by-site at month-end. The operational overhead of chasing receipts across locations often costs more in admin time than the actual spend.",
+    },
+  ],
+  wholesale: [
+    {
+      condition: "international_procurement AND margin_pressure",
+      inference: "Wholesale margins are thin enough that 1-2% of unnecessary FX cost on the procurement side is material. Most wholesale businesses at your scale are paying their bank's spread on every EUR/USD supplier payment without benchmarking it against interbank.",
+    },
+    {
+      condition: "high_volume_low_margin AND supplier_payments",
+      inference: "When you're moving volume at single-digit margins, the FX cost on international supplier payments flows directly to profitability. On your volume, the gap between bank pricing and interbank compounds to a meaningful number annually.",
+    },
+  ],
+  manufacturing: [
+    {
+      condition: "raw_materials_usd AND fixed_contracts_gbp",
+      inference: "Raw material procurement in USD with fixed-price customer contracts in GBP creates a structural margin risk that crystallises with each currency movement. Most manufacturers your size hedge reactively rather than structuring forwards around the production cycle.",
+    },
+    {
+      condition: "multi_site AND subcontractor_payments",
+      inference: "Running subcontractor and supplier payments across multiple manufacturing sites usually means different banking relationships per site, inherited from when each facility was acquired or opened. Consolidation recovers both FX spread and admin overhead.",
+    },
+    {
+      condition: "export_revenue AND domestic_costs",
+      inference: "Export revenue in EUR/USD arriving on different timelines to domestic cost commitments in GBP means your effective margin depends on when the bank processes each payment, not when you agree each sale.",
+    },
+  ],
+  ecommerce: [
+    {
+      condition: "online_payments AND international_customers",
+      inference: "Processing international card payments through a PSP that settles in GBP means you're paying a hidden 1-2% FX fee on every cross-border transaction that never shows up as a separate line item — it's baked into the settlement rate.",
+    },
+    {
+      condition: "high_volume_transactions AND settlement_delay",
+      inference: "At your transaction volume, 3-7 day settlement from your current processor means working capital is permanently floating in the settlement pipeline. Each day's delay costs basis points when you could be deploying that cash.",
+    },
+    {
+      condition: "marketplace_model AND multi_currency_payouts",
+      inference: "Marketplace payouts to international sellers in their local currency create a multi-leg FX problem — you're paying the spread on both the customer receipt and the seller disbursement. Consolidating both legs saves the spread twice.",
+    },
+  ],
+  consulting: [
+    {
+      condition: "international_clients AND project_billing",
+      inference: "Project-based billing in client currencies with GBP cost base means your effective hourly rate fluctuates with FX — and most consulting firms your size absorb that variance into utilisation metrics rather than managing it as a treasury issue.",
+    },
+    {
+      condition: "growing_team AND expense_management",
+      inference: "Scaling a consulting team means expense claims growing with headcount — travel, subsistence, client entertainment multiplied across every consultant. At your team size, the admin time reconciling receipts often exceeds the cost of the spend itself.",
+    },
+  ],
+  it_saas: [
+    {
+      condition: "international_revenue AND subscription_model",
+      inference: "Recurring international revenue in USD/EUR creates predictable currency flows that are ideal for forward cover — but most SaaS companies your size treat each month's conversion as a separate spot trade rather than structuring forwards around the subscription renewal cycle.",
+    },
+    {
+      condition: "cloud_spend AND card_payments",
+      inference: "30-40% of SaaS operational spend typically goes to platforms that only accept cards — AWS, Meta, Google, Salesforce. At your team's aggregate card spend, the FX markup on those USD transactions compounds to a meaningful number annually.",
+    },
+    {
+      condition: "api_first AND payment_automation",
+      inference: "For a tech company, running payments through manual bank interfaces is an operational contradiction. API-driven payment infrastructure that integrates with your existing stack removes the manual reconciliation overhead your engineering team shouldn't be solving.",
+    },
+  ],
+  restaurant_hospitality: [
+    {
+      condition: "multiple_venues AND card_acceptance",
+      inference: "Running card acceptance across multiple venues means multiple terminal contracts, multiple settlement schedules, and fragmented reporting. Consolidating acquiring gives you one dashboard, one settlement cycle, and one reconciliation point.",
+    },
+    {
+      condition: "flat_rate_processing AND high_volume",
+      inference: "Flat-rate processing at 1.75% is a convenience tax that compounds with volume. At your monthly card throughput, the gap between flat-rate and interchange-plus pricing represents meaningful margin you're leaving with your processor.",
+    },
+    {
+      condition: "staff_expenses AND multiple_sites",
+      inference: "Managing staff expenses, petty cash, and supplier payments across multiple locations typically means either personal card reimbursements or a drawer of cash — both of which create reconciliation nightmares at month-end.",
+    },
+  ],
+  logistics_freight: [
+    {
+      condition: "international_payouts AND driver_expenses",
+      inference: "Paying drivers and contractors across multiple jurisdictions in local currencies creates a payment operations challenge that most logistics companies solve with expensive wire transfers through their bank — one at a time, manually initiated.",
+    },
+    {
+      condition: "fuel_spend AND multi_currency",
+      inference: "Fuel procurement across international routes means multi-currency costs that fluctuate with both commodity prices and FX rates simultaneously. Most freight companies your size are managing the commodity hedge but ignoring the currency layer underneath it.",
+    },
+    {
+      condition: "time_sensitive_payments AND demurrage_risk",
+      inference: "In logistics, late payments create demurrage costs and relationship damage that far exceed the payment itself. When your bank's international transfer takes 3-5 days, that's not a treasury problem — it's an operational one with daily carrying costs.",
+    },
+  ],
+  healthcare: [
+    {
+      condition: "multi_site_operations AND regulated_spend",
+      inference: "Healthcare procurement is inherently multi-site with strict audit requirements — every purchase needs a paper trail, every expense needs approval. Most healthcare organisations your size run this through spreadsheets and email chains rather than structured workflows.",
+    },
+    {
+      condition: "international_supply_chain AND medical_devices",
+      inference: "Medical device and pharmaceutical procurement from international suppliers means USD/EUR payments with compliance documentation requirements. The payment needs to be fast, auditable, and cost-effective — three things traditional banks rarely deliver simultaneously.",
+    },
+  ],
   fuel_trading: [
     {
       condition: "trades_usd AND overheads_gbp AND eur_debtors",
@@ -344,17 +468,37 @@ export function selectInferencePattern(company, analysis) {
 
   const text = JSON.stringify(analysis).toLowerCase();
   const name = (company.name || "").toLowerCase();
+  const combined = name + " " + text;
+
+  const industryMatchers = [
+    { key: "fuel_trading", pattern: /fuel|oil|petrol|diesel|bunker/i },
+    { key: "construction", pattern: /construct|building|contractor|civil\s+engineer/i },
+    { key: "poultry_food", pattern: /poultry|chicken|food|agri|bakery|grocery|meat|dairy/i },
+    { key: "shipping_commodity", pattern: /ship|freight|charter|commodity.*trad|demurrage|vessel/i },
+    { key: "energy", pattern: /energy|power|gas|electric|renewable|solar|wind/i },
+    { key: "pe_advisory", pattern: /partner|advisory|fund|private\s+equity|capital|asset\s+manag/i },
+    { key: "gaming_hardware", pattern: /gaming|hardware|component|peripheral|electronics/i },
+    { key: "property_management", pattern: /property|estate|management.*village|leaseholder|lettings/i },
+    { key: "crypto_fintech", pattern: /crypto|blockchain|web3|fintech|transak|digital\s+asset/i },
+    { key: "travel", pattern: /travel|tourism|airline|holiday|tour\s+operator|OTA|booking/i },
+    { key: "retail", pattern: /retail|store|shop|outlet|fashion|clothing|consumer\s+goods/i },
+    { key: "wholesale", pattern: /wholesale|distribution|distributor|trade\s+supply/i },
+    { key: "manufacturing", pattern: /manufactur|factory|production|assembly|industrial/i },
+    { key: "ecommerce", pattern: /e[\s-]?commerce|online\s+(?:retail|store|shop)|DTC|marketplace/i },
+    { key: "consulting", pattern: /consult|advisory|professional\s+services|management\s+consult/i },
+    { key: "it_saas", pattern: /software|IT\s+services|technology|SaaS|platform|cloud/i },
+    { key: "restaurant_hospitality", pattern: /restaurant|pub|bar|hotel|hospitality|catering|leisure/i },
+    { key: "logistics_freight", pattern: /logistics|freight|haulage|transport|courier|delivery|warehouse/i },
+    { key: "healthcare", pattern: /health|hospital|medical|pharmaceutical|care\s+home|NHS|clinic/i },
+  ];
 
   let industry = null;
-  if (/fuel|oil|petrol|diesel/i.test(name + " " + text)) industry = "fuel_trading";
-  else if (/construct|building|contractor/i.test(name + " " + text)) industry = "construction";
-  else if (/poultry|chicken|food|agri/i.test(name + " " + text)) industry = "poultry_food";
-  else if (/ship|freight|charter|commodity.*trad/i.test(name + " " + text)) industry = "shipping_commodity";
-  else if (/energy|power|gas|electric/i.test(name + " " + text)) industry = "energy";
-  else if (/partner|advisory|fund|private\s+equity/i.test(name + " " + text)) industry = "pe_advisory";
-  else if (/gaming|hardware|component|peripheral/i.test(name + " " + text)) industry = "gaming_hardware";
-  else if (/property|estate|management.*village|leaseholder/i.test(name + " " + text)) industry = "property_management";
-  else if (/crypto|blockchain|web3|fintech|transak/i.test(name + " " + text)) industry = "crypto_fintech";
+  for (const { key, pattern } of industryMatchers) {
+    if (pattern.test(combined)) {
+      industry = key;
+      break;
+    }
+  }
 
   if (!industry || !INFERENCE_PATTERNS[industry]) return null;
 
