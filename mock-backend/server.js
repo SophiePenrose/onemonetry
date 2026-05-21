@@ -1948,7 +1948,7 @@ function generateAndSaveWeeklyReport() {
 
 app.listen(PORT, () => {
   runMigrations();
-  console.log(`Onemonetry running on http://localhost:${PORT}`);
+  console.log(`Prospector running on http://localhost:${PORT}`);
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
   console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
