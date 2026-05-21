@@ -52,6 +52,62 @@ db.exec(`
     value TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS company_filings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_number TEXT NOT NULL,
+    filing_date TEXT,
+    description TEXT,
+    filing_type TEXT,
+    barcode TEXT,
+    turnover REAL,
+    turnover_currency TEXT DEFAULT 'GBP',
+    balance_sheet_date TEXT,
+    source TEXT,
+    source_file TEXT,
+    raw_data TEXT,
+    extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(company_number, barcode)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_filings_company ON company_filings(company_number);
+  CREATE INDEX IF NOT EXISTS idx_filings_date ON company_filings(filing_date);
+
+  CREATE TABLE IF NOT EXISTS company_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name TEXT NOT NULL,
+    parent_company_number TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS company_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    company_number TEXT NOT NULL,
+    entity_type TEXT DEFAULT 'operating',
+    relationship TEXT,
+    FOREIGN KEY (group_id) REFERENCES company_groups(id),
+    UNIQUE(group_id, company_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS company_monitor (
+    company_number TEXT PRIMARY KEY,
+    company_name TEXT,
+    last_checked_at TEXT,
+    last_filing_date TEXT,
+    latest_turnover REAL,
+    previous_turnover REAL,
+    status TEXT DEFAULT 'active',
+    below_threshold INTEGER DEFAULT 0,
+    no_filings INTEGER DEFAULT 0,
+    source TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_monitor_status ON company_monitor(status);
+  CREATE INDEX IF NOT EXISTS idx_monitor_threshold ON company_monitor(below_threshold);
+
   CREATE TABLE IF NOT EXISTS import_jobs (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -197,6 +253,157 @@ export function setSetting(key, value) {
   db.prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   ).run(key, JSON.stringify(value));
+}
+
+// --- Company Filings ---
+
+export function upsertFiling(filing) {
+  db.prepare(`
+    INSERT INTO company_filings (company_number, filing_date, description, filing_type, barcode, turnover, balance_sheet_date, source, source_file, raw_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(company_number, barcode) DO UPDATE SET
+      turnover = COALESCE(excluded.turnover, company_filings.turnover),
+      raw_data = COALESCE(excluded.raw_data, company_filings.raw_data),
+      extracted_at = datetime('now')
+  `).run(
+    filing.company_number, filing.filing_date, filing.description, filing.filing_type,
+    filing.barcode || `gen-${filing.company_number}-${filing.filing_date}`,
+    filing.turnover, filing.balance_sheet_date, filing.source, filing.source_file, filing.raw_data || null
+  );
+}
+
+export function getFilingsForCompany(companyNumber, limit = 20) {
+  return db.prepare("SELECT * FROM company_filings WHERE company_number = ? ORDER BY filing_date DESC LIMIT ?").all(companyNumber, limit);
+}
+
+export function getLatestFiling(companyNumber) {
+  return db.prepare("SELECT * FROM company_filings WHERE company_number = ? ORDER BY filing_date DESC LIMIT 1").get(companyNumber);
+}
+
+export function getFilingCount() {
+  return db.prepare("SELECT COUNT(*) as count FROM company_filings").get().count;
+}
+
+// --- Company Monitor ---
+
+export function upsertMonitoredCompany(company) {
+  db.prepare(`
+    INSERT INTO company_monitor (company_number, company_name, latest_turnover, status, source, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(company_number) DO UPDATE SET
+      company_name = COALESCE(excluded.company_name, company_monitor.company_name),
+      latest_turnover = COALESCE(excluded.latest_turnover, company_monitor.latest_turnover),
+      status = COALESCE(excluded.status, company_monitor.status),
+      updated_at = datetime('now')
+  `).run(company.company_number, company.company_name, company.latest_turnover, company.status || "active", company.source || "csv");
+}
+
+export function getMonitoredCompany(companyNumber) {
+  return db.prepare("SELECT * FROM company_monitor WHERE company_number = ?").get(companyNumber);
+}
+
+export function getMonitoredCompanies(filters = {}) {
+  let sql = "SELECT * FROM company_monitor WHERE 1=1";
+  const params = [];
+  if (filters.status) { sql += " AND status = ?"; params.push(filters.status); }
+  if (filters.below_threshold !== undefined) { sql += " AND below_threshold = ?"; params.push(filters.below_threshold ? 1 : 0); }
+  if (filters.no_filings !== undefined) { sql += " AND no_filings = ?"; params.push(filters.no_filings ? 1 : 0); }
+  if (filters.needs_check) {
+    sql += " AND (last_checked_at IS NULL OR last_checked_at < datetime('now', '-7 days'))";
+  }
+  sql += " ORDER BY latest_turnover DESC";
+  if (filters.limit) { sql += " LIMIT ?"; params.push(filters.limit); }
+  if (filters.offset) { sql += " OFFSET ?"; params.push(filters.offset); }
+  return db.prepare(sql).all(...params);
+}
+
+export function getMonitorStats() {
+  return {
+    total: db.prepare("SELECT COUNT(*) as c FROM company_monitor").get().c,
+    active: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE status = 'active'").get().c,
+    below_threshold: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE below_threshold = 1").get().c,
+    no_filings: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE no_filings = 1").get().c,
+    inactive: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE status IN ('dormant','dissolved','liquidation','inactive')").get().c,
+    needs_check: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE last_checked_at IS NULL OR last_checked_at < datetime('now', '-7 days')").get().c,
+  };
+}
+
+export function updateMonitorCheck(companyNumber, updates) {
+  const sets = ["updated_at = datetime('now')", "last_checked_at = datetime('now')"];
+  const vals = [];
+  for (const [k, v] of Object.entries(updates)) {
+    if (k === "company_number") continue;
+    sets.push(`${k} = ?`);
+    vals.push(v);
+  }
+  vals.push(companyNumber);
+  db.prepare(`UPDATE company_monitor SET ${sets.join(", ")} WHERE company_number = ?`).run(...vals);
+}
+
+export function getMonitoredCompanyCount() {
+  return db.prepare("SELECT COUNT(*) as count FROM company_monitor").get().count;
+}
+
+// --- Shortlist from Monitor Data ---
+
+export function getShortlistCompanies(filters = {}) {
+  let sql = `
+    SELECT cm.*, 
+      (SELECT COUNT(*) FROM company_filings cf WHERE cf.company_number = cm.company_number) as filing_count,
+      (SELECT cf.filing_date FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_date,
+      (SELECT cf.turnover FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_turnover
+    FROM company_monitor cm
+    WHERE cm.status = 'active'
+    AND cm.latest_turnover >= ?
+  `;
+  const params = [filters.min_turnover || 15000000];
+
+  if (filters.below_threshold) {
+    sql = sql.replace("AND cm.latest_turnover >= ?", "");
+    params.shift();
+    sql += " AND cm.below_threshold = 1";
+  }
+
+  sql += " ORDER BY cm.latest_turnover DESC";
+  if (filters.limit) { sql += " LIMIT ?"; params.push(filters.limit); }
+  if (filters.offset) { sql += " OFFSET ?"; params.push(filters.offset); }
+
+  return db.prepare(sql).all(...params);
+}
+
+export function getShortlistCount(minTurnover = 15000000) {
+  return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
+}
+
+// --- Company Groups ---
+
+export function createGroup(name, parentCompanyNumber) {
+  const result = db.prepare("INSERT INTO company_groups (group_name, parent_company_number) VALUES (?, ?)").run(name, parentCompanyNumber || null);
+  return result.lastInsertRowid;
+}
+
+export function addGroupMember(groupId, companyNumber, entityType, relationship) {
+  db.prepare(
+    "INSERT OR IGNORE INTO company_group_members (group_id, company_number, entity_type, relationship) VALUES (?, ?, ?, ?)"
+  ).run(groupId, companyNumber, entityType || "operating", relationship || null);
+}
+
+export function getCompanyGroups(companyNumber) {
+  return db.prepare(`
+    SELECT cg.*, cgm.entity_type, cgm.relationship
+    FROM company_groups cg
+    JOIN company_group_members cgm ON cg.id = cgm.group_id
+    WHERE cgm.company_number = ?
+  `).all(companyNumber);
+}
+
+export function getGroupMembers(groupId) {
+  return db.prepare(`
+    SELECT cgm.*, cm.company_name, cm.latest_turnover, cm.status
+    FROM company_group_members cgm
+    LEFT JOIN company_monitor cm ON cgm.company_number = cm.company_number
+    WHERE cgm.group_id = ?
+  `).all(groupId);
 }
 
 // --- Import Jobs ---

@@ -224,12 +224,12 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
               <th style={{ padding: "10px 14px" }}>#</th>
               <th style={{ padding: "10px 14px" }}>Company</th>
-              <th style={{ padding: "10px 14px" }}>Industry</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
-              <th style={{ padding: "10px 14px", textAlign: "center" }}>Warmth</th>
+              <th style={{ padding: "10px 14px" }}>Best Motion</th>
+              <th style={{ padding: "10px 14px" }}>Growth</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
-              <th style={{ padding: "10px 14px" }}>Motions</th>
             </tr>
           </thead>
           <tbody>
@@ -242,11 +242,10 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   style={{
                     borderBottom: "1px solid #eee",
                     cursor: onSelectCompany ? "pointer" : "default",
-                    opacity: c.suppressed ? 0.5 : 1,
-                    background: c.suppressed ? "#f9fafb" : "transparent",
+                    background: c.below_threshold ? "#fefce8" : "transparent",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = c.suppressed ? "#f0f1f3" : "#f8f9fb")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = c.suppressed ? "#f9fafb" : "transparent")}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = c.below_threshold ? "#fefce8" : "transparent")}
                 >
                   <td style={{ padding: "10px 14px", color: "#888", fontSize: 13 }}>{c.rank}</td>
                   <td style={{ padding: "10px 14px", fontWeight: 600 }}>
@@ -258,21 +257,24 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <SegmentBadge segment={c.segment} />
                   </td>
-                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>
-                    {c.combined_score.toFixed(2)}
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 13 }}>
+                    {c.turnover ? `£${(c.turnover / 1e6).toFixed(1)}M` : "—"}
                   </td>
-                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                    <WarmthIndicator warmth={c.propensity_warmth} />
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontWeight: 700, fontSize: 15, color: c.composite_score ? "#0075EB" : "#ccc" }}>
+                    {c.composite_score ? c.composite_score.toFixed(2) : "—"}
+                  </td>
+                  <td style={{ padding: "10px 14px", fontSize: 12 }}>
+                    {c.best_motion ? (
+                      <span style={{ padding: "2px 8px", borderRadius: 8, background: "#eff6ff", color: "#0075EB", fontWeight: 500 }}>
+                        {c.best_motion}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: c.growth_trend === "strong_growth" ? "#0a8754" : c.growth_trend === "declining" ? "#c0392b" : "#888" }}>
+                    {c.growth_trend || "—"}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />
-                  </td>
-                  <td style={{ padding: "10px 14px" }}>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {c.eligible_motions.map((m) => (
-                        <MotionChip key={m.motion} motion={m.motion} score={m.score} fitLevel={m.fit_level} />
-                      ))}
-                    </div>
                   </td>
                 </tr>
               );

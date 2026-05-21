@@ -5,7 +5,7 @@ import { pipeline } from "stream/promises";
 // bulk-processor.js
 
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
-const TURNOVER_THRESHOLD = 20_000_000;
+const TURNOVER_THRESHOLD = 15_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
 const PROCESSED_FILE = path.join(DATA_DIR, "processed_zips.json");
 
