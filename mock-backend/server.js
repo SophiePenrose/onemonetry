@@ -1570,7 +1570,7 @@ app.get("/api/email/archetypes", (_req, res) => {
 });
 
 app.post("/api/email/generate-advanced", async (req, res) => {
-  const { company_id, stakeholder_name, stakeholder_role, motion } = req.body;
+  const { company_id, stakeholder_name, stakeholder_role, motion, merchant_spend } = req.body;
   if (!company_id || !stakeholder_name) {
     return res.status(400).json({ error: "company_id and stakeholder_name required" });
   }
@@ -1597,6 +1597,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
       analysis,
       score,
       motion: motion || null,
+      merchantSpend: merchant_spend || null,
     });
 
     if (result.error) return res.status(400).json(result);
