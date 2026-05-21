@@ -2,40 +2,16 @@ import fs from "fs";
 import path from "path";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
+import {
+  ensureDataDir,
+  isZipProcessed,
+  markZipProcessed,
+} from "./processed-zips.js";
 // bulk-processor.js
 
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
 const TURNOVER_THRESHOLD = 15_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
-const PROCESSED_FILE = path.join(DATA_DIR, "processed_zips.json");
-
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-function loadProcessedZips() {
-  try {
-    return JSON.parse(fs.readFileSync(PROCESSED_FILE, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveProcessedZips(data) {
-  ensureDataDir();
-  fs.writeFileSync(PROCESSED_FILE, JSON.stringify(data, null, 2));
-}
-
-function markZipProcessed(filename, stats) {
-  const processed = loadProcessedZips();
-  processed[filename] = { processed_at: new Date().toISOString(), ...stats };
-  saveProcessedZips(processed);
-}
-
-function isZipProcessed(filename) {
-  const processed = loadProcessedZips();
-  return !!processed[filename];
-}
 
 // --- Turnover extraction from iXBRL/XBRL ---
 
@@ -84,9 +60,16 @@ async function scrapeAvailableZips(pageUrl, linkPattern) {
 
 let monthlyCache = { files: [], fetched: 0 };
 
+function refreshProcessedFlags(files) {
+  return files.map((file) => ({
+    ...file,
+    processed: isZipProcessed(file.filename),
+  }));
+}
+
 export async function getMonthlyZipURLs() {
   if (Date.now() - monthlyCache.fetched < 3600000 && monthlyCache.files.length > 0) {
-    return monthlyCache.files;
+    return refreshProcessedFlags(monthlyCache.files);
   }
 
   const currentFiles = await scrapeAvailableZips(
@@ -153,7 +136,7 @@ let dailyCache = { files: [], fetched: 0 };
 
 export async function getDailyZipURLs() {
   if (Date.now() - dailyCache.fetched < 3600000 && dailyCache.files.length > 0) {
-    return dailyCache.files;
+    return refreshProcessedFlags(dailyCache.files);
   }
 
   const files = await scrapeAvailableZips(
