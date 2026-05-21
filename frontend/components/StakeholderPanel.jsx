@@ -5,11 +5,13 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", role: "", email: "", linkedin: "", notes: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   async function handleAdd(e) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSubmitting(true);
+    setError(null);
     try {
       const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/stakeholders`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
@@ -18,17 +20,26 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
         setForm({ name: "", role: "", email: "", linkedin: "", notes: "" });
         setShowForm(false);
         if (onUpdated) onUpdated();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to add contact");
       }
-    } catch { /* ignore */ }
+    } catch (err) { setError(err.message); }
     finally { setSubmitting(false); }
   }
 
-  async function handleDelete(idx) {
+  async function handleDelete(stakeholder, idx) {
     if (!confirm("Remove this stakeholder?")) return;
+    setError(null);
     try {
-      await fetch(`/api/company/${encodeURIComponent(companyId)}/stakeholders/${idx}`, { method: "DELETE" });
+      const deleteIdx = stakeholder._manual_index ?? idx;
+      const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/stakeholders/${deleteIdx}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to remove contact");
+      }
       if (onUpdated) onUpdated();
-    } catch { /* ignore */ }
+    } catch (err) { setError(err.message); }
   }
 
   const inputStyle = { width: "100%", padding: "6px 10px", borderRadius: 4, border: "1px solid #ddd", fontSize: 13, boxSizing: "border-box" };
@@ -74,6 +85,8 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
         </form>
       )}
 
+      {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
+
       {(!stakeholders || stakeholders.length === 0) && !showForm && (
         <div style={{ color: "#888", fontSize: 13 }}>No stakeholder data. Click &quot;Add Contact&quot; to start building your contact map.</div>
       )}
@@ -82,8 +95,8 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {stakeholders.map((s, idx) => (
             <div key={idx} style={{ padding: "12px 14px", background: "#fafbfc", borderRadius: 6, border: "1px solid #f0f0f0", position: "relative" }}>
-              {companyId && (
-                <button onClick={() => handleDelete(idx)} style={{
+              {companyId && s.source !== "analysis" && (
+                <button onClick={() => handleDelete(s, idx)} style={{
                   position: "absolute", top: 8, right: 8, border: "none", background: "none",
                   color: "#ccc", cursor: "pointer", fontSize: 16, padding: 0,
                 }} title="Remove">×</button>
@@ -91,6 +104,8 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</span>
                 {s.role && <span style={{ fontSize: 11, color: "#0075EB", background: "#eff6ff", padding: "1px 8px", borderRadius: 8, fontWeight: 500 }}>{s.role}</span>}
+                {s.confidence_level && <span style={{ fontSize: 11, color: "#065f46", background: "#d1fae5", padding: "1px 8px", borderRadius: 8, fontWeight: 500 }}>{s.confidence_level} · {s.final_score}</span>}
+                {s.buying_role && <span style={{ fontSize: 11, color: "#555", background: "#f3f4f6", padding: "1px 8px", borderRadius: 8 }}>{s.buying_role}</span>}
               </div>
               <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#888", marginBottom: s.notes ? 6 : 0 }}>
                 {s.email && <a href={`mailto:${s.email}`} style={{ color: "#0075EB", textDecoration: "none" }}>{s.email}</a>}

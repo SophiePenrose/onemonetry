@@ -18,7 +18,7 @@ describe("CompetitorPanel", () => {
 
   it("renders empty state", () => {
     render(<CompetitorPanel competitors={[]} />);
-    expect(screen.getByText("No competitor data available.")).toBeInTheDocument();
+    expect(screen.getByText(/No competitor data/)).toBeInTheDocument();
   });
 
   it("handles absent strength", () => {

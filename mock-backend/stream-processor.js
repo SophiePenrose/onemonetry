@@ -102,6 +102,11 @@ export function extractCompanyNumberFromFilename(filename) {
   return match ? match[1] : null;
 }
 
+function meaningfulCompanyName(name, companyNumber) {
+  if (!name || name === companyNumber || name === `Company ${companyNumber}`) return null;
+  return name;
+}
+
 export function extractBalanceSheetDate(filename) {
   const match = filename.match(/_(\d{8})(?:\.|$)/);
   if (!match) return null;
@@ -207,9 +212,11 @@ export async function processAccountsZip(zipPath, source, onProgress) {
 
       const existing = getMonitoredCompany(companyNumber);
       const prevTurnover = existing?.latest_turnover || null;
+      const storedName = meaningfulCompanyName(existing?.company_name, companyNumber);
+      const resolvedName = companyName || storedName;
       upsertMonitoredCompany({
         company_number: companyNumber,
-        company_name: companyName || existing?.company_name || `Company ${companyNumber}`,
+        company_name: resolvedName,
         latest_turnover: turnover,
         status: "active",
         source,
@@ -219,7 +226,7 @@ export async function processAccountsZip(zipPath, source, onProgress) {
         // Will be handled by the flag below
       }
 
-      qualifyingCompanies.push({ company_number: companyNumber, turnover, balance_sheet_date: bsDate });
+      qualifyingCompanies.push({ company_number: companyNumber, company_name: resolvedName, turnover, balance_sheet_date: bsDate });
     } catch {
       parseErrors++;
     }

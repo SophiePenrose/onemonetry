@@ -1,5 +1,6 @@
 import { getFilingsForCompany, getMonitoredCompany, getSetting, setSetting } from "./db.js";
 import { analyseCompany } from "./llm.js";
+import { getOutreachReadiness, scoreAllStakeholders } from "./stakeholder-scoring.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 
@@ -460,6 +461,24 @@ export function integrateAnalysis(baseResult, analysis) {
   }
   if (analysis.key_people?.length > 0) {
     baseResult.key_people = analysis.key_people;
+    const stakeholders = scoreAllStakeholders(analysis.key_people, {
+      company: {
+        name: baseResult.company_name,
+        turnover: baseResult.turnover,
+      },
+      analysis,
+      motion: baseResult.layers?.product_fit?.best_motion || "FX",
+      filingDate: analysis.analysed_at || baseResult.scored_at,
+    });
+    const readiness = getOutreachReadiness(stakeholders);
+    const topStakeholderScore = stakeholders[0]?.final_score || 0;
+    const stakeholderBoost = Math.min(topStakeholderScore / 100 * 0.06, 0.06);
+    baseResult.composite_score = Math.min(Math.round((baseResult.composite_score + stakeholderBoost) * 100) / 100, 1);
+    baseResult.stakeholder_priority = {
+      boost: stakeholderBoost,
+      readiness,
+      top_stakeholder: stakeholders[0] || null,
+    };
   }
 
   setSetting(`score_${baseResult.company_number}`, baseResult);

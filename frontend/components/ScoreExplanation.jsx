@@ -42,6 +42,15 @@ ScoreBar.propTypes = { score: PropTypes.number.isRequired, color: PropTypes.stri
 
 function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation }) {
   const hasLayers = scoreBreakdown && Object.keys(scoreBreakdown).some((k) => scoreBreakdown[k]?.evidence);
+  const renderEvidence = (evidence) => {
+    if (Array.isArray(evidence)) {
+      return evidence.map((item, idx) => (
+        <div key={idx}>{typeof item === "object" ? item.text || JSON.stringify(item) : item}</div>
+      ));
+    }
+    if (typeof evidence === "object") return JSON.stringify(evidence);
+    return evidence;
+  };
 
   return (
     <div style={{ border: "1px solid #e0e3e8", borderRadius: 8, padding: 16, background: "#fafbfc" }}>
@@ -74,7 +83,9 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation 
                   <ScoreBar score={layer.score} color={LAYER_COLORS[key]} />
                 </div>
                 {layer.evidence && (
-                  <div style={{ fontSize: 12, color: "#888", paddingLeft: 138 }}>{layer.evidence}</div>
+                  <div style={{ fontSize: 12, color: "#888", paddingLeft: 138 }}>
+                    {renderEvidence(layer.evidence)}
+                  </div>
                 )}
               </div>
             );

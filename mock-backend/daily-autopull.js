@@ -149,7 +149,7 @@ async function runAutoPullCycle() {
         });
 
         for (const co of result.companies) {
-          addImportLogEntry(jobId, co.company_number, null, "imported",
+          addImportLogEntry(jobId, co.company_number, co.company_name || null, "imported",
             `£${(co.turnover / 1e6).toFixed(1)}M (${file.date})`, co.turnover);
         }
 

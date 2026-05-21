@@ -28,11 +28,13 @@ export default function CadenceLog({ cadenceHistory, companyId, onEntryAdded }) 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), type: "email", summary: "", outcome: "pending" });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.summary.trim()) return;
     setSubmitting(true);
+    setError(null);
     try {
       const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/cadence`, {
         method: "POST",
@@ -43,8 +45,11 @@ export default function CadenceLog({ cadenceHistory, companyId, onEntryAdded }) 
         setForm({ date: new Date().toISOString().slice(0, 10), type: "email", summary: "", outcome: "pending" });
         setShowForm(false);
         if (onEntryAdded) onEntryAdded();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to save activity");
       }
-    } catch { /* ignore */ }
+    } catch (err) { setError(err.message); }
     finally { setSubmitting(false); }
   }
 
@@ -104,6 +109,8 @@ export default function CadenceLog({ cadenceHistory, companyId, onEntryAdded }) 
           </button>
         </form>
       )}
+
+      {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
 
       {sorted.length === 0 && !showForm && (
         <div style={{ color: "#888", fontSize: 13 }}>No communication history yet. Click &quot;Log Activity&quot; to add the first entry.</div>

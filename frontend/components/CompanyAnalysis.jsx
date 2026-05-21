@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 const SEVERITY_COLORS = { high: "#c0392b", medium: "#e67e22", low: "#6b7280" };
@@ -18,6 +18,10 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
   const [analysis, setAnalysis] = useState(initialAnalysis || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setAnalysis(initialAnalysis || null);
+  }, [companyNumber, initialAnalysis]);
 
   async function runAnalysis() {
     setLoading(true);
@@ -130,6 +134,28 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
           {analysis.international_exposure?.present && (
             <div style={{ marginBottom: 16, padding: "8px 12px", background: "#eff6ff", borderRadius: 6, borderLeft: "3px solid #0075EB", fontSize: 13 }}>
               <strong>🌍 International exposure:</strong> {analysis.international_exposure.details}
+              {analysis.international_exposure.currencies?.length > 0 && (
+                <span style={{ color: "#666", marginLeft: 8 }}>({analysis.international_exposure.currencies.join(", ")})</span>
+              )}
+            </div>
+          )}
+
+          {/* Competitors */}
+          {analysis.competitors_detected?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Competitors Detected</div>
+              {analysis.competitors_detected.map((c, idx) => (
+                <div key={idx} style={{ fontSize: 13, color: "#333", background: "#fff7ed", padding: "8px 12px", borderRadius: 6, marginBottom: 6, borderLeft: "3px solid #e67e22" }}>
+                  <strong>{c.name}</strong>{c.product ? ` · ${c.product}` : ""}{c.displacement_angle ? ` — ${c.displacement_angle}` : ""}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(analysis.deal_type || analysis.estimated_value) && (
+            <div style={{ marginBottom: 16, padding: "8px 12px", background: "#f8f9fb", borderRadius: 6, fontSize: 13 }}>
+              {analysis.deal_type && <span><strong>Deal type:</strong> {analysis.deal_type}</span>}
+              {analysis.estimated_value && <span style={{ marginLeft: analysis.deal_type ? 12 : 0 }}><strong>Estimated value:</strong> {analysis.estimated_value}</span>}
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 const RELEVANCE_COLORS = {
@@ -24,6 +24,11 @@ export default function EvidencePanel({ companyId, motions }) {
   const [evidence, setEvidence] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setSelectedMotion(motions?.[0]?.motion || null);
+    setEvidence(null);
+  }, [companyId, motions]);
 
   async function handleExtract() {
     if (!companyId || !selectedMotion) return;
