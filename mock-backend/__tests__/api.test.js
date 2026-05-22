@@ -71,13 +71,14 @@ describe("API endpoints", () => {
   });
 
   describe("GET /api/dashboard", () => {
-    it("returns pipeline, motion summary, and active prospects", async () => {
+    it("returns pipeline, turnover distribution, monitor stats, and top companies", async () => {
       const { status, data } = await fetchJSON("/api/dashboard");
       assert.equal(status, 200);
       assert.equal(typeof data.total_companies, "number");
       assert.ok(data.pipeline.new_candidate);
-      assert.ok(data.motion_summary.FX);
-      assert.ok(Array.isArray(data.active_prospects));
+      assert.ok(Object.values(data.turnover_distribution).every((bucket) => typeof bucket.count === "number"));
+      assert.ok(data.monitor_stats);
+      assert.ok(Array.isArray(data.top_companies));
     });
   });
 
