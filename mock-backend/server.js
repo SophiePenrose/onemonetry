@@ -347,6 +347,10 @@ function pendingCompanyName() {
   return "Name lookup needed";
 }
 
+function displayNameForCompanyNumber(companyNumber, storedName) {
+  return isFallbackCompanyName(storedName, companyNumber) ? pendingCompanyName() : storedName;
+}
+
 function getManualList(kind, companyId) {
   return getSetting(`${kind}_${canonicalCompanyId(companyId)}`, []);
 }
@@ -369,7 +373,7 @@ async function resolveMonitorName(companyNumber, storedName) {
 }
 
 function formatMonitorName(storedName, companyNumber) {
-  return isFallbackCompanyName(storedName, companyNumber) ? pendingCompanyName() : storedName;
+  return displayNameForCompanyNumber(companyNumber, storedName);
 }
 
 function titleCase(value) {
@@ -424,6 +428,43 @@ function buildStakeholderAssessment(companyId, company, analysis, score) {
     stakeholders: scored,
     active_contacts: activeContacts,
     primary_motion: score?.layers?.product_fit?.best_motion || "FX",
+  };
+}
+
+async function runStakeholderReview(companyId) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const companyNumber = companyNumberFromId(canonicalId);
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === companyId || c.id === canonicalId || c.company_number === companyNumber);
+  const monitored = getMonitoredCompany(companyNumber);
+
+  if (!company && monitored) {
+    const name = await resolveMonitorName(companyNumber, monitored.company_name);
+    company = {
+      id: canonicalId,
+      name,
+      company_number: companyNumber,
+      turnover: monitored.latest_turnover,
+      employee_count: 0,
+      industry: "—",
+      segment: guessTurnoverSegment(monitored.latest_turnover),
+    };
+  }
+  if (!company) return null;
+
+  const analysis = await analyseCompany(companyNumber, company.name, company.turnover);
+  setSetting(`analysis_${companyNumber}`, analysis);
+  const baseScore = monitored ? scoreCompany(companyNumber) : getStoredScore(companyNumber);
+  const score = baseScore ? integrateAnalysis(baseScore, analysis) : baseScore;
+  const assessment = buildStakeholderAssessment(canonicalId, company, analysis, score);
+
+  return {
+    company_id: canonicalId,
+    company_number: companyNumber,
+    company_name: company.name,
+    analysis,
+    score,
+    ...assessment,
   };
 }
 
@@ -565,17 +606,25 @@ app.get("/api/dashboard", (_req, res) => {
   };
 
   const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 });
+  const motionSummary = Object.fromEntries(VALID_MOTIONS.map((motion) => [motion, { count: 0, top_score: 0 }]));
+
   for (const c of topCompanies) {
     const t = c.latest_turnover || 0;
     for (const [, bucket] of Object.entries(turnoverBuckets)) {
       if (t >= bucket.min && (!bucket.max || t < bucket.max)) { bucket.count++; break; }
+    }
+    const score = getStoredScore(c.company_number);
+    const bestMotion = score?.layers?.product_fit?.best_motion;
+    if (bestMotion && motionSummary[bestMotion]) {
+      motionSummary[bestMotion].count++;
+      motionSummary[bestMotion].top_score = Math.max(motionSummary[bestMotion].top_score, score.composite_score || 0);
     }
   }
 
   const top10 = topCompanies.slice(0, 10).map((c) => ({
     id: `ch-${c.company_number}`,
     company_number: c.company_number,
-    name: c.company_name || `Company ${c.company_number}`,
+    name: formatMonitorName(c.company_name, c.company_number),
     turnover: c.latest_turnover,
     segment: guessTurnoverSegment(c.latest_turnover),
     filing_count: c.filing_count || 0,
@@ -586,6 +635,8 @@ app.get("/api/dashboard", (_req, res) => {
     total_filings: getFilingCount(),
     total_monitored: getMonitoredCompanyCount(),
     pipeline,
+    motion_summary: motionSummary,
+    active_prospects: top10,
     turnover_distribution: turnoverBuckets,
     top_companies: top10,
     monitor_stats: stats,
@@ -619,7 +670,8 @@ app.get("/api/unified-shortlist", (req, res) => {
       turnover: c.latest_turnover,
       employee_count: stored?.employees || 0,
       segment,
-      composite_score: stored?.composite_score || null,
+      composite_score: stored?.composite_score ?? 0,
+      combined_score: stored?.composite_score ?? 0,
       best_motion: stored?.layers?.product_fit?.best_motion || null,
       product_fit_score: stored?.layers?.product_fit?.score || null,
       growth_trend: stored?.growth?.trend || null,
@@ -634,9 +686,7 @@ app.get("/api/unified-shortlist", (req, res) => {
   });
 
   entries.sort((a, b) => {
-    if (a.composite_score !== null && b.composite_score !== null) return b.composite_score - a.composite_score;
-    if (a.composite_score !== null) return -1;
-    if (b.composite_score !== null) return 1;
+    if (a.composite_score !== b.composite_score) return b.composite_score - a.composite_score;
     return b.turnover - a.turnover;
   });
   entries.forEach((e, i) => { e.rank = pageOffset + i + 1; });
@@ -1179,7 +1229,7 @@ async function processCSVImport(jobId, companyNumbers) {
       } else {
         const newCompany = {
           id: `ch-${num}`,
-          name: chData.name || `Company ${num}`,
+          name: displayNameForCompanyNumber(num, chData.name),
           company_number: num,
           industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
           segment: guessTurnoverSegment(chData.turnover_hint),
@@ -1785,7 +1835,7 @@ app.post("/api/email/generate", async (req, res) => {
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
     if (monitored) {
-      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—" };
+      company = { id: company_id, name: formatMonitorName(monitored.company_name, companyNumber), company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—" };
     }
   }
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -1875,7 +1925,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
     if (monitored) {
-      company = { id: company_id, name: monitored.company_name || `Company ${companyNumber}`, company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—", segment: "Mid-Market" };
+      company = { id: company_id, name: formatMonitorName(monitored.company_name, companyNumber), company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—", segment: "Mid-Market" };
     }
   }
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -1962,9 +2012,9 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
   let company = COMPANIES.find((c) => c.id === req.params.companyId || c.company_number === companyNumber);
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
-    if (monitored) company = { id: companyId, name: monitored.company_name || `Company ${companyNumber}`, turnover: monitored.latest_turnover };
+    if (monitored) company = { id: companyId, name: formatMonitorName(monitored.company_name, companyNumber), turnover: monitored.latest_turnover };
   }
-  if (!company) company = { name: `Company ${companyNumber}` };
+  if (!company) company = { name: pendingCompanyName() };
   const assessment = buildStakeholderAssessment(companyId, company, analysis, score);
 
   res.json({
@@ -1977,6 +2027,16 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     primary_motion: assessment.primary_motion,
     note: "Stakeholders scored on 5 dimensions: decision_authority (0-30), relevance (0-25), reachability (0-20), timing (0-15), influence_network (0-10). Final score = composite × data_confidence.",
   });
+});
+
+app.post("/api/stakeholders/:companyId/review", async (req, res) => {
+  try {
+    const review = await runStakeholderReview(req.params.companyId);
+    if (!review) return res.status(404).json({ error: "Company not found" });
+    res.json(review);
+  } catch (err) {
+    res.status(500).json({ error: "Stakeholder review failed", detail: err.message });
+  }
 });
 
 // --- YAMM Export & Sequence Management ---

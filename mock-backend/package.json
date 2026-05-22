@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "cd .. && node --watch mock-backend/server.js",
     "lint": "eslint .",
     "test": "node --test __tests__/*.test.js"
   },

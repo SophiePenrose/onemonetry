@@ -192,7 +192,12 @@ export default function CompanyDetail({ companyId }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
         <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} />
-        <StakeholderPanel stakeholders={company.stakeholders} companyId={companyId} onUpdated={refreshCompany} />
+        <StakeholderPanel
+          stakeholders={company.stakeholders}
+          stakeholderAssessment={company.stakeholder_assessment}
+          companyId={companyId}
+          onUpdated={refreshCompany}
+        />
       </div>
 
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />
