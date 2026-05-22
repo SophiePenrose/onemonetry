@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 frontend/node_modules
 mock-backend/node_modules
 mock-backend/workflow_state.json

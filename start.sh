@@ -5,6 +5,14 @@ echo "=== Onemonetry startup ==="
 
 cd /workspace
 
+# Load local secrets for development if present. Do not commit .env.
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 # Install dependencies if needed
 echo "Checking dependencies..."
 cd mock-backend && npm install --silent 2>/dev/null

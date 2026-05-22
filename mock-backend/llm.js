@@ -127,7 +127,7 @@ Based on this filing, provide a structured JSON analysis for a Revolut Business 
 }
 
 function generateFallbackAnalysis(companyName, companyNumber, turnover, filingText) {
-  const name = companyName || `Company ${companyNumber}`;
+  const name = companyName || "Name lookup needed";
   const t = turnover ? `£${(turnover / 1e6).toFixed(1)}M` : "unknown";
 
   if (!filingText) {
@@ -178,15 +178,7 @@ function generateFallbackAnalysis(companyName, companyNumber, turnover, filingTe
     opportunities.push({ product: "Merchant Acquiring", rationale: "Payment/online activity suggests card acceptance needs", confidence: "medium" });
   }
 
-  if (text.includes("director")) {
-    const dirMatch = filingText.match(/(?:directors?|DIRECTORS?)[:\s]+([A-Z][a-zA-Z\s,.'()-]+?)(?:\n|REGISTERED|COMPANY|SECRETARY)/);
-    if (dirMatch) {
-      const names = dirMatch[1].split(/[,\n]/).map((n) => n.trim()).filter((n) => n.length > 3 && n.length < 50);
-      for (const n of names.slice(0, 5)) {
-        people.push({ name: n, role: "Director" });
-      }
-    }
-  }
+  people.push(...extractKeyPeopleFromText(filingText));
 
   const isInternational = text.includes("international") || text.includes("overseas") || text.includes("foreign currency");
 
@@ -205,6 +197,52 @@ function generateFallbackAnalysis(companyName, companyNumber, turnover, filingTe
     key_people: people,
     analysed_at: new Date().toISOString(),
   };
+}
+
+function extractKeyPeopleFromText(filingText) {
+  const people = [];
+  const seen = new Set();
+  const roles = [
+    "Chief Financial Officer",
+    "Finance Director",
+    "Group Finance Director",
+    "Head of Finance",
+    "Head of Treasury",
+    "Treasurer",
+    "Financial Controller",
+    "Managing Director",
+    "Chief Executive",
+    "Head of Payments",
+    "Head of Procurement",
+    "Procurement Director",
+    "Operations Director",
+    "Director",
+  ];
+  const rolePattern = roles.map((r) => r.replace(/\s+/g, "\\s+")).join("|");
+  const namePattern = "[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,3}";
+  const patterns = [
+    new RegExp(`(${namePattern})\\s*(?:,|-|–|—)?\\s*(${rolePattern})`, "g"),
+    new RegExp(`(${rolePattern})\\s*(?:,|-|–|—|:)?\\s*(${namePattern})`, "g"),
+    /(?:appointed|appointment of|joined)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:as\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(filingText)) !== null) {
+      const first = match[1];
+      const second = match[2];
+      const nameFirst = /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(first) && !roles.some((r) => r.toLowerCase() === first.toLowerCase());
+      const name = (nameFirst ? first : second).trim();
+      const role = (nameFirst ? second : first).trim();
+      const key = `${name}:${role}`.toLowerCase();
+      if (!seen.has(key) && name.length < 80 && role.length < 80) {
+        seen.add(key);
+        people.push({ name, role });
+      }
+    }
+  }
+
+  return people.slice(0, 8);
 }
 
 // Keep backward compat for the old endpoint

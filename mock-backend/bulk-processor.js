@@ -12,6 +12,7 @@ import {
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
 const TURNOVER_THRESHOLD = 15_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
+export const MONTHLY_BACKFILL_MONTHS = 24;
 
 // --- Turnover extraction from iXBRL/XBRL ---
 
@@ -67,6 +68,50 @@ function refreshProcessedFlags(files) {
   }));
 }
 
+function monthlyFilenameFromHref(href) {
+  return href.replace(/^archive\//, "");
+}
+
+export function selectRecentMonthlyFiles(files, limit = MONTHLY_BACKFILL_MONTHS) {
+  return [...files]
+    .filter((file) => /^\d{4}-\d{2}$/.test(file.period))
+    .sort((a, b) => b.period.localeCompare(a.period))
+    .slice(0, limit);
+}
+
+export function buildMonthlyZipFileList(currentFiles, archiveFiles, options = {}) {
+  const isProcessed = options.isProcessed ?? isZipProcessed;
+  const limit = options.limit ?? MONTHLY_BACKFILL_MONTHS;
+  const seenFilenames = new Set();
+
+  const current = currentFiles.map((href) => {
+    const filename = monthlyFilenameFromHref(href);
+    seenFilenames.add(filename);
+    return {
+      filename,
+      url: `${CH_DOWNLOAD_BASE}/${href}`,
+      period: extractPeriodFromFilename(filename),
+      source: "current",
+      processed: isProcessed(filename),
+    };
+  });
+
+  const archive = archiveFiles
+    .filter((href) => !seenFilenames.has(monthlyFilenameFromHref(href)))
+    .map((href) => {
+      const filename = monthlyFilenameFromHref(href);
+      return {
+        filename,
+        url: `${CH_DOWNLOAD_BASE}/${href}`,
+        period: extractPeriodFromFilename(filename),
+        source: "archive",
+        processed: isProcessed(filename),
+      };
+    });
+
+  return selectRecentMonthlyFiles([...current, ...archive], limit);
+}
+
 export async function getMonthlyZipURLs() {
   if (Date.now() - monthlyCache.fetched < 3600000 && monthlyCache.files.length > 0) {
     return refreshProcessedFlags(monthlyCache.files);
@@ -82,37 +127,10 @@ export async function getMonthlyZipURLs() {
     "(?:archive/)?Accounts_Monthly_Data-[^\"]+\\.zip"
   );
 
-  const seenFilenames = new Set();
+  const recentFiles = buildMonthlyZipFileList(currentFiles, archiveFiles);
 
-  const allFiles = [
-    ...currentFiles.map((f) => {
-      const key = f.replace("archive/", "");
-      seenFilenames.add(key);
-      return {
-        filename: key,
-        url: `${CH_DOWNLOAD_BASE}/${f}`,
-        period: extractPeriodFromFilename(f),
-        source: "current",
-        processed: isZipProcessed(key),
-      };
-    }),
-    ...archiveFiles
-      .filter((f) => !seenFilenames.has(f.replace("archive/", "")))
-      .map((f) => {
-        const key = f.replace("archive/", "");
-        return {
-          filename: key,
-          url: `${CH_DOWNLOAD_BASE}/${f}`,
-          period: extractPeriodFromFilename(f),
-          source: "archive",
-          processed: isZipProcessed(key),
-        };
-      }),
-  ];
-
-  allFiles.sort((a, b) => b.period.localeCompare(a.period));
-  monthlyCache = { files: allFiles, fetched: Date.now() };
-  return allFiles;
+  monthlyCache = { files: recentFiles, fetched: Date.now() };
+  return recentFiles;
 }
 
 function extractPeriodFromFilename(filename) {

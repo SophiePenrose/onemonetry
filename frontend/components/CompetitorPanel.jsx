@@ -12,11 +12,13 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", product: "", strength: "medium", notes: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   async function handleAdd(e) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setSubmitting(true);
+    setError(null);
     try {
       const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/competitors`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
@@ -25,17 +27,26 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
         setForm({ name: "", product: "", strength: "medium", notes: "" });
         setShowForm(false);
         if (onUpdated) onUpdated();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to add competitor");
       }
-    } catch { /* ignore */ }
+    } catch (err) { setError(err.message); }
     finally { setSubmitting(false); }
   }
 
-  async function handleDelete(idx) {
+  async function handleDelete(competitor, idx) {
     if (!confirm("Remove this competitor?")) return;
+    setError(null);
     try {
-      await fetch(`/api/company/${encodeURIComponent(companyId)}/competitors/${idx}`, { method: "DELETE" });
+      const deleteIdx = competitor._manual_index ?? idx;
+      const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/competitors/${deleteIdx}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to remove competitor");
+      }
       if (onUpdated) onUpdated();
-    } catch { /* ignore */ }
+    } catch (err) { setError(err.message); }
   }
 
   const inputStyle = { width: "100%", padding: "6px 10px", borderRadius: 4, border: "1px solid #ddd", fontSize: 13, boxSizing: "border-box" };
@@ -83,6 +94,8 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
         </form>
       )}
 
+      {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
+
       {(!competitors || competitors.length === 0) && !showForm && (
         <div style={{ color: "#888", fontSize: 13 }}>No competitor data. Click &quot;Add Competitor&quot; to start mapping the competitive landscape.</div>
       )}
@@ -93,8 +106,8 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
             const sm = STRENGTH_META[c.strength] || STRENGTH_META.medium;
             return (
               <div key={idx} style={{ display: "flex", gap: 12, padding: "10px 12px", background: "#fafbfc", borderRadius: 6, border: "1px solid #f0f0f0", position: "relative" }}>
-                {companyId && (
-                  <button onClick={() => handleDelete(idx)} style={{
+                {companyId && c.source !== "analysis" && c.source !== "filing" && (
+                  <button onClick={() => handleDelete(c, idx)} style={{
                     position: "absolute", top: 6, right: 8, border: "none", background: "none",
                     color: "#ccc", cursor: "pointer", fontSize: 16, padding: 0,
                   }} title="Remove">×</button>

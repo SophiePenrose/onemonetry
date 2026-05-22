@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { getDailyAutoPullPlan } from "../daily-autopull-planner.js";
+import { getMonthlyAutoPullPlan } from "../monthly-autopull-planner.js";
 import {
   hasProcessedZipStore,
   isZipProcessed,
@@ -55,6 +56,18 @@ describe("daily auto-pull planning", () => {
     assert.equal(plan.initializedBaseline, false);
     assert.deepEqual(plan.filesToProcess, [files[0]]);
     assert.deepEqual(plan.filesToBaseline, []);
+  });
+});
+
+describe("monthly auto-pull planning", () => {
+  it("processes unprocessed current and archive monthly files", () => {
+    const currentFile = { filename: "Accounts_Monthly_Data-April2026.zip", source: "current", processed: false };
+    const archiveFile = { filename: "Accounts_Monthly_Data-May2024.zip", source: "archive", processed: false };
+    const processedArchiveFile = { filename: "Accounts_Monthly_Data-June2024.zip", source: "archive", processed: true };
+
+    const plan = getMonthlyAutoPullPlan([currentFile, archiveFile, processedArchiveFile]);
+
+    assert.deepEqual(plan.filesToProcess, [currentFile, archiveFile]);
   });
 });
 

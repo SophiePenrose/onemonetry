@@ -127,6 +127,14 @@ export default function CompanyDetail({ companyId }) {
             {company.all_motion_scores?.map((m) => m.motion).join(", ")}
           </span>
         </Field>
+        {company.stakeholder_priority && (
+          <Field label="Stakeholder Priority">
+            <span style={{ fontWeight: 600 }}>+{Math.round(company.stakeholder_priority.boost * 100)} pts</span>
+            <span style={{ color: "#888", marginLeft: 8 }}>
+              {company.stakeholder_priority.readiness?.reason}
+            </span>
+          </Field>
+        )}
       </div>
 
       {company.propensity && (
@@ -166,9 +174,30 @@ export default function CompanyDetail({ companyId }) {
         combinedScore={company.combined_score}
       />
 
+      {company.filings?.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
+          <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>Companies House Filings Read</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {company.filings.slice(0, 5).map((filing, idx) => (
+              <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 10px", background: "#f8f9fb", borderRadius: 6, fontSize: 13 }}>
+                <span>{filing.description || "Accounts filing"} {filing.balance_sheet_date ? `(${filing.balance_sheet_date})` : ""}</span>
+                <span style={{ color: filing.has_content ? "#0a8754" : "#888", fontWeight: 600 }}>
+                  {filing.has_content ? "Text extracted" : "Metadata only"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
         <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} />
-        <StakeholderPanel stakeholders={company.stakeholders} companyId={companyId} onUpdated={refreshCompany} />
+        <StakeholderPanel
+          stakeholders={company.stakeholders}
+          stakeholderAssessment={company.stakeholder_assessment}
+          companyId={companyId}
+          onUpdated={refreshCompany}
+        />
       </div>
 
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />

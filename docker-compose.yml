@@ -7,6 +7,10 @@ services:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - COMPANIES_HOUSE_API_KEY=${COMPANIES_HOUSE_API_KEY:-}
+      - CH_API_DELAY_MS=${CH_API_DELAY_MS:-600}
+      - CH_MONITOR_BATCH_SIZE=${CH_MONITOR_BATCH_SIZE:-50}
     volumes:
       - app-data:/app/mock-backend
     restart: unless-stopped

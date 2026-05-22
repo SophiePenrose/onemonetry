@@ -114,7 +114,8 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const filtered = searchQuery.trim()
     ? afterStateFilter.filter((c) =>
         c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.industry.toLowerCase().includes(searchQuery.toLowerCase())
+        c.industry.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.company_number?.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : afterStateFilter;
 

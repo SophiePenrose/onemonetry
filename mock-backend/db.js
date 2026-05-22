@@ -375,6 +375,22 @@ export function getShortlistCount(minTurnover = 15000000) {
   return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
 }
 
+export function pruneHistoricMonthlyFilingsBefore(cutoffPeriod) {
+  const result = db.prepare(`
+    DELETE FROM company_filings
+    WHERE source LIKE 'monthly:%'
+      AND substr(source, 9, 7) < ?
+  `).run(cutoffPeriod);
+
+  db.prepare(`
+    DELETE FROM company_monitor
+    WHERE source LIKE 'monthly:%'
+      AND company_number NOT IN (SELECT DISTINCT company_number FROM company_filings)
+  `).run();
+
+  return { deleted_filings: result.changes, cutoff_period: cutoffPeriod };
+}
+
 // --- Company Groups ---
 
 export function createGroup(name, parentCompanyNumber) {
