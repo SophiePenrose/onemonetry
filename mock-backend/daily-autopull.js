@@ -1,5 +1,6 @@
 import { getDailyZipURLs } from "./bulk-processor.js";
 import { getDailyAutoPullPlan } from "./daily-autopull-planner.js";
+import { getMonthlyAutoPullPlan } from "./monthly-autopull-planner.js";
 import { processZipInChunks } from "./stream-processor.js";
 import { createImportJob, updateImportJob, addImportLogEntry, getFilingCount, getMonitoredCompanyCount } from "./db.js";
 import { markZipsProcessed } from "./processed-zips.js";
@@ -14,7 +15,6 @@ let autoPullStatus = {
 };
 
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours
-const MONTHLY_CHECK_INTERVAL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export function getAutoPullStatus() {
   return {
@@ -61,14 +61,15 @@ async function runMonthlyCheck() {
   try {
     const { getMonthlyZipURLs } = await import("./bulk-processor.js");
     const monthlyFiles = await getMonthlyZipURLs();
-    const unprocessed = monthlyFiles.filter((f) => !f.processed && f.source === "current");
+    const plan = getMonthlyAutoPullPlan(monthlyFiles);
+    const unprocessed = plan.filesToProcess;
 
     if (unprocessed.length === 0) {
       console.log(`[AutoPull] No new monthly files to process`);
       return;
     }
 
-    console.log(`[AutoPull] Found ${unprocessed.length} new monthly files`);
+    console.log(`[AutoPull] Found ${unprocessed.length} unprocessed monthly files from the latest ${plan.filesToCheck.length} periods`);
     for (const file of unprocessed) {
       console.log(`[AutoPull] Processing monthly: ${file.filename}`);
       try {
