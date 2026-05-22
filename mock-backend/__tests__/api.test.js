@@ -90,10 +90,10 @@ describe("API endpoints", () => {
   });
 
   describe("GET /api/reports/schedule", () => {
-    it("returns Sunday evening schedule", async () => {
+    it("returns Saturday evening schedule", async () => {
       const { status, data } = await fetchJSON("/api/reports/schedule");
       assert.equal(status, 200);
-      assert.equal(data.schedule, "Sunday evenings at 20:00");
+      assert.equal(data.schedule, "Saturday evenings at 18:00");
       assert.ok(data.next_generation);
     });
   });

@@ -63,6 +63,7 @@ import {
   updateMonitorCheck,
   getCadenceLog,
   addCadenceEntry,
+  pruneHistoricMonthlyFilingsBefore,
 } from "./db.js";
 
 const app = express();
@@ -966,7 +967,50 @@ function getWeekLabel(date) {
   return start.toISOString().slice(0, 10);
 }
 
-function generateReportSnapshot(COMPANIES, topN = 20) {
+function getHistoricBackfillCutoffPeriod(now = new Date()) {
+  const cutoff = new Date(now.getFullYear(), now.getMonth() - 23, 1);
+  return `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function buildMonitorReportEntries(topN = 20) {
+  const monitoredCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: topN * 3 });
+  const entries = [];
+
+  for (const company of monitoredCompanies) {
+    const companyId = `ch-${company.company_number}`;
+    const ws = getCompanyState(companyId);
+    if (["closed_won", "closed_lost"].includes(ws.state)) continue;
+
+    const analysis = getSetting(`analysis_${company.company_number}`, null) || await analyseCompany(company.company_number, formatMonitorName(company.company_name, company.company_number), company.latest_turnover);
+    setSetting(`analysis_${company.company_number}`, analysis);
+
+    const baseScore = scoreCompany(company.company_number);
+    const score = baseScore ? integrateAnalysis(baseScore, analysis) : getStoredScore(company.company_number);
+    const motionScores = buildMonitorMotionScores(score);
+    const bestMotion = motionScores[0];
+    if (!bestMotion) continue;
+
+    entries.push({
+      company_id: companyId,
+      company_number: company.company_number,
+      name: formatMonitorName(company.company_name, company.company_number),
+      industry: titleCase(score?.industries?.[0]),
+      turnover: company.latest_turnover,
+      best_motion: bestMotion.motion,
+      score: score?.composite_score || bestMotion.score || 0,
+      fit_level: bestMotion.fit_level,
+      explanation: bestMotion.explanation,
+      workflow_state_at_generation: ws.state,
+      eligible_motions: motionScores.map((m) => m.motion),
+      stakeholder_priority: score?.stakeholder_priority || null,
+      profile_ready: true,
+    });
+  }
+
+  return entries;
+}
+
+function generateLegacyReportSnapshot(COMPANIES) {
   const entries = [];
   for (const company of COMPANIES) {
     const ws = getCompanyState(company.id);
@@ -997,16 +1041,32 @@ function generateReportSnapshot(COMPANIES, topN = 20) {
     }
   }
 
-  entries.sort((a, b) => b.score - a.score);
-  return entries.slice(0, topN);
+  return entries;
+}
+
+async function generateReportSnapshot(COMPANIES, topN = 20) {
+  const entries = [
+    ...await buildMonitorReportEntries(topN),
+    ...generateLegacyReportSnapshot(COMPANIES),
+  ];
+
+  const seen = new Set();
+  const deduped = entries.filter((entry) => {
+    if (seen.has(entry.company_id)) return false;
+    seen.add(entry.company_id);
+    return true;
+  });
+
+  deduped.sort((a, b) => b.score - a.score);
+  return deduped.slice(0, topN);
 }
 
 app.get("/api/reports/schedule", (_req, res) => {
-  const nextRun = getNextSundayEvening();
+  const nextRun = getNextSaturdayEvening();
   res.json({
-    schedule: "Sunday evenings at 20:00",
+    schedule: "Saturday evenings at 18:00",
     next_generation: nextRun.toISOString(),
-    note: "Report will be ready for Monday morning review.",
+    note: "Report will be ready for Sunday review before Monday outreach.",
   });
 });
 
@@ -1050,7 +1110,7 @@ app.get("/api/reports/:id", (req, res) => {
   });
 });
 
-app.post("/api/reports/generate", (_req, res) => {
+app.post("/api/reports/generate", async (_req, res) => {
   const COMPANIES = loadCompanies();
   const now = new Date();
   const weekLabel = getWeekLabel(now);
@@ -1064,7 +1124,8 @@ app.post("/api/reports/generate", (_req, res) => {
     });
   }
 
-  const snapshot = generateReportSnapshot(COMPANIES);
+  pruneHistoricMonthlyFilingsBefore(getHistoricBackfillCutoffPeriod(now));
+  const snapshot = await generateReportSnapshot(COMPANIES);
   const report = {
     id: `report-${weekLabel}`,
     week_label: weekLabel,
@@ -2172,34 +2233,34 @@ if (fs.existsSync(frontendDist)) {
   console.log("Serving frontend from", frontendDist);
 }
 
-// --- Weekly Report Auto-Generation (Sunday evenings) ---
+// --- Weekly Report Auto-Generation (Saturday evenings) ---
 
 let reportScheduleTimer = null;
 
-function getNextSundayEvening() {
+function getNextSaturdayEvening() {
   const now = new Date();
   const day = now.getDay();
-  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+  const daysUntilSaturday = day === 6 ? 0 : 6 - day;
   const next = new Date(now);
-  next.setDate(now.getDate() + daysUntilSunday);
-  next.setHours(20, 0, 0, 0);
+  next.setDate(now.getDate() + daysUntilSaturday);
+  next.setHours(18, 0, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 7);
   return next;
 }
 
 function scheduleWeeklyReport() {
-  const nextRun = getNextSundayEvening();
+  const nextRun = getNextSaturdayEvening();
   const delay = nextRun.getTime() - Date.now();
 
   console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
 
-  reportScheduleTimer = setTimeout(() => {
-    generateAndSaveWeeklyReport();
+  reportScheduleTimer = setTimeout(async () => {
+    await generateAndSaveWeeklyReport();
     scheduleWeeklyReport();
   }, delay);
 }
 
-function generateAndSaveWeeklyReport() {
+async function generateAndSaveWeeklyReport() {
   try {
     const COMPANIES = loadCompanies();
     const now = new Date();
@@ -2211,7 +2272,8 @@ function generateAndSaveWeeklyReport() {
       return;
     }
 
-    const snapshot = generateReportSnapshot(COMPANIES);
+    pruneHistoricMonthlyFilingsBefore(getHistoricBackfillCutoffPeriod(now));
+    const snapshot = await generateReportSnapshot(COMPANIES);
     const report = {
       id: `report-${weekLabel}`,
       week_label: weekLabel,
