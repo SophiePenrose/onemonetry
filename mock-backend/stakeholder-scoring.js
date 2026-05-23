@@ -65,11 +65,19 @@ const CATEGORY_FAMILIAR_EMPLOYERS = [
 ];
 
 export function scoreStakeholder(person, context = {}) {
-  const { company, analysis, motion, filingDate, enrichment } = context;
+  const { company, analysis, motion, filingDate } = context;
+  const enrichment = {
+    ...(context.enrichment || {}),
+    email: person.email || context.enrichment?.email,
+    linkedin_active: Boolean(person.linkedin) || context.enrichment?.linkedin_active,
+    linkedin_verified: Boolean(person.linkedin) || context.enrichment?.linkedin_verified,
+  };
 
   const result = {
     name: person.name,
     role: person.role || "Unknown",
+    email: person.email || null,
+    linkedin: person.linkedin || null,
     scores: { decision_authority: 0, relevance: 0, reachability: 0, timing: 0, influence_network: 0 },
     composite_score: 0,
     data_confidence: 0.5,
@@ -80,7 +88,7 @@ export function scoreStakeholder(person, context = {}) {
     needs_verification: true,
     linkedin_search_url: null,
     email_guess: null,
-    source: "companies_house_filing",
+    source: person.source || "companies_house_filing",
     source_date: filingDate || null,
   };
 

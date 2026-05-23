@@ -80,6 +80,10 @@ export default function CompanyDetail({ companyId }) {
       .catch(() => {});
   }
 
+  function handleAnalysisUpdated(analysis) {
+    setCompany((prev) => prev ? { ...prev, analysis } : prev);
+  }
+
   if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <DetailSkeleton />;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
@@ -176,19 +180,19 @@ export default function CompanyDetail({ companyId }) {
       <CompanyAnalysis
         companyNumber={company.company_number || companyId.replace("ch-", "")}
         initialAnalysis={company.analysis}
+        onAnalysisUpdated={handleAnalysisUpdated}
       />
 
       <EvidencePanel
         companyId={companyId}
-        motions={company.all_motion_scores || []}
+        analysis={company.analysis}
+        onEvidenceUpdated={handleAnalysisUpdated}
       />
 
       <EmailSequencePanel
         companyId={companyId}
-        companyName={company.name}
         stakeholders={company.stakeholders || []}
         keyPeople={company.analysis?.key_people || []}
-        motions={company.all_motion_scores || []}
       />
 
       <NotesPanel companyId={companyId} initialNotes={company.notes} />

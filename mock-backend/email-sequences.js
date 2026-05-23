@@ -233,10 +233,20 @@ export function getSequenceTemplates() {
   return Object.keys(SEQUENCE_TEMPLATES);
 }
 
+function inferMotion(motion, analysis) {
+  if (motion && SEQUENCE_TEMPLATES[motion]) return motion;
+  const opportunity = analysis?.opportunities?.find((o) => SEQUENCE_TEMPLATES[o.product]);
+  if (opportunity) return opportunity.product;
+  if (analysis?.international_exposure?.present) return "FX";
+  if (analysis?.pain_indicators?.some((p) => /expense|spend|card/i.test(`${p.pain} ${p.evidence}`))) return "Cards";
+  return "FX";
+}
+
 export function generateSequence(params) {
   const { companyId, companyName, stakeholderName, stakeholderRole, motion, analysis, turnover, employeeCount, industry } = params;
 
-  const template = SEQUENCE_TEMPLATES[motion];
+  const selectedMotion = inferMotion(motion, analysis);
+  const template = SEQUENCE_TEMPLATES[selectedMotion];
   if (!template) return null;
 
   const firstName = stakeholderName?.split(" ")[0] || "there";
@@ -289,7 +299,7 @@ export function generateSequence(params) {
   db.prepare(`
     INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
     VALUES (?, ?, ?, ?, ?, ?, 'draft')
-  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, params.stakeholderEmail || null, motion);
+  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, params.stakeholderEmail || null, selectedMotion);
 
   for (const step of steps) {
     db.prepare(`
@@ -299,6 +309,39 @@ export function generateSequence(params) {
   }
 
   return { id: sequenceId, steps };
+}
+
+export function saveGeneratedSequence(params) {
+  const {
+    companyId,
+    stakeholderName,
+    stakeholderRole,
+    stakeholderEmail,
+    motion,
+    steps,
+  } = params;
+  const sequenceId = `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sequenceLabel = motion || "Company-specific";
+
+  db.prepare(`
+    INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'draft')
+  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, stakeholderEmail || null, sequenceLabel);
+
+  for (const step of steps || []) {
+    db.prepare(`
+      INSERT INTO email_steps (sequence_id, step_number, subject, body, send_delay_days, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(
+      sequenceId,
+      step.step_number,
+      step.subject,
+      step.body,
+      step.send_delay_days || 0
+    );
+  }
+
+  return { id: sequenceId, steps: steps || [] };
 }
 
 export function getSequencesForCompany(companyId) {

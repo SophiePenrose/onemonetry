@@ -34,7 +34,7 @@ import {
 } from "./daily-autopull.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
-import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
+import { generateSequence, saveGeneratedSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
 import { generateFullSequence } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
@@ -60,6 +60,7 @@ import {
   getShortlistCompanies,
   getShortlistCount,
   getMonitoredCompany,
+  updateMonitorCheck,
 } from "./db.js";
 
 const app = express();
@@ -314,6 +315,50 @@ function loadCompanies() {
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
+function getCompanyNumberFromId(id, company = null) {
+  if (company?.company_number) return company.company_number;
+  return id?.startsWith("ch-") ? id.replace("ch-", "") : id;
+}
+
+function isPlaceholderCompanyName(name, companyNumber) {
+  return !name || name === `Company ${companyNumber}` || /^Company \w+$/i.test(name);
+}
+
+async function ensureCompanyAnalysis(companyNumber, companyName, turnover) {
+  if (!companyNumber) return null;
+  const existing = getSetting(`analysis_${companyNumber}`, null);
+  if (existing) return existing;
+
+  const filings = getFilingsForCompany(companyNumber, 3);
+  if (!filings.some((f) => f.raw_data)) return null;
+
+  const analysis = await analyseCompany(companyNumber, companyName, turnover);
+  if (analysis) setSetting(`analysis_${companyNumber}`, analysis);
+  return analysis;
+}
+
+async function enrichCompanyNames(companyNumbers, options = {}) {
+  if (!isCompaniesHouseConfigured()) return;
+  const limit = options.limit || 25;
+  const uniqueNumbers = [...new Set((companyNumbers || []).filter(Boolean))].slice(0, limit);
+
+  for (const companyNumber of uniqueNumbers) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (!monitored || !isPlaceholderCompanyName(monitored.company_name, companyNumber)) continue;
+    try {
+      const data = await lookupCompany(companyNumber);
+      if (!data.error && data.name) {
+        updateMonitorCheck(companyNumber, {
+          company_name: data.name,
+          status: data.status || monitored.status,
+        });
+      }
+    } catch {
+      // Name enrichment is best-effort and should never block imports.
+    }
+  }
+}
+
 // --- Routes ---
 
 app.get("/api/motions", (_req, res) => {
@@ -407,6 +452,13 @@ app.get("/api/dashboard", (_req, res) => {
   };
 
   const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 });
+  const companiesNeedingNames = topCompanies
+    .filter((c) => isPlaceholderCompanyName(c.company_name, c.company_number))
+    .map((c) => c.company_number);
+  if (companiesNeedingNames.length > 0) {
+    enrichCompanyNames(companiesNeedingNames).catch(() => {});
+  }
+
   for (const c of topCompanies) {
     const t = c.latest_turnover || 0;
     for (const [, bucket] of Object.entries(turnoverBuckets)) {
@@ -561,7 +613,7 @@ app.get("/api/shortlist", (req, res) => {
   });
 });
 
-app.get("/api/company/:id", (req, res) => {
+app.get("/api/company/:id", async (req, res) => {
   const { id } = req.params;
   const { product_motion } = req.query;
 
@@ -573,6 +625,7 @@ app.get("/api/company/:id", (req, res) => {
     const monitored = getMonitoredCompany(companyNumber);
     if (monitored) {
       const filings = getFilingsForCompany(companyNumber);
+      const analysis = await ensureCompanyAnalysis(companyNumber, monitored.company_name || `Company ${companyNumber}`, monitored.latest_turnover);
       const ws = getCompanyState(id);
       const segment = guessTurnoverSegment(monitored.latest_turnover);
       const chLink = `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`;
@@ -604,7 +657,7 @@ app.get("/api/company/:id", (req, res) => {
           latest_filing_text: filings[0]?.raw_data || null,
           filing_count: filings.length,
           notes: getSetting(`notes_${id}`, ""),
-          analysis: getSetting(`analysis_${companyNumber}`, null),
+          analysis,
           competitors: [],
           stakeholders: [],
           cadence_history: [],
@@ -618,6 +671,7 @@ app.get("/api/company/:id", (req, res) => {
 
   const ws = getCompanyState(id);
   const profile = computeCompanyProfile(company);
+  const analysis = await ensureCompanyAnalysis(company.company_number, company.name, company.turnover);
 
   if (product_motion && VALID_MOTIONS.includes(product_motion)) {
     const fit = company.product_fit[product_motion];
@@ -645,6 +699,7 @@ app.get("/api/company/:id", (req, res) => {
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
+        analysis,
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -678,6 +733,7 @@ app.get("/api/company/:id", (req, res) => {
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
+        analysis,
       },
     });
   }
@@ -1127,6 +1183,7 @@ app.post("/api/import/bulk/process", async (req, res) => {
       addImportLogEntry(jobId, co.company_number, null, "imported",
         `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
     }
+    enrichCompanyNames(result.companies.map((co) => co.company_number)).catch(() => {});
 
     updateImportJob(jobId, {
       status: "completed",
@@ -1295,6 +1352,7 @@ app.post("/api/llm/analyse", async (req, res) => {
 
   try {
     const analysis = await analyseCompany(company_number, name, turnover);
+    if (analysis) setSetting(`analysis_${company_number}`, analysis);
     res.json({ company_number, company_name: name, analysis });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
@@ -1306,11 +1364,15 @@ app.post("/api/llm/extract", async (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "Missing company_id" });
 
-  const companyNumber = company_id.startsWith("ch-") ? company_id.replace("ch-", "") : company_id;
+  const company = loadCompanies().find((c) => c.id === company_id || c.company_number === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
   const monitored = getMonitoredCompany(companyNumber);
+  const name = monitored?.company_name || company?.name || `Company ${companyNumber}`;
+  const turnover = monitored?.latest_turnover || company?.turnover || null;
 
   try {
-    const analysis = await analyseCompany(companyNumber, monitored?.company_name, monitored?.latest_turnover);
+    const analysis = await analyseCompany(companyNumber, name, turnover);
+    if (analysis) setSetting(`analysis_${companyNumber}`, analysis);
     res.json({ company_id, evidence: analysis });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
@@ -1535,13 +1597,13 @@ app.get("/api/email/templates", (_req, res) => {
 
 app.post("/api/email/generate", async (req, res) => {
   const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
-  if (!company_id || !stakeholder_name || !motion) {
-    return res.status(400).json({ error: "company_id, stakeholder_name, and motion are required" });
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name are required" });
   }
 
-  const companyNumber = company_id.replace("ch-", "");
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
 
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
@@ -1552,23 +1614,47 @@ app.post("/api/email/generate", async (req, res) => {
   if (!company) return res.status(404).json({ error: "Company not found" });
 
   const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
 
-  const sequence = generateSequence({
-    companyId: company_id,
-    companyName: company.name,
-    stakeholderName: stakeholder_name,
-    stakeholderRole: stakeholder_role,
-    stakeholderEmail: stakeholder_email,
-    motion,
-    analysis,
-    turnover: company.turnover,
-    employeeCount: company.employee_count,
-    industry: company.industry,
-  });
+  try {
+    const generated = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director", email: stakeholder_email || null },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: company.merchant_spend || null,
+    });
 
-  if (!sequence) return res.status(400).json({ error: `No template available for motion: ${motion}` });
+    if (generated.error) return res.status(400).json(generated);
 
-  res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+    const sequence = saveGeneratedSequence({
+      companyId: company_id,
+      stakeholderName: stakeholder_name,
+      stakeholderRole: stakeholder_role,
+      stakeholderEmail: stakeholder_email,
+      motion: generated.archetype_name || motion || "Company-specific",
+      steps: generated.steps,
+    });
+
+    res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps, generation: generated });
+  } catch {
+    const sequence = generateSequence({
+      companyId: company_id,
+      companyName: company.name,
+      stakeholderName: stakeholder_name,
+      stakeholderRole: stakeholder_role,
+      stakeholderEmail: stakeholder_email,
+      motion,
+      analysis,
+      turnover: company.turnover,
+      employeeCount: company.employee_count,
+      industry: company.industry,
+    });
+
+    if (!sequence) return res.status(400).json({ error: "Could not generate sequence" });
+    res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+  }
 });
 
 app.get("/api/email/sequences/:companyId", (req, res) => {
@@ -1629,9 +1715,9 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     }
   }
 
-  const companyNumber = company_id.replace("ch-", "");
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
 
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
@@ -1714,19 +1800,43 @@ app.get("/api/email/active-contacts/:companyId", (req, res) => {
 // --- Stakeholder Assessment ---
 
 app.get("/api/stakeholders/:companyId", (req, res) => {
-  const companyNumber = req.params.companyId.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === req.params.companyId || c.company_number === req.params.companyId);
+  const companyNumber = getCompanyNumberFromId(req.params.companyId, company);
   const analysis = getSetting(`analysis_${companyNumber}`, null);
   const score = getSetting(`score_${companyNumber}`, null);
 
-  const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === req.params.companyId);
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
-    if (monitored) company = { name: monitored.company_name || `Company ${companyNumber}`, turnover: monitored.latest_turnover };
+    if (monitored) {
+      company = {
+        id: `ch-${companyNumber}`,
+        company_number: companyNumber,
+        name: monitored.company_name || `Company ${companyNumber}`,
+        turnover: monitored.latest_turnover,
+        stakeholders: [],
+      };
+    }
   }
-  if (!company) company = { name: `Company ${companyNumber}` };
+  if (!company) company = { name: `Company ${companyNumber}`, company_number: companyNumber, stakeholders: [] };
 
-  if (!analysis?.key_people?.length) {
+  const manualPeople = (company.stakeholders || []).map((person) => ({
+    name: person.name,
+    role: person.role || person.title,
+    email: person.email,
+    linkedin: person.linkedin,
+    source: "manual",
+  }));
+  const filingPeople = (analysis?.key_people || []).map((person) => ({ ...person, source: "companies_house_filing" }));
+  const peopleByName = new Map();
+  for (const person of [...manualPeople, ...filingPeople]) {
+    if (!person.name) continue;
+    const key = person.name.toLowerCase();
+    peopleByName.set(key, { ...(peopleByName.get(key) || {}), ...person });
+  }
+  const people = [...peopleByName.values()];
+
+  if (people.length === 0) {
     return res.json({
       readiness: getOutreachReadiness([]),
       stakeholders: [],
@@ -1739,10 +1849,10 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     company,
     analysis,
     motion: score?.layers?.product_fit?.best_motion || "FX",
-    filingDate: analysis.analysed_at || null,
+    filingDate: analysis?.analysed_at || null,
   };
 
-  const scored = scoreAllStakeholders(analysis.key_people, context);
+  const scored = scoreAllStakeholders(people, context);
   const readiness = getOutreachReadiness(scored);
   const activeContacts = getActiveContactsForCompany(req.params.companyId);
 
@@ -1752,7 +1862,7 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     active_contacts: activeContacts,
     company_name: company.name,
     source: "companies_house_filing",
-    filing_date: analysis.analysed_at,
+    filing_date: analysis?.analysed_at || null,
     primary_motion: context.motion,
     note: "Stakeholders scored on 5 dimensions: decision_authority (0-30), relevance (0-25), reachability (0-20), timing (0-15), influence_network (0-10). Final score = composite × data_confidence.",
   });
