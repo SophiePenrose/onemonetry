@@ -351,7 +351,9 @@ export function getShortlistCompanies(filters = {}) {
     SELECT cm.*, 
       (SELECT COUNT(*) FROM company_filings cf WHERE cf.company_number = cm.company_number) as filing_count,
       (SELECT cf.filing_date FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_date,
-      (SELECT cf.turnover FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_turnover
+      (SELECT cf.turnover FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_turnover,
+      EXISTS(SELECT 1 FROM company_filings cf WHERE cf.company_number = cm.company_number AND cf.raw_data IS NOT NULL) as has_filing_text,
+      EXISTS(SELECT 1 FROM settings s WHERE s.key = 'analysis_' || cm.company_number) as analysis_ready
     FROM company_monitor cm
     WHERE cm.status = 'active'
     AND cm.latest_turnover >= ?

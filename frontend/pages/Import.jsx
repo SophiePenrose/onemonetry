@@ -38,6 +38,7 @@ export default function Import() {
   const [monthlyFiles, setMonthlyFiles] = useState([]);
   const [dailyFiles, setDailyFiles] = useState([]);
   const [autoPull, setAutoPull] = useState(null);
+  const [backfillStatus, setBackfillStatus] = useState(null);
   const [bulkTab, setBulkTab] = useState("monthly");
   const fileRef = useRef(null);
 
@@ -46,7 +47,18 @@ export default function Import() {
     refreshJobs();
     refreshBulkFiles();
     refreshAutoPull();
+    refreshBackfillStatus();
   }, []);
+
+  useEffect(() => {
+    if (!backfillStatus?.backfill?.running && !backfillStatus?.analysis?.running) return undefined;
+    const id = setInterval(() => {
+      refreshBackfillStatus();
+      refreshJobs();
+      refreshBulkFiles();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [backfillStatus?.backfill?.running, backfillStatus?.analysis?.running]);
 
   function refreshJobs() {
     fetch("/api/import/jobs").then((r) => r.json()).then((d) => setJobs(d.jobs || [])).catch(() => {});
@@ -59,6 +71,10 @@ export default function Import() {
 
   function refreshAutoPull() {
     fetch("/api/import/autopull/status").then((r) => r.json()).then(setAutoPull).catch(() => {});
+  }
+
+  function refreshBackfillStatus() {
+    fetch("/api/import/bulk/backfill-24-months/status").then((r) => r.json()).then(setBackfillStatus).catch(() => {});
   }
 
   function loadJobDetail(jobId) {
@@ -115,6 +131,19 @@ export default function Import() {
       refreshAutoPull();
     } catch {
       alert("Failed to toggle auto-pull");
+    }
+  }
+
+  async function startBackfill() {
+    try {
+      const res = await fetch("/api/import/bulk/backfill-24-months", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start backfill");
+      setBackfillStatus(data);
+      setTimeout(refreshJobs, 1000);
+      setTimeout(refreshBackfillStatus, 1000);
+    } catch (err) {
+      alert(err.message);
     }
   }
 
@@ -256,6 +285,34 @@ export default function Import() {
           Companies House publishes accounts as ZIP files. Monthly archives cover the last 24 months (historical backfill).
           Daily files (Tue-Sat) contain the latest filings. Only £20M+ turnover companies are imported.
         </p>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#f8f9fb", border: "1px solid #e0e3e8", borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: "#555" }}>
+            <strong>24-month backfill</strong>
+            <span style={{ color: "#888" }}>
+              {" "}Processes the latest 24 monthly files, persists qualifying companies, then queues filing analysis.
+            </span>
+            {backfillStatus?.backfill && (
+              <div style={{ marginTop: 4, color: "#888" }}>
+                {backfillStatus.backfill.running
+                  ? `Running: ${backfillStatus.backfill.files_processed}/${backfillStatus.backfill.files_to_process} files, ${backfillStatus.backfill.companies_imported} companies`
+                  : `Last run: ${backfillStatus.backfill.files_processed || 0}/${backfillStatus.backfill.files_to_process || 0} files, ${backfillStatus.backfill.companies_imported || 0} companies`}
+                {backfillStatus.analysis?.running && ` · Analysing ${backfillStatus.analysis.current_company || ""}`}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={startBackfill}
+            disabled={backfillStatus?.backfill?.running}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600,
+              cursor: backfillStatus?.backfill?.running ? "wait" : "pointer",
+              background: backfillStatus?.backfill?.running ? "#94a3b8" : "#0075EB", color: "#fff",
+            }}
+          >
+            {backfillStatus?.backfill?.running ? "Backfill running…" : "Start 24-month backfill"}
+          </button>
+        </div>
 
         <div style={{ display: "flex", gap: 0, marginBottom: 12 }}>
           {[{ id: "monthly", label: `Monthly (${monthlyFiles.length})` }, { id: "daily", label: `Daily (${dailyFiles.length})` }].map((t) => (

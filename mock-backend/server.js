@@ -32,6 +32,7 @@ import {
   startAutoPull,
   stopAutoPull,
 } from "./daily-autopull.js";
+import { getMonthlyAutoPullPlan } from "./monthly-autopull-planner.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
 import { generateSequence, saveGeneratedSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
@@ -337,6 +338,82 @@ async function ensureCompanyAnalysis(companyNumber, companyName, turnover) {
   return analysis;
 }
 
+const analysisStatus = {
+  running: false,
+  queued: 0,
+  completed: 0,
+  skipped: 0,
+  errors: 0,
+  current_company: null,
+  last_run: null,
+  last_completed: null,
+};
+const analysisQueue = [];
+const queuedAnalysisCompanies = new Set();
+
+function queueCompanyAnalysis(companies) {
+  for (const company of companies || []) {
+    const companyNumber = company.company_number || company.companyNumber;
+    if (!companyNumber || queuedAnalysisCompanies.has(companyNumber) || getSetting(`analysis_${companyNumber}`, null)) continue;
+    analysisQueue.push({
+      company_number: companyNumber,
+      company_name: company.company_name || company.name || `Company ${companyNumber}`,
+      turnover: company.turnover || company.latest_turnover || null,
+    });
+    queuedAnalysisCompanies.add(companyNumber);
+  }
+  analysisStatus.queued = analysisQueue.length;
+  runAnalysisQueue().catch(() => {});
+}
+
+async function runAnalysisQueue() {
+  if (analysisStatus.running) return;
+  analysisStatus.running = true;
+  analysisStatus.last_run = new Date().toISOString();
+
+  while (analysisQueue.length > 0) {
+    const company = analysisQueue.shift();
+    analysisStatus.queued = analysisQueue.length;
+    analysisStatus.current_company = company.company_number;
+
+    try {
+      const filings = getFilingsForCompany(company.company_number, 1);
+      if (!filings.some((f) => f.raw_data) || getSetting(`analysis_${company.company_number}`, null)) {
+        analysisStatus.skipped++;
+      } else {
+        const monitored = getMonitoredCompany(company.company_number);
+        const analysis = await analyseCompany(
+          company.company_number,
+          monitored?.company_name || company.company_name,
+          monitored?.latest_turnover || company.turnover
+        );
+        setSetting(`analysis_${company.company_number}`, analysis);
+        analysisStatus.completed++;
+      }
+    } catch {
+      analysisStatus.errors++;
+    } finally {
+      queuedAnalysisCompanies.delete(company.company_number);
+    }
+  }
+
+  analysisStatus.running = false;
+  analysisStatus.current_company = null;
+  analysisStatus.last_completed = new Date().toISOString();
+}
+
+const monthlyBackfillStatus = {
+  running: false,
+  job_id: null,
+  files_to_process: 0,
+  files_processed: 0,
+  companies_imported: 0,
+  failures: 0,
+  current_file: null,
+  started_at: null,
+  completed_at: null,
+};
+
 async function enrichCompanyNames(companyNumbers, options = {}) {
   if (!isCompaniesHouseConfigured()) return;
   const limit = options.limit || 25;
@@ -357,6 +434,75 @@ async function enrichCompanyNames(companyNumbers, options = {}) {
       // Name enrichment is best-effort and should never block imports.
     }
   }
+}
+
+async function runMonthlyBackfill24Months() {
+  monthlyBackfillStatus.running = true;
+  monthlyBackfillStatus.started_at = new Date().toISOString();
+  monthlyBackfillStatus.completed_at = null;
+  monthlyBackfillStatus.files_processed = 0;
+  monthlyBackfillStatus.companies_imported = 0;
+  monthlyBackfillStatus.failures = 0;
+
+  const monthlyFiles = await getMonthlyZipURLs();
+  const plan = getMonthlyAutoPullPlan(monthlyFiles);
+  const files = plan.filesToProcess;
+  const jobId = `monthly-backfill-${Date.now()}`;
+  monthlyBackfillStatus.job_id = jobId;
+  monthlyBackfillStatus.files_to_process = files.length;
+  createImportJob(jobId, "monthly_backfill_24m", files.length, {
+    latest_periods_checked: plan.filesToCheck.map((f) => f.period),
+  });
+
+  if (files.length === 0) {
+    updateImportJob(jobId, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      total_items: 0,
+      processed_items: 0,
+    });
+    monthlyBackfillStatus.running = false;
+    monthlyBackfillStatus.completed_at = new Date().toISOString();
+    return;
+  }
+
+  for (const file of files) {
+    monthlyBackfillStatus.current_file = file.filename;
+    try {
+      const result = await processZipInChunks(file.url, file.filename, `monthly:${file.period}`, {});
+      monthlyBackfillStatus.files_processed++;
+      monthlyBackfillStatus.companies_imported += result.qualifying || 0;
+      queueCompanyAnalysis(result.companies);
+      enrichCompanyNames(result.companies.map((company) => company.company_number)).catch(() => {});
+
+      updateImportJob(jobId, {
+        status: "running",
+        processed_items: monthlyBackfillStatus.files_processed,
+        imported_items: monthlyBackfillStatus.companies_imported,
+        error_count: monthlyBackfillStatus.failures,
+        metadata: JSON.stringify({
+          stage: "processing",
+          current_file: file.filename,
+          files_to_process: files.length,
+        }),
+      });
+    } catch (err) {
+      monthlyBackfillStatus.failures++;
+      addImportLogEntry(jobId, null, null, "error", `${file.filename}: ${err.message}`);
+    }
+  }
+
+  monthlyBackfillStatus.running = false;
+  monthlyBackfillStatus.current_file = null;
+  monthlyBackfillStatus.completed_at = new Date().toISOString();
+  updateImportJob(jobId, {
+    status: monthlyBackfillStatus.failures > 0 ? "completed" : "completed",
+    completed_at: monthlyBackfillStatus.completed_at,
+    total_items: files.length,
+    processed_items: monthlyBackfillStatus.files_processed,
+    imported_items: monthlyBackfillStatus.companies_imported,
+    error_count: monthlyBackfillStatus.failures,
+  });
 }
 
 // --- Routes ---
@@ -519,6 +665,8 @@ app.get("/api/unified-shortlist", (req, res) => {
       growth_trend: stored?.growth?.trend || null,
       filing_count: c.filing_count || 0,
       latest_filing_date: c.latest_filing_date,
+      has_filing_text: c.has_filing_text === 1,
+      analysis_ready: c.analysis_ready === 1,
       workflow_state: ws.state,
       below_threshold: c.below_threshold === 1,
       scored: !!stored,
@@ -1154,6 +1302,32 @@ app.get("/api/import/bulk/daily", async (_req, res) => {
   }
 });
 
+app.get("/api/import/bulk/backfill-24-months/status", (_req, res) => {
+  res.json({ backfill: monthlyBackfillStatus, analysis: analysisStatus });
+});
+
+app.post("/api/import/bulk/backfill-24-months", (_req, res) => {
+  if (monthlyBackfillStatus.running) {
+    return res.status(409).json({ error: "24-month backfill already running", backfill: monthlyBackfillStatus });
+  }
+
+  runMonthlyBackfill24Months().catch((err) => {
+    monthlyBackfillStatus.running = false;
+    monthlyBackfillStatus.current_file = null;
+    monthlyBackfillStatus.completed_at = new Date().toISOString();
+    monthlyBackfillStatus.failures++;
+    if (monthlyBackfillStatus.job_id) {
+      updateImportJob(monthlyBackfillStatus.job_id, {
+        status: "failed",
+        completed_at: monthlyBackfillStatus.completed_at,
+        metadata: JSON.stringify({ error: err.message }),
+      });
+    }
+  });
+
+  res.status(202).json({ message: "24-month monthly backfill started", backfill: monthlyBackfillStatus });
+});
+
 app.post("/api/import/bulk/process", async (req, res) => {
   const { url, filename } = req.body;
   if (!url || !filename) return res.status(400).json({ error: "url and filename required" });
@@ -1183,6 +1357,7 @@ app.post("/api/import/bulk/process", async (req, res) => {
       addImportLogEntry(jobId, co.company_number, null, "imported",
         `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
     }
+    queueCompanyAnalysis(result.companies);
     enrichCompanyNames(result.companies.map((co) => co.company_number)).catch(() => {});
 
     updateImportJob(jobId, {
@@ -1337,7 +1512,11 @@ app.post("/api/monitor/scheduler/stop", (_req, res) => {
 import { analyseCompany, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
+  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini", analysis: analysisStatus });
+});
+
+app.get("/api/analysis/status", (_req, res) => {
+  res.json({ analysis: analysisStatus });
 });
 
 app.post("/api/llm/analyse", async (req, res) => {
