@@ -1978,6 +1978,11 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     role: person.role || person.title,
     email: person.email,
     linkedin: person.linkedin,
+    notes: person.notes,
+    previous_employer: person.previous_employer,
+    previous_employers: person.previous_employers,
+    experience: person.experience,
+    linkedin_headline: person.linkedin_headline,
     source: "manual",
   }));
   const filingPeople = (analysis?.key_people || []).map((person) => ({ ...person, source: "companies_house_filing" }));
