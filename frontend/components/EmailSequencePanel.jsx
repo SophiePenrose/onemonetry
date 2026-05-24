@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 
 const STATUS_META = {
@@ -65,30 +65,28 @@ CopyButton.propTypes = {
   footer: PropTypes.string,
 };
 
-export default function EmailSequencePanel({ companyId, companyName, stakeholders, keyPeople, motions }) {
+export default function EmailSequencePanel({ companyId, stakeholders, keyPeople }) {
   const [sequences, setSequences] = useState([]);
-  const [templates, setTemplates] = useState({});
   const [showGenerate, setShowGenerate] = useState(false);
   const [expandedSeq, setExpandedSeq] = useState(null);
   const [editingStep, setEditingStep] = useState(null);
-  const [form, setForm] = useState({ name: "", role: "", email: "", motion: "" });
+  const [form, setForm] = useState({ name: "", role: "", email: "" });
   const [generating, setGenerating] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/email/templates").then((r) => r.json()).then((d) => setTemplates(d.templates || {})).catch(() => {});
-    if (companyId) loadSequences();
-  }, [companyId]);
-
-  function loadSequences() {
+  const loadSequences = useCallback(() => {
     fetch(`/api/email/sequences/${encodeURIComponent(companyId)}`)
       .then((r) => r.json())
       .then((d) => setSequences(d.sequences || []))
       .catch(() => {});
-  }
+  }, [companyId]);
+
+  useEffect(() => {
+    if (companyId) loadSequences();
+  }, [companyId, loadSequences]);
 
   async function handleGenerate(e) {
     e.preventDefault();
-    if (!form.name || !form.motion) return;
+    if (!form.name) return;
     setGenerating(true);
     try {
       const res = await fetch("/api/email/generate", {
@@ -99,11 +97,10 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
           stakeholder_name: form.name,
           stakeholder_role: form.role,
           stakeholder_email: form.email,
-          motion: form.motion,
         }),
       });
       if (res.ok) {
-        setForm({ name: "", role: "", email: "", motion: "" });
+        setForm({ name: "", role: "", email: "" });
         setShowGenerate(false);
         loadSequences();
       }
@@ -137,11 +134,10 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
   }
 
   const allPeople = [
-    ...(keyPeople || []).map((p) => ({ ...p, source: "LLM" })),
-    ...(stakeholders || []).map((s) => ({ name: s.name, role: s.role || s.title, source: "Manual" })),
+    ...(keyPeople || []).map((p) => ({ ...p, email: p.email || "", source: "LLM" })),
+    ...(stakeholders || []).map((s) => ({ name: s.name, role: s.role || s.title, email: s.email || "", source: "Manual" })),
   ];
 
-  const availableMotions = Object.keys(templates);
   const inputStyle = { width: "100%", padding: "6px 10px", borderRadius: 4, border: "1px solid #ddd", fontSize: 13, boxSizing: "border-box" };
 
   return (
@@ -162,7 +158,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
       {showGenerate && (
         <form onSubmit={handleGenerate} style={{ background: "#f8f9fb", borderRadius: 6, padding: 14, marginBottom: 14, border: "1px solid #e0e3e8" }}>
           <div style={{ fontSize: 12, color: "#555", marginBottom: 10, fontWeight: 600 }}>
-            Generate a personalised email sequence for a stakeholder
+            Generate a company-specific email sequence for a stakeholder
           </div>
 
           {allPeople.length > 0 && (
@@ -173,7 +169,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                   <button
                     key={idx}
                     type="button"
-                    onClick={() => setForm({ ...form, name: p.name, role: p.role || "" })}
+                    onClick={() => setForm({ ...form, name: p.name, role: p.role || "", email: p.email || "" })}
                     style={{
                       padding: "3px 10px", borderRadius: 12, border: "1px solid #ddd",
                       background: form.name === p.name ? "#0075EB" : "#fff",
@@ -203,17 +199,11 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
             </div>
           </div>
 
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Product Motion *</label>
-            <select style={inputStyle} value={form.motion} onChange={(e) => setForm({ ...form, motion: e.target.value })}>
-              <option value="">Select motion...</option>
-              {availableMotions.map((m) => (
-                <option key={m} value={m}>{m} ({templates[m]?.steps} steps)</option>
-              ))}
-            </select>
+          <div style={{ fontSize: 12, color: "#666", background: "#fff", border: "1px solid #e0e3e8", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+            The sequence will infer the best angle from this company&apos;s analysis, stakeholder role, triggers, and product-fit signals.
           </div>
 
-          <button type="submit" disabled={generating || !form.name || !form.motion} style={{
+          <button type="submit" disabled={generating || !form.name} style={{
             padding: "8px 20px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff",
             fontWeight: 600, fontSize: 13, cursor: generating ? "wait" : "pointer", opacity: generating ? 0.6 : 1,
           }}>
@@ -373,8 +363,6 @@ EditStepForm.propTypes = {
 
 EmailSequencePanel.propTypes = {
   companyId: PropTypes.string.isRequired,
-  companyName: PropTypes.string,
   stakeholders: PropTypes.array,
   keyPeople: PropTypes.array,
-  motions: PropTypes.array,
 };

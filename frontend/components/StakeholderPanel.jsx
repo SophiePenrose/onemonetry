@@ -1,10 +1,23 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 export default function StakeholderPanel({ stakeholders, companyId, onUpdated }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", role: "", email: "", linkedin: "", notes: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [assessment, setAssessment] = useState(null);
+
+  const loadAssessment = useCallback(() => {
+    fetch(`/api/stakeholders/${encodeURIComponent(companyId)}`)
+      .then((res) => res.json())
+      .then(setAssessment)
+      .catch(() => {});
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!companyId) return;
+    loadAssessment();
+  }, [companyId, stakeholders, loadAssessment]);
 
   async function handleAdd(e) {
     e.preventDefault();
@@ -17,6 +30,7 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
       if (res.ok) {
         setForm({ name: "", role: "", email: "", linkedin: "", notes: "" });
         setShowForm(false);
+        loadAssessment();
         if (onUpdated) onUpdated();
       }
     } catch { /* ignore */ }
@@ -27,6 +41,7 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
     if (!confirm("Remove this stakeholder?")) return;
     try {
       await fetch(`/api/company/${encodeURIComponent(companyId)}/stakeholders/${idx}`, { method: "DELETE" });
+      loadAssessment();
       if (onUpdated) onUpdated();
     } catch { /* ignore */ }
   }
@@ -46,6 +61,44 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
           </button>
         )}
       </div>
+
+      {assessment?.stakeholders?.length > 0 && (
+        <div style={{ marginBottom: 14, padding: 12, background: "#f8f9fb", borderRadius: 6, border: "1px solid #e0e3e8" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#333" }}>AI-ranked outreach contacts</div>
+            <span style={{ fontSize: 11, color: assessment.readiness?.ready ? "#0a8754" : "#c27b00", fontWeight: 700 }}>
+              {assessment.readiness?.ready ? "Ready" : "Needs verification"}
+            </span>
+          </div>
+          {assessment.stakeholders.slice(0, 4).map((s) => (
+            <div key={`${s.name}-${s.role}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, padding: "8px 0", borderTop: "1px solid #eceff3" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ color: "#888", fontWeight: 400 }}>({s.role})</span></div>
+                <div style={{ fontSize: 11, color: "#888" }}>
+                  {s.buying_role} · {s.source === "manual" ? "manual contact" : "filing"} · source {Math.round((s.source_confidence || 0) * 100)}%{s.email ? ` · ${s.email}` : ""}
+                </div>
+                {s.category_familiarity?.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#0a8754", marginTop: 2 }}>
+                    Category familiarity: {s.category_familiarity.join(", ")}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: s.confidence_level === "high" ? "#0a8754" : s.confidence_level === "medium" ? "#c27b00" : "#6b7280" }}>{s.final_score}</div>
+                <div style={{ fontSize: 10, color: "#888" }}>{s.confidence_level}</div>
+              </div>
+            </div>
+          ))}
+          {assessment.readiness?.reason && (
+            <div style={{ fontSize: 11, color: "#888", marginTop: 6 }}>{assessment.readiness.reason}</div>
+          )}
+          {assessment.readiness?.multi_threading?.steps?.length > 0 && (
+            <div style={{ fontSize: 11, color: "#555", marginTop: 8, lineHeight: 1.5 }}>
+              <strong>Outreach plan:</strong> {assessment.readiness.multi_threading.steps.join(" ")}
+            </div>
+          )}
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={handleAdd} style={{ background: "#f8f9fb", borderRadius: 6, padding: 14, marginBottom: 14, border: "1px solid #e0e3e8" }}>

@@ -19,6 +19,8 @@ import {
   listImportJobs,
   addImportLogEntry,
   getImportLogs,
+  getCompanyStakeholders,
+  saveCompanyStakeholders,
 } from "./db.js";
 import {
   isCompaniesHouseConfigured,
@@ -32,16 +34,22 @@ import {
   startAutoPull,
   stopAutoPull,
 } from "./daily-autopull.js";
+import { getMonthlyAutoPullPlan } from "./monthly-autopull-planner.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM } from "./scoring-engine.js";
-import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
+import { generateSequence, saveGeneratedSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
 import { generateFullSequence } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
 import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
-import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
+import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany, mergeStakeholderIdentities } from "./stakeholder-scoring.js";
 import { runMigrations } from "./migrations.js";
+import {
+  getAnalysisStatus,
+  queueCompanyAnalysis,
+  resumeAnalysisQueue,
+} from "./analysis-queue.js";
 import {
   runWeeklyMonitorBatch,
   importMonitorListFromCSV,
@@ -60,6 +68,7 @@ import {
   getShortlistCompanies,
   getShortlistCount,
   getMonitoredCompany,
+  updateMonitorCheck,
 } from "./db.js";
 
 const app = express();
@@ -314,6 +323,178 @@ function loadCompanies() {
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
+function getCompanyNumberFromId(id, company = null) {
+  if (company?.company_number) return company.company_number;
+  return id?.startsWith("ch-") ? id.replace("ch-", "") : id;
+}
+
+function canonicalCompanyId(idOrNumber) {
+  return idOrNumber?.startsWith("ch-") ? idOrNumber : `ch-${idOrNumber}`;
+}
+
+function displayCompanyName(name, companyNumber) {
+  return isPlaceholderCompanyName(name, companyNumber) ? "Name lookup needed" : name;
+}
+
+function operationalEntityScore(name = "", source = "", filingText = "") {
+  const haystack = `${name} ${source} ${filingText}`.toLowerCase();
+  let score = 0.5;
+  if (/\b(holdings?|investment|investments|property holding|group holding|spv|nominee|trustee)\b/.test(haystack)) score -= 0.25;
+  if (/\b(dormant|non[- ]trading|shell)\b/.test(haystack)) score -= 0.35;
+  if (/\b(trading|retail|manufactur|logistics|freight|services|operations|ecommerce|software|construction|hospitality|wholesale|distribution|payments?)\b/.test(haystack)) score += 0.15;
+  if (/\b(turnover|revenue|employees|staff|customers|sales|suppliers)\b/.test(haystack)) score += 0.1;
+  return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
+}
+
+function getManualSuppression(companyId, companyNumber = null) {
+  const exclusions = dbGetExclusions();
+  const identifiers = [companyId, companyNumber, companyNumber ? canonicalCompanyId(companyNumber) : null].filter(Boolean);
+  const excluded = identifiers.some((id) => exclusions.excluded_company_ids.includes(id));
+  if (excluded) return { suppressed: true, excluded: true, reason: "Manually excluded" };
+
+  const supp = isSuppressed(companyId);
+  return { ...supp, excluded: false };
+}
+
+function getManualStakeholders(companyId, company = null) {
+  if (company?.stakeholders) return company.stakeholders;
+  return getCompanyStakeholders(companyId);
+}
+
+function saveManualStakeholders(companyId, stakeholders, company = null) {
+  if (company) {
+    company.stakeholders = stakeholders;
+    return "json";
+  }
+  saveCompanyStakeholders(companyId, stakeholders);
+  return "sqlite";
+}
+
+function writeCompaniesFile(companies) {
+  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
+  fs.writeFileSync(filePath, JSON.stringify(companies, null, 2));
+}
+
+function isPlaceholderCompanyName(name, companyNumber) {
+  return !name || name === `Company ${companyNumber}` || /^Company \w+$/i.test(name);
+}
+
+async function ensureCompanyAnalysis(companyNumber, companyName, turnover) {
+  if (!companyNumber) return null;
+  const existing = getSetting(`analysis_${companyNumber}`, null);
+  if (existing) return existing;
+
+  const filings = getFilingsForCompany(companyNumber, 3);
+  if (!filings.some((f) => f.raw_data)) return null;
+
+  const analysis = await analyseCompany(companyNumber, companyName, turnover);
+  if (analysis) setSetting(`analysis_${companyNumber}`, analysis);
+  return analysis;
+}
+
+const monthlyBackfillStatus = {
+  running: false,
+  job_id: null,
+  files_to_process: 0,
+  files_processed: 0,
+  companies_imported: 0,
+  failures: 0,
+  current_file: null,
+  started_at: null,
+  completed_at: null,
+};
+
+async function enrichCompanyNames(companyNumbers, options = {}) {
+  if (!isCompaniesHouseConfigured()) return;
+  const limit = options.limit || 25;
+  const uniqueNumbers = [...new Set((companyNumbers || []).filter(Boolean))].slice(0, limit);
+
+  for (const companyNumber of uniqueNumbers) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (!monitored || !isPlaceholderCompanyName(monitored.company_name, companyNumber)) continue;
+    try {
+      const data = await lookupCompany(companyNumber);
+      if (!data.error && data.name) {
+        updateMonitorCheck(companyNumber, {
+          company_name: data.name,
+          status: data.status || monitored.status,
+        });
+      }
+    } catch {
+      // Name enrichment is best-effort and should never block imports.
+    }
+  }
+}
+
+async function runMonthlyBackfill24Months() {
+  monthlyBackfillStatus.running = true;
+  monthlyBackfillStatus.started_at = new Date().toISOString();
+  monthlyBackfillStatus.completed_at = null;
+  monthlyBackfillStatus.files_processed = 0;
+  monthlyBackfillStatus.companies_imported = 0;
+  monthlyBackfillStatus.failures = 0;
+
+  const monthlyFiles = await getMonthlyZipURLs();
+  const plan = getMonthlyAutoPullPlan(monthlyFiles);
+  const files = plan.filesToProcess;
+  const jobId = `monthly-backfill-${Date.now()}`;
+  monthlyBackfillStatus.job_id = jobId;
+  monthlyBackfillStatus.files_to_process = files.length;
+  createImportJob(jobId, "monthly_backfill_24m", files.length, {
+    latest_periods_checked: plan.filesToCheck.map((f) => f.period),
+  });
+
+  if (files.length === 0) {
+    updateImportJob(jobId, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      total_items: 0,
+      processed_items: 0,
+    });
+    monthlyBackfillStatus.running = false;
+    monthlyBackfillStatus.completed_at = new Date().toISOString();
+    return;
+  }
+
+  for (const file of files) {
+    monthlyBackfillStatus.current_file = file.filename;
+    try {
+      const result = await processZipInChunks(file.url, file.filename, `monthly:${file.period}`, {});
+      monthlyBackfillStatus.files_processed++;
+      monthlyBackfillStatus.companies_imported += result.qualifying || 0;
+      queueCompanyAnalysis(result.companies, { source: "monthly_backfill_24m" });
+      enrichCompanyNames(result.companies.map((company) => company.company_number)).catch(() => {});
+
+      updateImportJob(jobId, {
+        status: "running",
+        processed_items: monthlyBackfillStatus.files_processed,
+        imported_items: monthlyBackfillStatus.companies_imported,
+        error_count: monthlyBackfillStatus.failures,
+        metadata: JSON.stringify({
+          stage: "processing",
+          current_file: file.filename,
+          files_to_process: files.length,
+        }),
+      });
+    } catch (err) {
+      monthlyBackfillStatus.failures++;
+      addImportLogEntry(jobId, null, null, "error", `${file.filename}: ${err.message}`);
+    }
+  }
+
+  monthlyBackfillStatus.running = false;
+  monthlyBackfillStatus.current_file = null;
+  monthlyBackfillStatus.completed_at = new Date().toISOString();
+  updateImportJob(jobId, {
+    status: monthlyBackfillStatus.failures > 0 ? "completed" : "completed",
+    completed_at: monthlyBackfillStatus.completed_at,
+    total_items: files.length,
+    processed_items: monthlyBackfillStatus.files_processed,
+    imported_items: monthlyBackfillStatus.companies_imported,
+    error_count: monthlyBackfillStatus.failures,
+  });
+}
+
 // --- Routes ---
 
 app.get("/api/motions", (_req, res) => {
@@ -407,6 +588,13 @@ app.get("/api/dashboard", (_req, res) => {
   };
 
   const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 });
+  const companiesNeedingNames = topCompanies
+    .filter((c) => isPlaceholderCompanyName(c.company_name, c.company_number))
+    .map((c) => c.company_number);
+  if (companiesNeedingNames.length > 0) {
+    enrichCompanyNames(companiesNeedingNames).catch(() => {});
+  }
+
   for (const c of topCompanies) {
     const t = c.latest_turnover || 0;
     for (const [, bucket] of Object.entries(turnoverBuckets)) {
@@ -436,9 +624,10 @@ app.get("/api/dashboard", (_req, res) => {
 });
 
 app.get("/api/unified-shortlist", (req, res) => {
-  const { limit, offset } = req.query;
+  const { limit, offset, show_suppressed } = req.query;
   const pageLimit = parseInt(limit) || 100;
   const pageOffset = parseInt(offset) || 0;
+  const includeSuppressed = show_suppressed === "true";
 
   const companies = getShortlistCompanies({
     min_turnover: getTurnoverThreshold(),
@@ -448,15 +637,24 @@ app.get("/api/unified-shortlist", (req, res) => {
 
   const totalCount = getShortlistCount(getTurnoverThreshold());
 
+  let excludedCount = 0;
+  let suppressedCount = 0;
+
   const entries = companies.map((c, idx) => {
-    const ws = getCompanyState(c.company_number);
+    const companyId = `ch-${c.company_number}`;
+    const ws = getCompanyState(companyId);
     const segment = guessTurnoverSegment(c.latest_turnover);
     const stored = getStoredScore(c.company_number);
+    const analysisStatusValue = c.analysis_ready === 1 ? "completed" : c.analysis_status;
+    const manualSuppression = getManualSuppression(companyId, c.company_number);
+    const name = displayCompanyName(c.company_name, c.company_number);
+    const opScore = operationalEntityScore(c.company_name, c.source, c.raw_data);
 
     return {
-      id: `ch-${c.company_number}`,
+      id: companyId,
       company_number: c.company_number,
-      name: c.company_name || `Company ${c.company_number}`,
+      name,
+      name_needs_enrichment: name === "Name lookup needed",
       industry: "—",
       turnover: c.latest_turnover,
       employee_count: stored?.employees || 0,
@@ -467,18 +665,36 @@ app.get("/api/unified-shortlist", (req, res) => {
       growth_trend: stored?.growth?.trend || null,
       filing_count: c.filing_count || 0,
       latest_filing_date: c.latest_filing_date,
+      has_filing_text: c.has_filing_text === 1,
+      analysis_ready: c.analysis_ready === 1,
+      analysis_status: analysisStatusValue,
       workflow_state: ws.state,
       below_threshold: c.below_threshold === 1,
       scored: !!stored,
       source: c.source,
+      operational_entity_score: opScore,
+      suppressed: manualSuppression.suppressed,
+      excluded: manualSuppression.excluded,
+      suppression_reason: manualSuppression.reason || null,
       rank: pageOffset + idx + 1,
     };
+  }).filter((entry) => {
+    if (entry.excluded) {
+      excludedCount++;
+      return includeSuppressed;
+    }
+    if (entry.suppressed) {
+      suppressedCount++;
+      return includeSuppressed;
+    }
+    return true;
   });
 
   entries.sort((a, b) => {
     if (a.composite_score !== null && b.composite_score !== null) return b.composite_score - a.composite_score;
     if (a.composite_score !== null) return -1;
     if (b.composite_score !== null) return 1;
+    if (a.operational_entity_score !== b.operational_entity_score) return b.operational_entity_score - a.operational_entity_score;
     return b.turnover - a.turnover;
   });
   entries.forEach((e, i) => { e.rank = pageOffset + i + 1; });
@@ -492,6 +708,8 @@ app.get("/api/unified-shortlist", (req, res) => {
       offset: pageOffset,
       threshold: getTurnoverThreshold(),
       scored_count: entries.filter((e) => e.scored).length,
+      excluded: excludedCount,
+      suppressed: suppressedCount,
     },
   });
 });
@@ -561,7 +779,7 @@ app.get("/api/shortlist", (req, res) => {
   });
 });
 
-app.get("/api/company/:id", (req, res) => {
+app.get("/api/company/:id", async (req, res) => {
   const { id } = req.params;
   const { product_motion } = req.query;
 
@@ -573,15 +791,19 @@ app.get("/api/company/:id", (req, res) => {
     const monitored = getMonitoredCompany(companyNumber);
     if (monitored) {
       const filings = getFilingsForCompany(companyNumber);
+      const analysis = await ensureCompanyAnalysis(companyNumber, monitored.company_name || `Company ${companyNumber}`, monitored.latest_turnover);
       const ws = getCompanyState(id);
       const segment = guessTurnoverSegment(monitored.latest_turnover);
       const chLink = `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`;
+      const displayName = displayCompanyName(monitored.company_name, companyNumber);
+      const manualSuppression = getManualSuppression(`ch-${companyNumber}`, companyNumber);
 
       return res.json({
         company: {
           id: `ch-${companyNumber}`,
           company_number: companyNumber,
-          name: monitored.company_name || `Company ${companyNumber}`,
+          name: displayName,
+          name_needs_enrichment: displayName === "Name lookup needed",
           industry: "—",
           turnover: monitored.latest_turnover,
           employee_count: 0,
@@ -593,6 +815,10 @@ app.get("/api/company/:id", (req, res) => {
           workflow_history: ws.history || [],
           below_threshold: monitored.below_threshold === 1,
           source: monitored.source,
+          suppressed: manualSuppression.suppressed,
+          excluded: manualSuppression.excluded,
+          suppression_reason: manualSuppression.reason || null,
+          operational_entity_score: operationalEntityScore(monitored.company_name, monitored.source, filings[0]?.raw_data),
           filings: filings.map((f) => ({
             date: f.filing_date,
             turnover: f.turnover,
@@ -604,9 +830,9 @@ app.get("/api/company/:id", (req, res) => {
           latest_filing_text: filings[0]?.raw_data || null,
           filing_count: filings.length,
           notes: getSetting(`notes_${id}`, ""),
-          analysis: getSetting(`analysis_${companyNumber}`, null),
+          analysis,
           competitors: [],
-          stakeholders: [],
+          stakeholders: getManualStakeholders(`ch-${companyNumber}`),
           cadence_history: [],
           all_motion_scores: [],
           propensity: { score: 0.3, warmth: "cold", signals: ["Imported from accounts data — no engagement yet"] },
@@ -618,6 +844,7 @@ app.get("/api/company/:id", (req, res) => {
 
   const ws = getCompanyState(id);
   const profile = computeCompanyProfile(company);
+  const analysis = await ensureCompanyAnalysis(company.company_number, company.name, company.turnover);
 
   if (product_motion && VALID_MOTIONS.includes(product_motion)) {
     const fit = company.product_fit[product_motion];
@@ -645,6 +872,7 @@ app.get("/api/company/:id", (req, res) => {
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
+        analysis,
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -678,6 +906,7 @@ app.get("/api/company/:id", (req, res) => {
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
+        analysis,
       },
     });
   }
@@ -694,7 +923,10 @@ app.patch("/api/company/:id/state", (req, res) => {
   const COMPANIES = loadCompanies();
   const company = COMPANIES.find((c) => c.id === id);
   if (!company) {
-    return res.status(404).json({ error: "Company not found" });
+    const companyNumber = getCompanyNumberFromId(id);
+    if (!getMonitoredCompany(companyNumber)) {
+      return res.status(404).json({ error: "Company not found" });
+    }
   }
 
   const current = getCompanyState(id);
@@ -714,6 +946,68 @@ app.patch("/api/company/:id/state", (req, res) => {
     previous_state: current.state,
     new_state,
     allowed_transitions: ALLOWED_TRANSITIONS[new_state],
+    history: updated.history,
+  });
+});
+
+app.post("/api/company/:id/suppress", (req, res) => {
+  const { id } = req.params;
+  const { type = "temporary", reason } = req.body || {};
+  const companyNumber = getCompanyNumberFromId(id);
+  const companyId = canonicalCompanyId(companyNumber);
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id || c.company_number === companyNumber);
+  const monitored = getMonitoredCompany(companyNumber);
+
+  if (!company && !monitored) return res.status(404).json({ error: "Company not found" });
+
+  if (type === "permanent") {
+    const exclusions = dbGetExclusions();
+    const ids = new Set(exclusions.excluded_company_ids || []);
+    ids.add(company?.id || companyId);
+    if (companyNumber) ids.add(companyNumber);
+    dbSetExclusions({ ...exclusions, excluded_company_ids: [...ids] });
+    return res.json({
+      company_id: company?.id || companyId,
+      suppression: { suppressed: true, excluded: true, reason: reason || "Manually excluded" },
+    });
+  }
+
+  const current = getCompanyState(company?.id || companyId);
+  const targetState = type === "hold" ? "held_for_review" : "revisit_later";
+  setCompanyWorkflowState(company?.id || companyId, current.state, targetState, reason || "Manually suppressed");
+  const updated = getCompanyState(company?.id || companyId);
+  res.json({
+    company_id: company?.id || companyId,
+    suppression: { suppressed: true, excluded: false, reason: reason || `Status: ${targetState}` },
+    workflow_state: updated.state,
+    history: updated.history,
+  });
+});
+
+app.delete("/api/company/:id/suppress", (req, res) => {
+  const { id } = req.params;
+  const companyNumber = getCompanyNumberFromId(id);
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id || c.company_number === companyNumber);
+  const companyId = company?.id || canonicalCompanyId(companyNumber);
+  const exclusions = dbGetExclusions();
+  const removeIds = new Set([id, companyId, companyNumber].filter(Boolean));
+  dbSetExclusions({
+    ...exclusions,
+    excluded_company_ids: (exclusions.excluded_company_ids || []).filter((item) => !removeIds.has(item)),
+  });
+
+  const current = getCompanyState(companyId);
+  if (SUPPRESSED_STATES.includes(current.state)) {
+    setCompanyWorkflowState(companyId, current.state, "new_candidate", "Manual suppression removed");
+  }
+
+  const updated = getCompanyState(companyId);
+  res.json({
+    company_id: companyId,
+    suppression: getManualSuppression(companyId, companyNumber),
+    workflow_state: updated.state,
     history: updated.history,
   });
 });
@@ -1098,6 +1392,32 @@ app.get("/api/import/bulk/daily", async (_req, res) => {
   }
 });
 
+app.get("/api/import/bulk/backfill-24-months/status", (_req, res) => {
+  res.json({ backfill: monthlyBackfillStatus, analysis: getAnalysisStatus() });
+});
+
+app.post("/api/import/bulk/backfill-24-months", (_req, res) => {
+  if (monthlyBackfillStatus.running) {
+    return res.status(409).json({ error: "24-month backfill already running", backfill: monthlyBackfillStatus });
+  }
+
+  runMonthlyBackfill24Months().catch((err) => {
+    monthlyBackfillStatus.running = false;
+    monthlyBackfillStatus.current_file = null;
+    monthlyBackfillStatus.completed_at = new Date().toISOString();
+    monthlyBackfillStatus.failures++;
+    if (monthlyBackfillStatus.job_id) {
+      updateImportJob(monthlyBackfillStatus.job_id, {
+        status: "failed",
+        completed_at: monthlyBackfillStatus.completed_at,
+        metadata: JSON.stringify({ error: err.message }),
+      });
+    }
+  });
+
+  res.status(202).json({ message: "24-month monthly backfill started", backfill: monthlyBackfillStatus });
+});
+
 app.post("/api/import/bulk/process", async (req, res) => {
   const { url, filename } = req.body;
   if (!url || !filename) return res.status(400).json({ error: "url and filename required" });
@@ -1127,6 +1447,8 @@ app.post("/api/import/bulk/process", async (req, res) => {
       addImportLogEntry(jobId, co.company_number, null, "imported",
         `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
     }
+    queueCompanyAnalysis(result.companies, { source: "bulk_zip" });
+    enrichCompanyNames(result.companies.map((co) => co.company_number)).catch(() => {});
 
     updateImportJob(jobId, {
       status: "completed",
@@ -1280,7 +1602,11 @@ app.post("/api/monitor/scheduler/stop", (_req, res) => {
 import { analyseCompany, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
+  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini", analysis: getAnalysisStatus() });
+});
+
+app.get("/api/analysis/status", (_req, res) => {
+  res.json({ analysis: getAnalysisStatus() });
 });
 
 app.post("/api/llm/analyse", async (req, res) => {
@@ -1295,6 +1621,7 @@ app.post("/api/llm/analyse", async (req, res) => {
 
   try {
     const analysis = await analyseCompany(company_number, name, turnover);
+    if (analysis) setSetting(`analysis_${company_number}`, analysis);
     res.json({ company_number, company_name: name, analysis });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
@@ -1306,11 +1633,15 @@ app.post("/api/llm/extract", async (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "Missing company_id" });
 
-  const companyNumber = company_id.startsWith("ch-") ? company_id.replace("ch-", "") : company_id;
+  const company = loadCompanies().find((c) => c.id === company_id || c.company_number === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
   const monitored = getMonitoredCompany(companyNumber);
+  const name = monitored?.company_name || company?.name || `Company ${companyNumber}`;
+  const turnover = monitored?.latest_turnover || company?.turnover || null;
 
   try {
-    const analysis = await analyseCompany(companyNumber, monitored?.company_name, monitored?.latest_turnover);
+    const analysis = await analyseCompany(companyNumber, name, turnover);
+    if (analysis) setSetting(`analysis_${companyNumber}`, analysis);
     res.json({ company_id, evidence: analysis });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
@@ -1453,16 +1784,18 @@ app.post("/api/company/:id/stakeholders", (req, res) => {
 
   const COMPANIES = loadCompanies();
   const company = COMPANIES.find((c) => c.id === id);
-  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (!company && !getMonitoredCompany(getCompanyNumberFromId(id))) {
+    return res.status(404).json({ error: "Company not found" });
+  }
 
   const stakeholder = { name, role: role || "", email: email || "", linkedin: linkedin || "", notes: notes || "" };
-  if (!company.stakeholders) company.stakeholders = [];
-  company.stakeholders.push(stakeholder);
+  const stakeholders = getManualStakeholders(id, company);
+  stakeholders.push(stakeholder);
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  const source = saveManualStakeholders(id, stakeholders, company);
+  if (source === "json") writeCompaniesFile(COMPANIES);
 
-  res.status(201).json({ stakeholder, total: company.stakeholders.length });
+  res.status(201).json({ stakeholder, total: stakeholders.length, source });
 });
 
 app.delete("/api/company/:id/stakeholders/:idx", (req, res) => {
@@ -1471,16 +1804,20 @@ app.delete("/api/company/:id/stakeholders/:idx", (req, res) => {
 
   const COMPANIES = loadCompanies();
   const company = COMPANIES.find((c) => c.id === id);
-  if (!company) return res.status(404).json({ error: "Company not found" });
-  if (!company.stakeholders || index < 0 || index >= company.stakeholders.length) {
+  if (!company && !getMonitoredCompany(getCompanyNumberFromId(id))) {
+    return res.status(404).json({ error: "Company not found" });
+  }
+
+  const stakeholders = getManualStakeholders(id, company);
+  if (index < 0 || index >= stakeholders.length) {
     return res.status(404).json({ error: "Stakeholder not found" });
   }
 
-  company.stakeholders.splice(index, 1);
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  stakeholders.splice(index, 1);
+  const source = saveManualStakeholders(id, stakeholders, company);
+  if (source === "json") writeCompaniesFile(COMPANIES);
 
-  res.json({ deleted: true, remaining: company.stakeholders.length });
+  res.json({ deleted: true, remaining: stakeholders.length, source });
 });
 
 app.post("/api/company/:id/competitors", (req, res) => {
@@ -1535,13 +1872,13 @@ app.get("/api/email/templates", (_req, res) => {
 
 app.post("/api/email/generate", async (req, res) => {
   const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
-  if (!company_id || !stakeholder_name || !motion) {
-    return res.status(400).json({ error: "company_id, stakeholder_name, and motion are required" });
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name are required" });
   }
 
-  const companyNumber = company_id.replace("ch-", "");
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
 
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
@@ -1552,23 +1889,47 @@ app.post("/api/email/generate", async (req, res) => {
   if (!company) return res.status(404).json({ error: "Company not found" });
 
   const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
 
-  const sequence = generateSequence({
-    companyId: company_id,
-    companyName: company.name,
-    stakeholderName: stakeholder_name,
-    stakeholderRole: stakeholder_role,
-    stakeholderEmail: stakeholder_email,
-    motion,
-    analysis,
-    turnover: company.turnover,
-    employeeCount: company.employee_count,
-    industry: company.industry,
-  });
+  try {
+    const generated = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director", email: stakeholder_email || null },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: company.merchant_spend || null,
+    });
 
-  if (!sequence) return res.status(400).json({ error: `No template available for motion: ${motion}` });
+    if (generated.error) return res.status(400).json(generated);
 
-  res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+    const sequence = saveGeneratedSequence({
+      companyId: company_id,
+      stakeholderName: stakeholder_name,
+      stakeholderRole: stakeholder_role,
+      stakeholderEmail: stakeholder_email,
+      motion: generated.archetype_name || motion || "Company-specific",
+      steps: generated.steps,
+    });
+
+    res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps, generation: generated });
+  } catch {
+    const sequence = generateSequence({
+      companyId: company_id,
+      companyName: company.name,
+      stakeholderName: stakeholder_name,
+      stakeholderRole: stakeholder_role,
+      stakeholderEmail: stakeholder_email,
+      motion,
+      analysis,
+      turnover: company.turnover,
+      employeeCount: company.employee_count,
+      industry: company.industry,
+    });
+
+    if (!sequence) return res.status(400).json({ error: "Could not generate sequence" });
+    res.status(201).json({ sequence_id: sequence.id, steps: sequence.steps });
+  }
 });
 
 app.get("/api/email/sequences/:companyId", (req, res) => {
@@ -1629,9 +1990,9 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     }
   }
 
-  const companyNumber = company_id.replace("ch-", "");
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
+  const companyNumber = getCompanyNumberFromId(company_id, company);
 
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
@@ -1714,19 +2075,42 @@ app.get("/api/email/active-contacts/:companyId", (req, res) => {
 // --- Stakeholder Assessment ---
 
 app.get("/api/stakeholders/:companyId", (req, res) => {
-  const companyNumber = req.params.companyId.replace("ch-", "");
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === req.params.companyId || c.company_number === req.params.companyId);
+  const companyNumber = getCompanyNumberFromId(req.params.companyId, company);
   const analysis = getSetting(`analysis_${companyNumber}`, null);
   const score = getSetting(`score_${companyNumber}`, null);
 
-  const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === req.params.companyId);
   if (!company) {
     const monitored = getMonitoredCompany(companyNumber);
-    if (monitored) company = { name: monitored.company_name || `Company ${companyNumber}`, turnover: monitored.latest_turnover };
+    if (monitored) {
+      company = {
+        id: `ch-${companyNumber}`,
+        company_number: companyNumber,
+        name: monitored.company_name || `Company ${companyNumber}`,
+        turnover: monitored.latest_turnover,
+        stakeholders: getManualStakeholders(`ch-${companyNumber}`),
+      };
+    }
   }
-  if (!company) company = { name: `Company ${companyNumber}` };
+  if (!company) company = { name: `Company ${companyNumber}`, company_number: companyNumber, stakeholders: [] };
 
-  if (!analysis?.key_people?.length) {
+  const manualPeople = getManualStakeholders(company.id || req.params.companyId, company).map((person) => ({
+    name: person.name,
+    role: person.role || person.title,
+    email: person.email,
+    linkedin: person.linkedin,
+    notes: person.notes,
+    previous_employer: person.previous_employer,
+    previous_employers: person.previous_employers,
+    experience: person.experience,
+    linkedin_headline: person.linkedin_headline,
+    source: "manual",
+  }));
+  const filingPeople = (analysis?.key_people || []).map((person) => ({ ...person, source: "companies_house_filing" }));
+  const people = mergeStakeholderIdentities([...manualPeople, ...filingPeople]);
+
+  if (people.length === 0) {
     return res.json({
       readiness: getOutreachReadiness([]),
       stakeholders: [],
@@ -1739,10 +2123,10 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     company,
     analysis,
     motion: score?.layers?.product_fit?.best_motion || "FX",
-    filingDate: analysis.analysed_at || null,
+    filingDate: analysis?.analysed_at || null,
   };
 
-  const scored = scoreAllStakeholders(analysis.key_people, context);
+  const scored = scoreAllStakeholders(people, context);
   const readiness = getOutreachReadiness(scored);
   const activeContacts = getActiveContactsForCompany(req.params.companyId);
 
@@ -1752,7 +2136,7 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     active_contacts: activeContacts,
     company_name: company.name,
     source: "companies_house_filing",
-    filing_date: analysis.analysed_at,
+    filing_date: analysis?.analysed_at || null,
     primary_motion: context.motion,
     note: "Stakeholders scored on 5 dimensions: decision_authority (0-30), relevance (0-25), reachability (0-20), timing (0-15), influence_network (0-10). Final score = composite × data_confidence.",
   });
@@ -1952,6 +2336,7 @@ app.listen(PORT, () => {
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
   console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
+  resumeAnalysisQueue();
   scheduleWeeklyReport();
   startAutoPull();
   console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);

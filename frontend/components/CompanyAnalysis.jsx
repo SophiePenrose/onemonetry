@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 
 const SEVERITY_COLORS = { high: "#c0392b", medium: "#e67e22", low: "#6b7280" };
@@ -14,12 +14,13 @@ function Badge({ text, bg }) {
 
 Badge.propTypes = { text: PropTypes.string, bg: PropTypes.string };
 
-export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
+export default function CompanyAnalysis({ companyNumber, initialAnalysis, onAnalysisUpdated }) {
   const [analysis, setAnalysis] = useState(initialAnalysis || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const autoRunRef = useRef(false);
 
-  async function runAnalysis() {
+  const runAnalysis = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -31,12 +32,24 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
       if (!res.ok) throw new Error("Analysis failed");
       const data = await res.json();
       setAnalysis(data.analysis);
+      if (onAnalysisUpdated) onAnalysisUpdated(data.analysis);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }
+  }, [companyNumber, onAnalysisUpdated]);
+
+  useEffect(() => {
+    setAnalysis(initialAnalysis || null);
+    autoRunRef.current = false;
+  }, [companyNumber, initialAnalysis]);
+
+  useEffect(() => {
+    if (analysis || loading || error || autoRunRef.current || !companyNumber) return;
+    autoRunRef.current = true;
+    runAnalysis();
+  }, [analysis, loading, error, companyNumber, runAnalysis]);
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
@@ -48,18 +61,20 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
               {analysis.source === "llm" ? `via ${analysis.model}` : analysis.source}
             </span>
           )}
-          <button
-            onClick={runAnalysis}
-            disabled={loading}
-            style={{
-              padding: "6px 16px", borderRadius: 6, border: "none",
-              background: "#0075EB", color: "#fff", fontWeight: 600,
-              fontSize: 13, cursor: loading ? "wait" : "pointer",
-              opacity: loading ? 0.6 : 1,
-            }}
-          >
-            {loading ? "Analysing…" : analysis ? "Re-analyse" : "Analyse Filing"}
-          </button>
+          {(error || analysis?.source === "no_data" || analysis?.source === "no_filing_data") && (
+            <button
+              onClick={runAnalysis}
+              disabled={loading}
+              style={{
+                padding: "6px 16px", borderRadius: 6, border: "none",
+                background: "#0075EB", color: "#fff", fontWeight: 600,
+                fontSize: 13, cursor: loading ? "wait" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              {loading ? "Analysing…" : "Retry analysis"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -67,7 +82,12 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
 
       {!analysis && !loading && !error && (
         <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>
-          Click &quot;Analyse Filing&quot; to extract themes, pain indicators, and opportunities from this company&apos;s accounts filing.
+          Analysing the latest filing automatically…
+        </div>
+      )}
+      {loading && (
+        <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>
+          Analysing the latest filing…
         </div>
       )}
 
@@ -174,4 +194,5 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
 CompanyAnalysis.propTypes = {
   companyNumber: PropTypes.string.isRequired,
   initialAnalysis: PropTypes.object,
+  onAnalysisUpdated: PropTypes.func,
 };

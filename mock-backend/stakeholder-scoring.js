@@ -64,12 +64,40 @@ const CATEGORY_FAMILIAR_EMPLOYERS = [
   "worldremit", "checkout.com", "mollie", "klarna", "square", "paypal",
 ];
 
+const SOURCE_RELIABILITY = {
+  crm: 1.0,
+  manual: 0.9,
+  email_verification: 0.85,
+  linkedin: 0.8,
+  website: 0.7,
+  news: 0.65,
+  job_posting: 0.65,
+  companies_house_filing: 0.55,
+};
+
+const OPERATIONAL_BUYER_ROLES = [
+  "Financial Controller",
+  "Group Financial Controller",
+  "Treasury Manager",
+  "Finance Manager",
+  "Head of Payments",
+  "Head of Procurement",
+];
+
 export function scoreStakeholder(person, context = {}) {
-  const { company, analysis, motion, filingDate, enrichment } = context;
+  const { company, analysis, motion, filingDate } = context;
+  const enrichment = {
+    ...(context.enrichment || {}),
+    email: person.email || context.enrichment?.email,
+    linkedin_active: Boolean(person.linkedin) || context.enrichment?.linkedin_active,
+    linkedin_verified: Boolean(person.linkedin) || context.enrichment?.linkedin_verified,
+  };
 
   const result = {
     name: person.name,
     role: person.role || "Unknown",
+    email: person.email || null,
+    linkedin: person.linkedin || null,
     scores: { decision_authority: 0, relevance: 0, reachability: 0, timing: 0, influence_network: 0 },
     composite_score: 0,
     data_confidence: 0.5,
@@ -80,7 +108,10 @@ export function scoreStakeholder(person, context = {}) {
     needs_verification: true,
     linkedin_search_url: null,
     email_guess: null,
-    source: "companies_house_filing",
+    source: person.source || "companies_house_filing",
+    source_confidence: SOURCE_RELIABILITY[person.source] || SOURCE_RELIABILITY.companies_house_filing,
+    category_familiarity_score: 0,
+    category_familiarity: [],
     source_date: filingDate || null,
   };
 
@@ -131,6 +162,11 @@ export function scoreStakeholder(person, context = {}) {
     relevanceScore = 15;
   }
 
+  if (OPERATIONAL_BUYER_ROLES.some((role) => roleNorm.toLowerCase().includes(role.toLowerCase()))) {
+    relevanceScore = Math.min(relevanceScore + 3, 25);
+    result.flags.push("Operational buyer — likely to research vendors and influence recommendation");
+  }
+
   result.scores.relevance = relevanceScore;
 
   // --- 3. Reachability (0-20) ---
@@ -179,6 +215,16 @@ export function scoreStakeholder(person, context = {}) {
     timingScore = Math.min(timingScore + 3, 15);
   }
 
+  if (hasSignal(analysis, /hiring|headcount|new role|recruit/i)) {
+    timingScore = Math.min(timingScore + 2, 15);
+    result.flags.push("Hiring or org-change signal detected");
+  }
+
+  if (hasSignal(analysis, /private equity|PE-backed|investor|sponsor|portfolio/i) && /cfo|finance director|fd/i.test(roleNorm)) {
+    timingScore = Math.min(timingScore + 3, 15);
+    result.flags.push("PE-backed finance leader — optimisation and cost-control angle likely relevant");
+  }
+
   result.scores.timing = timingScore;
 
   // --- 5. Influence Network (0-10) ---
@@ -203,6 +249,10 @@ export function scoreStakeholder(person, context = {}) {
     result.buying_role = "decision_maker";
   } else if (authorityScore >= 25) {
     result.buying_role = "decision_maker";
+  } else if (/procurement/i.test(roleNorm)) {
+    result.buying_role = "gatekeeper";
+  } else if (/controller|treasury manager|finance manager|payments/i.test(roleNorm)) {
+    result.buying_role = "champion";
   } else if (authorityScore >= 18) {
     result.buying_role = "champion";
   } else {
@@ -212,7 +262,7 @@ export function scoreStakeholder(person, context = {}) {
   result.scores.influence_network = Math.min(influenceScore, 10);
 
   // --- Data Confidence Multiplier ---
-  let dataConfidence = 0.5;
+  let dataConfidence = result.source_confidence;
 
   if (filingDate) {
     const daysSinceFiling = Math.floor((Date.now() - new Date(filingDate).getTime()) / 86400000);
@@ -224,6 +274,14 @@ export function scoreStakeholder(person, context = {}) {
   if (enrichment?.linkedin_verified) dataConfidence += 0.2;
   if (enrichment?.email_verified) dataConfidence += 0.15;
   if (person.name.split(/\s+/).every((p) => p.length > 1)) dataConfidence += 0.05;
+
+  const categoryFamiliarity = detectCategoryFamiliarity(person);
+  result.category_familiarity = categoryFamiliarity;
+  result.category_familiarity_score = Math.min(categoryFamiliarity.length * 5, 15);
+  if (result.category_familiarity_score > 0) {
+    dataConfidence += 0.05;
+    result.flags.push(`Category familiarity: ${categoryFamiliarity.join(", ")}`);
+  }
 
   result.data_confidence = Math.min(dataConfidence, 1.0);
 
@@ -277,20 +335,147 @@ function guessDomain(companyName) {
   return name + ".co.uk";
 }
 
+function hasSignal(analysis, pattern) {
+  const chunks = [
+    analysis?.summary,
+    analysis?.recommended_approach,
+    ...(analysis?.themes || []).map((item) => `${item.theme || ""} ${item.evidence || ""}`),
+    ...(analysis?.pain_indicators || []).map((item) => `${item.pain || ""} ${item.evidence || ""}`),
+  ];
+  return chunks.some((chunk) => pattern.test(chunk || ""));
+}
+
+function detectCategoryFamiliarity(person) {
+  const haystack = [
+    person.current_employer,
+    person.previous_employer,
+    person.previous_employers,
+    person.experience,
+    person.notes,
+    person.linkedin_headline,
+  ].flat().filter(Boolean).join(" ").toLowerCase();
+  if (!haystack) return [];
+  return CATEGORY_FAMILIAR_EMPLOYERS.filter((employer) => haystack.includes(employer));
+}
+
+export function normalizeStakeholderName(name = "") {
+  return name
+    .toLowerCase()
+    .replace(/\b(mr|mrs|ms|miss|dr|sir|dame)\b/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter((part) => part.length > 1)
+    .join(" ")
+    .trim();
+}
+
+function nameParts(name = "") {
+  return normalizeStakeholderName(name).split(/\s+/).filter(Boolean);
+}
+
+export function areLikelySamePerson(a, b) {
+  const aParts = nameParts(a?.name);
+  const bParts = nameParts(b?.name);
+  if (aParts.length === 0 || bParts.length === 0) return false;
+  const aFirst = aParts[0];
+  const bFirst = bParts[0];
+  const aLast = aParts[aParts.length - 1];
+  const bLast = bParts[bParts.length - 1];
+  if (aLast !== bLast) return false;
+  if (aFirst === bFirst) return true;
+  return aFirst[0] === bFirst[0] && Math.min(aFirst.length, bFirst.length) <= 2;
+}
+
+function bestSource(sources = []) {
+  return sources
+    .filter(Boolean)
+    .sort((a, b) => (SOURCE_RELIABILITY[b] || 0) - (SOURCE_RELIABILITY[a] || 0))[0] || "unknown";
+}
+
+export function mergeStakeholderIdentities(people = []) {
+  const merged = [];
+  for (const person of people) {
+    if (!person?.name) continue;
+    const match = merged.find((existing) => areLikelySamePerson(existing, person));
+    if (!match) {
+      merged.push({ ...person, sources: [person.source || "unknown"] });
+      continue;
+    }
+
+    const sources = [...new Set([...(match.sources || []), person.source || "unknown"])];
+    Object.assign(match, {
+      ...match,
+      ...person,
+      name: match.name.length >= person.name.length ? match.name : person.name,
+      role: person.role || match.role,
+      email: person.email || match.email,
+      linkedin: person.linkedin || match.linkedin,
+      notes: [match.notes, person.notes].filter(Boolean).join(" | "),
+      source: bestSource(sources),
+      sources,
+    });
+  }
+  return merged;
+}
+
 export function scoreAllStakeholders(keyPeople, context = {}) {
   if (!keyPeople || keyPeople.length === 0) return [];
 
-  const enrichedContext = { ...context, allPeople: keyPeople };
+  const resolvedPeople = mergeStakeholderIdentities(keyPeople);
+  const enrichedContext = { ...context, allPeople: resolvedPeople };
 
-  return keyPeople
+  return resolvedPeople
     .map((person) => scoreStakeholder(person, enrichedContext))
     .filter((s) => s.confidence_level !== "excluded")
     .sort((a, b) => b.final_score - a.final_score);
 }
 
+export function buildMultiThreadingStrategy(stakeholders) {
+  if (!stakeholders || stakeholders.length === 0) {
+    return {
+      mode: "manual_research",
+      max_same_day: 0,
+      steps: ["Find at least one finance, treasury, payments, or procurement stakeholder before outreach."],
+    };
+  }
+
+  const decisionMaker = stakeholders.find((s) => s.buying_role === "decision_maker");
+  const champion = stakeholders.find((s) => s.buying_role === "champion");
+  const gatekeeper = stakeholders.find((s) => s.buying_role === "gatekeeper");
+
+  if (stakeholders.length === 1) {
+    return {
+      mode: "single_thread",
+      max_same_day: 1,
+      primary: stakeholders[0],
+      steps: ["Use one sequence; validate role and email before sending."],
+    };
+  }
+
+  const steps = [];
+  if (champion) steps.push(`Start with champion: ${champion.name}`);
+  if (decisionMaker) steps.push(`Contact decision maker later with executive/commercial angle: ${decisionMaker.name}`);
+  if (gatekeeper) steps.push(`Use procurement/gatekeeper angle only after commercial interest: ${gatekeeper.name}`);
+  steps.push("Never email more than 2 people at the same company on the same day.");
+  steps.push("Pause parallel outreach after any positive reply.");
+
+  return {
+    mode: stakeholders.length >= 3 ? "multi_thread" : "dual_thread",
+    max_same_day: 2,
+    primary: champion || decisionMaker || stakeholders[0],
+    secondary: [decisionMaker, gatekeeper].filter(Boolean),
+    steps,
+  };
+}
+
 export function getOutreachReadiness(stakeholders) {
   if (!stakeholders || stakeholders.length === 0) {
-    return { ready: false, reason: "No stakeholders identified", action: "Manual LinkedIn research needed" };
+    return {
+      ready: false,
+      reason: "No stakeholders identified",
+      action: "Manual LinkedIn research needed",
+      multi_threading: buildMultiThreadingStrategy([]),
+    };
   }
 
   const highConf = stakeholders.filter((s) => s.confidence_level === "high");
@@ -303,6 +488,7 @@ export function getOutreachReadiness(stakeholders) {
       primary_target: highConf[0],
       secondary_targets: highConf.slice(1).concat(medConf),
       all_targets: stakeholders,
+      multi_threading: buildMultiThreadingStrategy(stakeholders),
       needs_email: !highConf[0].email_guess,
     };
   }
@@ -314,6 +500,7 @@ export function getOutreachReadiness(stakeholders) {
       action: "Verify top contact on LinkedIn, confirm role and email",
       primary_candidate: medConf[0],
       all_targets: stakeholders,
+      multi_threading: buildMultiThreadingStrategy(stakeholders),
     };
   }
 
@@ -322,6 +509,7 @@ export function getOutreachReadiness(stakeholders) {
     reason: "Only low-confidence contacts found",
     action: "Manual research required — Companies House data insufficient",
     all_targets: stakeholders,
+    multi_threading: buildMultiThreadingStrategy(stakeholders),
   };
 }
 

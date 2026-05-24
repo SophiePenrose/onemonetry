@@ -183,6 +183,15 @@ const NEGATIVE_SIGNALS = [
   { pattern: /(?:ceased?\s+trading|closure\s+of\s+(?:the\s+)?(?:business|company|operations))/i, signal: "Ceased trading", weight: -0.5 },
 ];
 
+function scoreOperationalEntity(name = "", text = "") {
+  const haystack = `${name} ${text}`.toLowerCase();
+  let score = 0.5;
+  if (/\b(holdings?|investment|investments|property holding|group holding|spv|nominee|trustee)\b/.test(haystack)) score -= 0.25;
+  if (/\b(dormant|non[- ]trading|shell|ceased trading)\b/.test(haystack)) score -= 0.35;
+  if (/\b(trading|retail|manufactur|logistics|freight|services|operations|ecommerce|software|construction|hospitality|wholesale|distribution|payments?|customers|suppliers|employees|staff)\b/.test(haystack)) score += 0.2;
+  return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
+}
+
 // --- Main scoring functions ---
 
 function scoreMotionFromText(text, motion) {
@@ -349,6 +358,7 @@ export function scoreCompany(companyNumber) {
   const competitorScore = scoreCompetitorContext(competitors);
   const industries = detectIndustry(text);
   const qualSignals = detectQualificationSignals(text);
+  const operationalEntity = scoreOperationalEntity(monitored.company_name, text);
 
   const positiveBoost = qualSignals.positive.reduce((s, sig) => s + sig.weight, 0);
   const negativeImpact = qualSignals.negative.reduce((s, sig) => s + sig.weight, 0);
@@ -371,7 +381,7 @@ export function scoreCompany(companyNumber) {
     competitorScore * SCORING_WEIGHTS.competitor_context
   );
 
-  compositeScore = Math.max(compositeScore + negativeImpact, 0);
+  compositeScore = Math.max(compositeScore + negativeImpact + ((operationalEntity - 0.5) * 0.08), 0);
   compositeScore = Math.round(compositeScore * 100) / 100;
 
   const eligibleMotions = Object.entries(motionScores)
@@ -390,6 +400,7 @@ export function scoreCompany(companyNumber) {
       pain_strength: { score: painScore },
       urgency: { score: urgencyScore, trend: growth.trend, growth_rate: growth.rate },
       competitor_context: { score: competitorScore, detected: competitors },
+      operational_entity: { score: operationalEntity },
     },
     eligible_motions: eligibleMotions,
     all_motion_scores: motionScores,

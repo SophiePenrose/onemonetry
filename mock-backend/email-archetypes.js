@@ -137,7 +137,7 @@ export const COMPETITOR_DISPLACEMENT = {
   Wise: { weakness: "No hedging/forwards, no cards, no acquiring", angle: "Wise is great for one-off transfers. If you're scaling a team, managing cards, hedging exposure, or accepting payments, you need a platform." },
   Ebury: { weakness: "No banking ecosystem, tied to credit lines", angle: "If FX is the only thing you do with Ebury, you might be paying for a broader relationship you don't use. We give you the FX tools plus everyday banking, cards, and spend control." },
   Pleo: { weakness: "Higher pricing, weaker FX, no banking", angle: "Pleo starts at £9.50/user, charges 1.5–2.5% on FX, and doesn't give you the underlying banking. Revolut Business is £5/user for expenses, 0–0.6% on FX after allowance." },
-  Amex: { weakness: "High fees, limited acceptance, no FX/banking", angle: "Amex works for cashback at the cost of acceptance gaps. We give you Visa/Mastercard acceptance, FX savings that usually beat 1% cashback, and unlimited virtual cards for online spend." },
+  Amex: { weakness: "High fees, limited acceptance, no FX/banking", angle: "Amex works for cashback at the cost of acceptance gaps. Revolut Business supports Visa/Mastercard acceptance, FX tools, and virtual cards up to plan limits for online spend." },
 };
 
 export const SECTOR_ANGLES = {
@@ -156,7 +156,7 @@ export const SECTOR_ANGLES = {
 };
 
 export function detectTriggers(company, analysis, score) {
-  const triggers = [];
+  let triggers = [];
 
   if (analysis?.international_exposure?.present && company.turnover) {
     const estimatedFxVolume = company.turnover * (analysis.international_exposure.currencies?.length > 1 ? 0.4 : 0.2);
@@ -219,6 +219,7 @@ export function detectTriggers(company, analysis, score) {
     });
   }
 
+  triggers = triggers.map((trigger) => decayTriggerStrength(trigger));
   triggers.sort((a, b) => {
     const strengthOrder = { high: 0, medium: 1, low: 2 };
     return (strengthOrder[a.strength] || 2) - (strengthOrder[b.strength] || 2);
@@ -238,6 +239,14 @@ export function selectArchetype(triggers, analysis, company) {
     selected_trigger: topTrigger,
     all_triggers: triggers,
   };
+}
+
+export function decayTriggerStrength(trigger, now = new Date()) {
+  const days = trigger?.recency_days ?? trigger?.data?.recency_days;
+  if (days === undefined || days === null) return trigger;
+  if (days > 180) return { ...trigger, strength: "low", decay: "stale" };
+  if (days > 90 && trigger.strength === "high") return { ...trigger, strength: "medium", decay: "cooling" };
+  return { ...trigger, decay: "fresh", evaluated_at: now.toISOString() };
 }
 
 export function getPersonaGuidance(role) {

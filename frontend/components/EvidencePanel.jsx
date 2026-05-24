@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
 const RELEVANCE_COLORS = {
@@ -19,26 +19,29 @@ const SEVERITY_COLORS = {
   low: { bg: "#f3f4f6", color: "#6b7280" },
 };
 
-export default function EvidencePanel({ companyId, motions }) {
-  const [selectedMotion, setSelectedMotion] = useState(motions?.[0]?.motion || null);
-  const [evidence, setEvidence] = useState(null);
+export default function EvidencePanel({ companyId, analysis, onEvidenceUpdated }) {
+  const [evidence, setEvidence] = useState(analysis || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    setEvidence(analysis || null);
+  }, [analysis]);
+
   async function handleExtract() {
-    if (!companyId || !selectedMotion) return;
+    if (!companyId) return;
     setLoading(true);
     setError(null);
-    setEvidence(null);
     try {
       const res = await fetch("/api/llm/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company_id: companyId, product_motion: selectedMotion }),
+        body: JSON.stringify({ company_id: companyId }),
       });
       if (!res.ok) throw new Error("Failed to extract evidence");
       const data = await res.json();
       setEvidence(data.evidence);
+      if (onEvidenceUpdated) onEvidenceUpdated(data.evidence);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -46,14 +49,12 @@ export default function EvidencePanel({ companyId, motions }) {
     }
   }
 
-  const motionOpportunity = evidence?.opportunities?.find(
-    (o) => o.product?.toLowerCase() === selectedMotion?.toLowerCase()
-  );
+  const needsRetry = !evidence || evidence.source === "no_data" || evidence.source === "no_filing_data" || error;
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <h3 style={{ fontSize: 16, margin: 0 }}>AI Evidence Extraction</h3>
+        <h3 style={{ fontSize: 16, margin: 0 }}>Evidence Snippets</h3>
         {evidence?.source && (
           <span style={{ fontSize: 11, color: "#888", background: "#f3f4f6", padding: "2px 8px", borderRadius: 8 }}>
             {evidence.source === "llm" ? `via ${evidence.model}` : evidence.source}
@@ -61,19 +62,14 @@ export default function EvidencePanel({ companyId, motions }) {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <select
-          value={selectedMotion || ""}
-          onChange={(e) => { setSelectedMotion(e.target.value); setEvidence(null); }}
-          style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", fontSize: 13, flex: 1 }}
-        >
-          {(motions || []).map((m) => (
-            <option key={m.motion} value={m.motion}>{m.motion}</option>
-          ))}
-        </select>
+      {needsRetry && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+          <span style={{ color: "#888", fontSize: 13, flex: 1 }}>
+            {error ? "Automatic extraction failed." : "No extracted filing evidence is available yet."}
+          </span>
         <button
           onClick={handleExtract}
-          disabled={loading || !selectedMotion}
+          disabled={loading}
           style={{
             padding: "6px 20px", borderRadius: 6, border: "none",
             background: "#0075EB", color: "#fff", fontWeight: 600,
@@ -81,15 +77,16 @@ export default function EvidencePanel({ companyId, motions }) {
             opacity: loading ? 0.6 : 1,
           }}
         >
-          {loading ? "Extracting…" : "Extract Evidence"}
+          {loading ? "Extracting…" : "Retry extraction"}
         </button>
       </div>
+      )}
 
       {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
       {!evidence && !loading && !error && (
         <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>
-          Select a product motion and click &quot;Extract Evidence&quot; to generate an AI-powered analysis.
+          Filing analysis will appear here automatically once available.
         </div>
       )}
 
@@ -103,23 +100,20 @@ export default function EvidencePanel({ companyId, motions }) {
             </div>
           )}
 
-          {/* Motion-specific opportunity confidence */}
-          {motionOpportunity && (
+          {evidence.opportunities?.length > 0 && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>
-                {selectedMotion} Fit Assessment
-              </div>
-              <div style={{ fontSize: 13, color: "#333", background: "#f8f9fb", padding: "10px 12px", borderRadius: 6 }}>
-                <div style={{ marginBottom: 6 }}>{motionOpportunity.rationale}</div>
-                {(() => {
-                  const cm = CONFIDENCE_META[motionOpportunity.confidence] || CONFIDENCE_META.medium;
-                  return (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: cm.color }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Product Fit Signals</div>
+              {evidence.opportunities.map((o, idx) => {
+                const cm = CONFIDENCE_META[o.confidence] || CONFIDENCE_META.medium;
+                return (
+                  <div key={idx} style={{ fontSize: 13, color: "#333", background: "#f8f9fb", padding: "10px 12px", borderRadius: 6, marginBottom: 8 }}>
+                    <strong>{o.product}</strong>: {o.rationale}
+                    <span style={{ display: "block", marginTop: 4, fontSize: 12, fontWeight: 600, color: cm.color }}>
                       {cm.icon} {cm.label}
                     </span>
-                  );
-                })()}
-              </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -201,5 +195,6 @@ export default function EvidencePanel({ companyId, motions }) {
 
 EvidencePanel.propTypes = {
   companyId: PropTypes.string.isRequired,
-  motions: PropTypes.array,
+  analysis: PropTypes.object,
+  onEvidenceUpdated: PropTypes.func,
 };

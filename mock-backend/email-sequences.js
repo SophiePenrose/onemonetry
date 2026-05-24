@@ -48,11 +48,11 @@ const SEQUENCE_TEMPLATES = {
         subject_template: "Quick question on {{company}}'s international payments",
         body_template: `Hi {{first_name}},
 
-I noticed {{company}} has significant international operations{{international_detail}}. I wanted to reach out because we're helping similar mid-market businesses reduce their FX costs by 60-80% vs traditional banks.
+I noticed {{company}} has international operations{{international_detail}}. That is often the point where finance teams start benchmarking FX against interbank rates during market hours within plan allowance.
 
 {{pain_hook}}
 
-Would you be open to a 15-minute call to see if there's a fit? Happy to share a quick comparison based on your likely currency flows.
+Does it make sense to compare the assumptions against your current setup?
 
 Best,
 {{sender_name}}`,
@@ -62,13 +62,13 @@ Best,
         subject_template: "Re: Quick question on {{company}}'s international payments",
         body_template: `Hi {{first_name}},
 
-Just following up on my note from earlier this week. I appreciate you're busy, so I'll keep this brief.
+Adding one useful benchmark from the filing angle.
 
-We recently helped a {{industry}} business of similar size save over £{{estimated_savings}} annually on FX alone — interbank rates with no hidden markups.
+For {{industry}} companies at this size, the first question is usually whether FX is visible enough to benchmark properly against interbank pricing during market hours within plan allowance.
 
 {{competitor_angle}}
 
-Would a quick 10-minute overview be useful? I can share relevant case studies from your sector.
+Worth seeing the comparison framework?
 
 Best,
 {{sender_name}}`,
@@ -104,11 +104,11 @@ Best,
 
 I came across {{company}}'s accounts and noticed your international operations{{international_detail}}. With currency volatility where it is, I imagine budget certainty on overseas payments is important.
 
-We offer FX forwards at 0.8% markup — no credit line needed, no minimum contract — which is typically 50-70% cheaper than what traditional brokers charge.
+Revolut Business supports FX forwards at 0.8% markup on GBP/EUR/USD, without asking you to move the credit relationship.
 
 {{pain_hook}}
 
-Would it be worth 15 minutes to explore whether forward cover could protect your margins without the usual bank overheads?
+Would a short comparison of forward cover options be useful?
 
 Best,
 {{sender_name}}`,
@@ -118,11 +118,11 @@ Best,
         subject_template: "Re: {{company}} — protecting margins on international payments",
         body_template: `Hi {{first_name}},
 
-Quick follow-up — I wanted to share that we've recently onboarded several {{industry}} businesses who were paying 2-3% on forwards through their existing bank.
+Adding one practical point from similar {{industry}} conversations.
 
-The switch typically takes less than a week, and most clients see the rate improvement immediately on their next batch of payments.
+Many teams keep their bank credit line where it is and benchmark only the FX execution layer first.
 
-Happy to walk you through how it works in practice?
+Worth seeing how that parallel setup works?
 
 Best,
 {{sender_name}}`,
@@ -144,15 +144,14 @@ Best,
 
 With {{employee_count}}+ employees at {{company}}, I imagine managing expenses, subscriptions, and team spending is a meaningful operational headache.
 
-We offer unlimited virtual and physical corporate cards with:
+Revolut Business supports corporate card controls with:
 • Real-time spend tracking per card, team, and department
 • Instant freeze/unfreeze and per-card limits
-• No personal guarantees or credit checks
-• 1.7% cashback on qualifying spend
+• Up to 200 virtual cards, depending on plan
 
 {{pain_hook}}
 
-Would you be open to seeing how this works for a team your size?
+Does it make sense to compare this with your current expense flow?
 
 Best,
 {{sender_name}}`,
@@ -162,11 +161,11 @@ Best,
         subject_template: "Re: {{company}} — corporate cards for {{employee_count}}+ staff?",
         body_template: `Hi {{first_name}},
 
-Just circling back. One thing finance teams consistently tell us is that the visibility alone — seeing every transaction in real-time rather than waiting for month-end statements — changes how they manage spend.
+Adding one operational point. Finance teams often tell us that seeing card spend in real time, rather than waiting for month-end statements, changes how they manage controls.
 
-For a business with {{company}}'s operational complexity, that level of control often saves significant admin time on top of the direct cost savings.
+For a business with {{company}}'s operational complexity, that can make approvals and reconciliation easier to manage.
 
-Worth a 10-minute demo?
+Worth comparing against your current process?
 
 Best,
 {{sender_name}}`,
@@ -216,7 +215,7 @@ I noticed {{company}} accepts card payments. Quick question — how long does yo
 
 Most processors (Stripe, Worldpay, etc.) take 3-7 days. We settle in 24 hours, which for a business doing {{company}}'s volume, can meaningfully improve cash flow.
 
-Combined with transparent pricing (no hidden fees, commercial card surcharges absorbed), it's typically 20-30% cheaper than existing setups.
+Revolut Business offers 24-hour settlement, which can reduce the amount of working capital sitting in the settlement pipeline.
 
 {{pain_hook}}
 
@@ -233,10 +232,20 @@ export function getSequenceTemplates() {
   return Object.keys(SEQUENCE_TEMPLATES);
 }
 
+function inferMotion(motion, analysis) {
+  if (motion && SEQUENCE_TEMPLATES[motion]) return motion;
+  const opportunity = analysis?.opportunities?.find((o) => SEQUENCE_TEMPLATES[o.product]);
+  if (opportunity) return opportunity.product;
+  if (analysis?.international_exposure?.present) return "FX";
+  if (analysis?.pain_indicators?.some((p) => /expense|spend|card/i.test(`${p.pain} ${p.evidence}`))) return "Cards";
+  return "FX";
+}
+
 export function generateSequence(params) {
   const { companyId, companyName, stakeholderName, stakeholderRole, motion, analysis, turnover, employeeCount, industry } = params;
 
-  const template = SEQUENCE_TEMPLATES[motion];
+  const selectedMotion = inferMotion(motion, analysis);
+  const template = SEQUENCE_TEMPLATES[selectedMotion];
   if (!template) return null;
 
   const firstName = stakeholderName?.split(" ")[0] || "there";
@@ -251,7 +260,7 @@ export function generateSequence(params) {
     : "";
 
   const competitorAngle = analysis?.competitors_detected?.length > 0
-    ? `I understand you may currently work with ${analysis.competitors_detected[0].name}. Many of our clients switched from similar providers and typically see ${analysis.competitors_detected[0].displacement_angle?.toLowerCase() || "meaningful improvement"}.`
+    ? `I understand you may currently work with ${analysis.competitors_detected[0].name}. It may be worth comparing the specific workflow where that provider is strongest against where Revolut Business is approved to support the same need.`
     : "Many finance teams we speak to are surprised by how much they're overpaying on what feels like a commodity service.";
 
   const estimatedSavings = turnover ? Math.round((turnover * 0.003) / 1000) + "K" : "50K+";
@@ -289,7 +298,7 @@ export function generateSequence(params) {
   db.prepare(`
     INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
     VALUES (?, ?, ?, ?, ?, ?, 'draft')
-  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, params.stakeholderEmail || null, motion);
+  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, params.stakeholderEmail || null, selectedMotion);
 
   for (const step of steps) {
     db.prepare(`
@@ -299,6 +308,39 @@ export function generateSequence(params) {
   }
 
   return { id: sequenceId, steps };
+}
+
+export function saveGeneratedSequence(params) {
+  const {
+    companyId,
+    stakeholderName,
+    stakeholderRole,
+    stakeholderEmail,
+    motion,
+    steps,
+  } = params;
+  const sequenceId = `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sequenceLabel = motion || "Company-specific";
+
+  db.prepare(`
+    INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'draft')
+  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, stakeholderEmail || null, sequenceLabel);
+
+  for (const step of steps || []) {
+    db.prepare(`
+      INSERT INTO email_steps (sequence_id, step_number, subject, body, send_delay_days, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(
+      sequenceId,
+      step.step_number,
+      step.subject,
+      step.body,
+      step.send_delay_days || 0
+    );
+  }
+
+  return { id: sequenceId, steps: steps || [] };
 }
 
 export function getSequencesForCompany(companyId) {

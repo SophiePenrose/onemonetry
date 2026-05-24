@@ -7,10 +7,28 @@ import { validateEmail, APPROVED_CLAIMS, isCompanyExcluded } from "./email-qc.js
 import { detectTriggers, selectArchetype, getPersonaGuidance, getSectorAngle, COMPETITOR_DISPLACEMENT } from "./email-archetypes.js";
 import { SYSTEM_PROMPT, selectInferencePattern, detectAccountHealth } from "./email-system-prompt.js";
 import { getSetting } from "./db.js";
+import { buildOutboundIntelligence } from "./outbound-intelligence.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+function mandatoryFooter(senderName = "[Your Name]") {
+  return `${senderName}
+Account Executive | Revolut Business
+revolut.com/business
+
+To manage your sales outreach preferences or opt out, reply with your preference.
+Any information provided does not constitute financial, investment, or trading advice.`;
+}
+
+function withMandatoryFooter(body, footer) {
+  const cleanBody = (body || "").trim();
+  const cleanFooter = (footer || "").trim();
+  const required = cleanFooter || mandatoryFooter();
+  if (/sales outreach preferences|does not constitute financial/i.test(cleanBody)) return cleanBody;
+  return `${cleanBody}\n\n${required}`;
+}
 
 export async function generateLLMEmail(params) {
   const { company, contact, analysis, score, archetype, trigger, senderName, stepNumber, totalSteps } = params;
@@ -26,8 +44,9 @@ export async function generateLLMEmail(params) {
     : null;
   const inferenceData = selectInferencePattern(company, analysis);
   const accountHealth = detectAccountHealth(analysis, score);
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger });
 
-  const enrichedParams = { ...params, inferenceData, accountHealth };
+  const enrichedParams = { ...params, inferenceData, accountHealth, outboundIntelligence };
   const userPrompt = buildUserPrompt(enrichedParams, persona, sector, displacement);
 
   try {
@@ -57,20 +76,22 @@ export async function generateLLMEmail(params) {
     const cleaned = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
     const parsed = JSON.parse(cleaned);
 
+    const body = withMandatoryFooter(parsed.body, parsed.footer || mandatoryFooter(senderName));
     const qcResult = validateEmail(
-      { subject: parsed.subject, body: parsed.body },
+      { subject: parsed.subject, body },
       { isInitialOutreach: stepNumber === 1 }
     );
 
     return {
       subject: parsed.subject,
-      body: parsed.body,
+      body,
       archetype: archetype?.id || "diagnostic_filing",
       trigger_type: trigger?.type || null,
       qc_score: qcResult.score,
       qc_pass: qcResult.pass,
       qc_issues: qcResult.issues,
       metrics: qcResult.metrics,
+      outbound_intelligence: outboundIntelligence,
       claims_used: parsed.claims_used || [],
       disclaimers_needed: parsed.disclaimers_needed || [],
       source: "llm",
@@ -241,10 +262,30 @@ This is how an insider would describe their situation. Adapt the language to mat
 Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sensitive — do NOT lead with loss. Focus on controllable costs." : params.accountHealth === "post_acquisition" ? "Frame around integration and consolidation opportunity." : params.accountHealth === "healthy_growing" ? "Be confident and forward-looking." : ""}`);
   }
 
+  if (params.outboundIntelligence) {
+    const { why_now, emotional_context, internal_politics } = params.outboundIntelligence;
+    parts.push(`\nWHY NOW / URGENCY:
+- Urgency: ${why_now.urgency} (${why_now.score}/100)
+- Reason: ${why_now.reason}
+- If urgency is cold, use nurture/benchmark language rather than urgent CTA.`);
+
+    parts.push(`\nEMOTIONAL CONTEXT:
+- State: ${emotional_context.state}
+- Tone: ${emotional_context.tone}`);
+
+    if (internal_politics.hints.length > 0) {
+      parts.push(`\nINTERNAL POLITICS / SWITCHING FRICTION:
+${internal_politics.hints.map((hint) => `- ${hint}`).join("\n")}`);
+    }
+  }
+
   parts.push(`\nSender name: ${params.senderName || "[Your Name]"}`);
   parts.push(`\nIMPORTANT REMINDERS:
 - Savings estimates MUST include caveat: "(based on estimated FX volume from filed accounts; actual savings depend on your current provider's rates and would require a brief review to confirm)"
 - Do NOT merely cite data. SYNTHESISE it into an insight about their business.
+- Calibrate uncertainty. Use "often", "typically", "may", "suggests", "worth checking" for inferred pain. Do not write as if inferred internal dynamics are facts.
+- Keep it impressive, not invasive. Do not reference private-feeling tracking such as "we can see your customers" or named internal politics.
+- Avoid over-polish: use natural, concise AE language rather than a perfect marketing paragraph.
 - The first sentence must make the prospect think "how do they know that?"
 - Use industry-specific terminology (not generic business language)
 - End with a genuine question, not a meeting request`);
@@ -254,7 +295,7 @@ Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sen
 }
 
 function generateFallbackEmail(params) {
-  const { company, contact, archetype, stepNumber, totalSteps, senderName } = params;
+  const { company, contact, archetype, stepNumber, totalSteps, senderName, analysis, trigger } = params;
   const firstName = contact.name?.split(" ")[0] || "there";
   const name = senderName || "[Your Name]";
 
@@ -262,26 +303,29 @@ function generateFallbackEmail(params) {
 
   if (stepNumber === 1) {
     subject = `${company.name} & Revolut`;
-    body = `Hi ${firstName},\n\nI came across ${company.name}'s latest filing and noticed your international operations. At your turnover, there's often meaningful FX cost sitting in the payment flow that compresses significantly at interbank rates (during market hours within plan allowance).\n\nWould it make sense to compare your current rates against what we're seeing for similar businesses?\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\n${company.name}'s latest filing points to international activity, which often makes FX cost harder to see until year-end.\n\nRevolut Business can help finance teams compare that flow against interbank FX during market hours within plan allowance, without asking them to move credit relationships.\n\nDoes it make sense to compare the methodology against your current setup?`;
   } else if (stepNumber === totalSteps) {
     subject = `Closing the loop — ${company.name}`;
-    body = `Hi ${firstName},\n\nHaven't heard back, so I'll assume the timing isn't right.\n\nIf international payments or FX becomes a priority in the next few months, my line is open. Either way, wishing you and the team well.\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\nI'll assume timing is not right for now.\n\nIf international payments or FX becomes a priority later this year, the filing benchmark may still be useful as a reference point.\n\nEither way, wishing you and the team well.`;
   } else {
     subject = `Re: ${company.name} & Revolut`;
-    body = `Hi ${firstName},\n\nAdding a quick data point — businesses at ${company.name}'s size that move to interbank FX pricing (during market hours within plan allowance) typically see their payment costs compress by a meaningful amount.\n\nHappy to share a specific comparison if useful?\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\nAdding one useful benchmark: when finance teams review FX after filing accounts, the first gap is usually visibility rather than rate.\n\nA simple comparison against interbank FX during market hours within plan allowance can show whether there is anything worth changing.\n\nWorth seeing the assumptions?`;
   }
 
-  const qcResult = validateEmail({ subject, body }, { isInitialOutreach: stepNumber === 1 });
+  const bodyWithFooter = withMandatoryFooter(body, mandatoryFooter(name));
+  const qcResult = validateEmail({ subject, body: bodyWithFooter }, { isInitialOutreach: stepNumber === 1 });
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger });
 
   return {
     subject,
-    body,
+    body: bodyWithFooter,
     archetype: archetype?.id || "diagnostic_filing",
     trigger_type: null,
     qc_score: qcResult.score,
     qc_pass: qcResult.pass,
     qc_issues: qcResult.issues,
     metrics: qcResult.metrics,
+    outbound_intelligence: outboundIntelligence,
     claims_used: [],
     disclaimers_needed: [2],
     source: "fallback",
@@ -298,6 +342,7 @@ export async function generateFullSequence(params) {
 
   const triggers = detectTriggers(company, analysis, score);
   const archetype = selectArchetype(triggers, analysis, company);
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger: triggers[0] || null });
   const senderName = getSetting("sender_name", "[Your Name]");
 
   const cadence = determineCadence(triggers, contact, merchantSpend);
@@ -333,6 +378,7 @@ export async function generateFullSequence(params) {
     cadence,
     steps,
     exclusion_check: { excluded: false },
+    outbound_intelligence: outboundIntelligence,
     merchant_spend_included: !!merchantSpend,
   };
 }
@@ -342,11 +388,11 @@ function determineCadence(triggers, contact, merchantSpend) {
 
   let cadence;
   if (hasHighTrigger) {
-    cadence = { steps: 4, delays: [0, 3, 7, 12], strategy: "aggressive" };
+    cadence = { steps: 5, delays: [0, 3, 6, 10, 15], strategy: "high_trigger_multithread_ready" };
   } else if (triggers.some((t) => t.strength === "medium")) {
-    cadence = { steps: 3, delays: [0, 4, 10], strategy: "standard" };
+    cadence = { steps: 4, delays: [0, 3, 7, 15], strategy: "standard_value_add" };
   } else {
-    cadence = { steps: 3, delays: [0, 5, 12], strategy: "nurture" };
+    cadence = { steps: 4, delays: [0, 5, 12, 21], strategy: "nurture_insight_first" };
   }
 
   if (merchantSpend && merchantSpend.monthly_volume > 0) {

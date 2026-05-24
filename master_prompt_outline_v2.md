@@ -2,13 +2,13 @@
 
 ## 1. Purpose
 
-This app is designed to help a Revolut Business Mid-Market account executive identify and prioritise the best companies to contact each week. It should convert a very large universe of companies into a manageable shortlist by scoring them on product fit, commercial relevance, timing, competitor context, and response likelihood.
+This app is designed as a personal-use outbound intelligence and drafting copilot for a single Revolut Business Mid-Market account executive. It should help identify and prioritise UK mid-market companies, then support human-reviewed outreach drafting and YAMM campaign preparation. It should convert a very large universe of companies into a manageable shortlist by scoring them on product fit, commercial relevance, timing, competitor context, and response likelihood.
 
 The score should represent prospecting priority, not company quality in the abstract. A high score means the account is likely to be a good use of time now because it is relevant, commercially meaningful, and actionable.
 
 ## 2. Core output
 
-The app should produce a weekly workspace, with the top 100 companies ranked by priority. It should also maintain historical weekly reports, current/live outreach state, and company-level history so the user can see how accounts moved through the system over time.
+The app should produce a workspace, with priority companies ranked by relevance. It should also maintain historical reports, draft outreach state, and company-level history so the user can see how accounts moved through the personal workflow over time.
 
 The app should show a readable explanation of why each company scored where it did, including evidence snippets and the product motion or motions most relevant to that account.
 
@@ -30,7 +30,7 @@ The app should use a layered scoring model rather than a single opaque score. Su
 - Pain strength.
 - Urgency or response propensity.
 - Competitor context.
-- Proprietary boosts.
+- Approved public/commercial enrichment boosts.
 - Workflow suppression or exclusion.
 
 The final score should be computed in application logic from those layers. The LLM, if used, should extract evidence and score rubric criteria, but not own the total score by itself.
@@ -83,9 +83,9 @@ Competitor context should help explain why an account is or is not attractive, b
 
 ## 11. Exclusions and suppression
 
-The app should exclude or suppress accounts that are not eligible, including prohibited industries, already closed-won accounts, or accounts that should not be prospecting targets for other operational reasons.
+The app should exclude or suppress accounts that are not eligible, including prohibited industries, manually excluded accounts, or accounts that should not be prospecting targets for other operational reasons.
 
-It should also support waiting or review states for accounts held by other account executives or temporarily unavailable because of CRM ownership or closed-lost timing.
+It should also support waiting or review states for accounts the user has manually held, but it should not integrate with internal CRM ownership systems or Salesforce.
 
 ## 12. Workflow states
 

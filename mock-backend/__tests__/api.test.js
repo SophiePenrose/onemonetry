@@ -65,19 +65,28 @@ describe("API endpoints", () => {
     it("returns companies sorted by combined score descending", async () => {
       const { data } = await fetchJSON("/api/unified-shortlist");
       for (let i = 1; i < data.companies.length; i++) {
-        assert.ok(data.companies[i - 1].combined_score >= data.companies[i].combined_score);
+        const prev = data.companies[i - 1];
+        const current = data.companies[i];
+        if (prev.composite_score !== null && current.composite_score !== null) {
+          assert.ok(prev.composite_score >= current.composite_score);
+        } else if (prev.composite_score === null && current.composite_score === null) {
+          assert.ok(prev.turnover >= current.turnover);
+        } else {
+          assert.ok(prev.composite_score !== null);
+        }
       }
     });
   });
 
   describe("GET /api/dashboard", () => {
-    it("returns pipeline, motion summary, and active prospects", async () => {
+    it("returns pipeline, turnover distribution, monitor stats, and top companies", async () => {
       const { status, data } = await fetchJSON("/api/dashboard");
       assert.equal(status, 200);
       assert.equal(typeof data.total_companies, "number");
       assert.ok(data.pipeline.new_candidate);
-      assert.ok(data.motion_summary.FX);
-      assert.ok(Array.isArray(data.active_prospects));
+      assert.ok(Object.values(data.turnover_distribution).every((bucket) => typeof bucket.count === "number"));
+      assert.ok(data.monitor_stats);
+      assert.ok(Array.isArray(data.top_companies));
     });
   });
 

@@ -29,11 +29,19 @@ const FORBIDDEN_PHRASES = [
   { pattern: /save\s+thousands/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /save\s+millions/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /60[- ]?80%\s+cheaper/i, violation: "Unapproved claim (not in approved library)", deduction: 25 },
+  { pattern: /\b(?:solution|innovative|cutting[- ]edge|state[- ]of[- ]the[- ]art)\b/i, violation: "Unapproved sales language", deduction: 25 },
+  { pattern: /\b(?:free|guarantee|guaranteed|act\s+now|100%)\b/i, violation: "Spam or absolute language", deduction: 25 },
+  { pattern: /\{\{\s*(?:first_?name|job_?title|company_?name|company)\s*\}\}/i, violation: "Mail merge placeholder leaked", deduction: 25 },
+  { pattern: /\b(?:daughter|son|child|school|moved\s+from|moved\s+to|home address|where you live)\b/i, violation: "Creepy personal detail", deduction: 25 },
+  { pattern: /\b(?:tomorrow|today)\s+at\s+\d{1,2}(?::\d{2})?\s?(?:am|pm)?\b/i, violation: "Aggressive calendar ask", deduction: 25 },
+  { pattern: /\b30[- ]?minute\s+(?:demo|call|meeting)\b/i, violation: "Aggressive demo ask", deduction: 25 },
 ];
 
 const MINOR_DEDUCTIONS = [
   { check: (email, meta) => meta.isInitialOutreach && !email.body.match(/revolut\s+business/i), issue: "No RB explanation in initial outreach", deduction: 15 },
   { check: (email) => !email.body.match(/revolut\.com|revolut\.business/i) && !email.body.match(/\[.*link.*\]/i), issue: "Missing link to Revolut Business website", deduction: 15 },
+  { check: (email) => !email.body.match(/opt\s*out|sales outreach preferences|unsubscribe/i), issue: "Missing opt-out / sales preferences footer", deduction: 25 },
+  { check: (email) => !email.body.match(/does not constitute financial/i), issue: "Missing financial advice disclaimer", deduction: 25 },
   { check: (email) => email.body.match(/just\s+(?:checking|following)\s+(?:in|up)(?!\s+on\s+(?:a|the|my)\s+\w+)/i), issue: "Generic follow-up without value-add", deduction: 15 },
   { check: (email) => email.body.match(/i\s+never\s+heard\s+back/i), issue: "Guilt language", deduction: 15 },
   { check: (email) => email.body.match(/sorry\s+to\s+(?:disturb|bother)/i), issue: "Apologetic opener", deduction: 15 },
@@ -45,6 +53,11 @@ const MINOR_DEDUCTIONS = [
 
 const STRUCTURAL_CHECKS = [
   { check: (email) => wordCount(email.body) > 200, issue: "Body exceeds 200 words (abandonment cliff)", deduction: 10 },
+  { check: (email, meta) => meta.isInitialOutreach && (wordCount(email.body) < 50 || wordCount(email.body) > 150), issue: "Initial outreach outside 50–150 word range", deduction: 10 },
+  { check: (email) => {
+    const words = (email.subject || "").split(/\s+/).filter(Boolean).length;
+    return words > 0 && (words < 3 || words > 7);
+  }, issue: "Subject line outside 3–7 word range", deduction: 5 },
   { check: (email) => email.subject && email.subject.length > 50, issue: "Subject line too long (>50 chars, mobile truncation)", deduction: 5 },
   { check: (email) => (email.body.match(/!/g) || []).length > 1, issue: "Excessive exclamation marks", deduction: 5 },
   { check: (email) => email.body.match(/\bDear\b/i), issue: "Forbidden salutation (Dear)", deduction: 10 },
@@ -54,6 +67,44 @@ const STRUCTURAL_CHECKS = [
 
 function wordCount(text) {
   return (text || "").split(/\s+/).filter(Boolean).length;
+}
+
+const UNCERTAINTY_TERMS = /\b(often|usually|typically|may|might|could|suggests|appears|in our experience|one pattern|worth checking|if relevant)\b/i;
+const OVERCERTAIN_INFERENCE = /\b(this means|this proves|you are|you have|you need|clearly|definitely|without doubt)\b/i;
+const INVASIVE_PHRASES = /\b(we know|we tracked|we can see your customers|your customers are already revolut users|we saw your customers|daughter|son|school|moved from|moved to|where you live)\b/i;
+
+export function assessInferenceSafety(email) {
+  const body = email.body || "";
+  const issues = [];
+  let score = 100;
+
+  if (OVERCERTAIN_INFERENCE.test(body)) {
+    issues.push({ issue: "Over-certain inference; use probabilistic language", deduction: 15 });
+    score -= 15;
+  }
+
+  if (INVASIVE_PHRASES.test(body)) {
+    issues.push({ issue: "Potentially creepy or invasive data reference", deduction: 25 });
+    score -= 25;
+  }
+
+  const hasInference = /\b(suggests|indicates|creates|points to|usually|typically|often|pattern)\b/i.test(body);
+  if (hasInference && !UNCERTAINTY_TERMS.test(body)) {
+    issues.push({ issue: "Inference lacks uncertainty calibration", deduction: 10 });
+    score -= 10;
+  }
+
+  const hasPreciseMoney = /£\s?\d+(?:[,.]\d+)?\s?(?:k|m|K|M|000)?\b/.test(body);
+  if (hasPreciseMoney && !/estimate|estimated|based on|actual|would require|assumption|methodology/i.test(body)) {
+    issues.push({ issue: "Precise monetary inference lacks caveat", deduction: 20 });
+    score -= 20;
+  }
+
+  return {
+    score: Math.max(score, 0),
+    level: score >= 85 ? "safe" : score >= 65 ? "review" : "unsafe",
+    issues,
+  };
 }
 
 export function validateEmail(email, meta = {}) {
@@ -75,10 +126,16 @@ export function validateEmail(email, meta = {}) {
   }
 
   for (const rule of STRUCTURAL_CHECKS) {
-    if (rule.check(email)) {
+    if (rule.check(email, meta)) {
       issues.push({ type: "structural", violation: rule.issue, deduction: rule.deduction });
       score -= rule.deduction;
     }
+  }
+
+  const inferenceSafety = assessInferenceSafety(email);
+  for (const issue of inferenceSafety.issues) {
+    issues.push({ type: "inference_safety", violation: issue.issue, deduction: issue.deduction });
+    score -= issue.deduction;
   }
 
   const wc = wordCount(email.body);
@@ -94,6 +151,8 @@ export function validateEmail(email, meta = {}) {
       subject_words: (email.subject || "").split(/\s+/).filter(Boolean).length,
       within_word_limit: wc >= 50 && wc <= 150,
       within_subject_limit: subjectLen > 0 && subjectLen <= 45,
+      inference_safety_score: inferenceSafety.score,
+      inference_safety_level: inferenceSafety.level,
     },
   };
 }

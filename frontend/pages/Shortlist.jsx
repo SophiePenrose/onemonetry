@@ -98,14 +98,46 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
 
   useEffect(() => { fetchData(false); }, []);
 
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetch("/api/analysis/status")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.analysis?.running || data.analysis?.queued > 0) fetchData(showSuppressed);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [showSuppressed]);
+
   function toggleSuppressed() {
     const next = !showSuppressed;
     setShowSuppressed(next);
     fetchData(next);
   }
 
+  async function suppressCompany(company, type) {
+    const reason = type === "permanent"
+      ? prompt(`Permanently suppress ${company.name}? Add a reason:`, "Manual exclusion")
+      : prompt(`Temporarily suppress ${company.name}? Add a reason:`, "Review later");
+    if (reason === null) return;
+    await fetch(`/api/company/${encodeURIComponent(company.id)}/suppress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, reason }),
+    });
+    fetchData(showSuppressed);
+  }
+
+  async function restoreCompany(company) {
+    await fetch(`/api/company/${encodeURIComponent(company.id)}/suppress`, { method: "DELETE" });
+    fetchData(showSuppressed);
+  }
+
   const stateCounts = {};
   companies.forEach((c) => { stateCounts[c.workflow_state] = (stateCounts[c.workflow_state] || 0) + 1; });
+  const analysisReadyCount = companies.filter((c) => c.analysis_ready).length;
+  const filingTextCount = companies.filter((c) => c.has_filing_text).length;
 
   const afterStateFilter = stateFilter === "all"
     ? companies
@@ -125,7 +157,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist</h2>
           {!loading && !error && (
             <span style={{ color: "#888", fontSize: 14 }}>
-              {filtered.length} of {companies.length} companies
+              {searchQuery.trim() || stateFilter !== "all"
+                ? `${filtered.length} filtered · ${meta?.total ?? companies.length} total`
+                : `${meta?.showing ?? companies.length} shown · ${meta?.total ?? companies.length} total`}
             </span>
           )}
         </div>
@@ -151,6 +185,16 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           >
             ↓ CSV
           </a>
+          <button
+            onClick={() => fetchData(showSuppressed)}
+            disabled={loading}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
+              background: "#fff", color: "#555", fontSize: 13, cursor: loading ? "wait" : "pointer",
+            }}
+          >
+            ↻ Refresh
+          </button>
           {onShowAddCompany && (
             <button
               onClick={onShowAddCompany}
@@ -208,6 +252,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               }}>{sm.label} ({count})</button>
             );
           })}
+          <span style={{ padding: "4px 12px", borderRadius: 14, background: "#f0fdf4", color: "#0a8754", fontSize: 12, fontWeight: 600 }}>
+            Analysis ready {analysisReadyCount}/{filingTextCount}
+          </span>
         </div>
       )}
 
@@ -224,17 +271,25 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
               <th style={{ padding: "10px 14px" }}>#</th>
               <th style={{ padding: "10px 14px" }}>Company</th>
+              <th style={{ padding: "10px 14px" }}>Industry</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
               <th style={{ padding: "10px 14px" }}>Best Motion</th>
               <th style={{ padding: "10px 14px" }}>Growth</th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>Analysis</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((c) => {
               const sm = STATE_META[c.workflow_state] || STATE_META.new_candidate;
+              const statusBadge = c.excluded
+                ? { label: "Suppressed", color: "#c0392b" }
+                : c.suppressed
+                  ? { label: "Held", color: "#f39c12" }
+                  : sm;
               return (
                 <tr
                   key={c.id}
@@ -252,6 +307,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     <a href="#" onClick={(e) => { e.preventDefault(); onSelectCompany && onSelectCompany(c.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
                       {c.name}
                     </a>
+                    {c.name_needs_enrichment && (
+                      <div style={{ fontSize: 11, color: "#888", fontWeight: 400, marginTop: 2 }}>
+                        Company number: {c.company_number}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "10px 14px", color: "#666", fontSize: 13 }}>{c.industry}</td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
@@ -274,7 +334,49 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     {c.growth_trend || "—"}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                    <Badge text={sm.label} bg={sm.color} />
+                    {c.analysis_ready ? (
+                      <Badge text="Ready" bg="#0a8754" />
+                    ) : c.analysis_status === "pending" ? (
+                      <Badge text="Queued" bg="#c27b00" />
+                    ) : c.analysis_status === "processing" ? (
+                      <Badge text="Analysing" bg="#0075EB" />
+                    ) : c.analysis_status === "failed" ? (
+                      <Badge text="Failed" bg="#c0392b" />
+                    ) : c.has_filing_text ? (
+                      <Badge text="Pending analysis" bg="#6b7280" />
+                    ) : (
+                      <Badge text="No filing" bg="#6b7280" />
+                    )}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                    <Badge text={statusBadge.label} bg={statusBadge.color} />
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      {c.suppressed || c.excluded ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); restoreCompany(c); }}
+                          style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #0a8754", background: "#fff", color: "#0a8754", cursor: "pointer", fontSize: 11 }}
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); suppressCompany(c, "temporary"); }}
+                            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #f39c12", background: "#fff", color: "#92400e", cursor: "pointer", fontSize: 11 }}
+                          >
+                            Hold
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); suppressCompany(c, "permanent"); }}
+                            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #c0392b", background: "#fff", color: "#c0392b", cursor: "pointer", fontSize: 11 }}
+                          >
+                            Suppress
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

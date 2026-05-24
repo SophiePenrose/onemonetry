@@ -80,6 +80,28 @@ export default function CompanyDetail({ companyId }) {
       .catch(() => {});
   }
 
+  function handleAnalysisUpdated(analysis) {
+    setCompany((prev) => prev ? { ...prev, analysis } : prev);
+  }
+
+  async function suppressCompany(type) {
+    const reason = type === "permanent"
+      ? prompt(`Permanently suppress ${company.name}? Add a reason:`, "Manual exclusion")
+      : prompt(`Temporarily suppress ${company.name}? Add a reason:`, "Review later");
+    if (reason === null) return;
+    const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/suppress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, reason }),
+    });
+    if (res.ok) refreshCompany();
+  }
+
+  async function restoreCompany() {
+    const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/suppress`, { method: "DELETE" });
+    if (res.ok) refreshCompany();
+  }
+
   if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <DetailSkeleton />;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
@@ -93,6 +115,34 @@ export default function CompanyDetail({ companyId }) {
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Combined Score</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{company.combined_score?.toFixed(2)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: company.suppressed || company.excluded ? "#92400e" : "#888" }}>
+            {company.excluded
+              ? `Permanently suppressed: ${company.suppression_reason || "manual exclusion"}`
+              : company.suppressed
+                ? `Temporarily suppressed: ${company.suppression_reason || company.workflow_state}`
+                : company.name_needs_enrichment
+                  ? "Name lookup needed — company number is shown below."
+                  : "Active in your personal prospecting workflow."}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {company.suppressed || company.excluded ? (
+              <button onClick={restoreCompany} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #0a8754", background: "#fff", color: "#0a8754", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                Restore
+              </button>
+            ) : (
+              <>
+                <button onClick={() => suppressCompany("temporary")} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #f39c12", background: "#fff", color: "#92400e", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  Hold for later
+                </button>
+                <button onClick={() => suppressCompany("permanent")} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #c0392b", background: "#fff", color: "#c0392b", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  Suppress
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -176,19 +226,19 @@ export default function CompanyDetail({ companyId }) {
       <CompanyAnalysis
         companyNumber={company.company_number || companyId.replace("ch-", "")}
         initialAnalysis={company.analysis}
+        onAnalysisUpdated={handleAnalysisUpdated}
       />
 
       <EvidencePanel
         companyId={companyId}
-        motions={company.all_motion_scores || []}
+        analysis={company.analysis}
+        onEvidenceUpdated={handleAnalysisUpdated}
       />
 
       <EmailSequencePanel
         companyId={companyId}
-        companyName={company.name}
         stakeholders={company.stakeholders || []}
         keyPeople={company.analysis?.key_people || []}
-        motions={company.all_motion_scores || []}
       />
 
       <NotesPanel companyId={companyId} initialNotes={company.notes} />
