@@ -12,6 +12,23 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+function mandatoryFooter(senderName = "[Your Name]") {
+  return `${senderName}
+Account Executive | Revolut Business
+revolut.com/business
+
+To manage your sales outreach preferences or opt out, reply with your preference.
+Any information provided does not constitute financial, investment, or trading advice.`;
+}
+
+function withMandatoryFooter(body, footer) {
+  const cleanBody = (body || "").trim();
+  const cleanFooter = (footer || "").trim();
+  const required = cleanFooter || mandatoryFooter();
+  if (/sales outreach preferences|does not constitute financial/i.test(cleanBody)) return cleanBody;
+  return `${cleanBody}\n\n${required}`;
+}
+
 export async function generateLLMEmail(params) {
   const { company, contact, analysis, score, archetype, trigger, senderName, stepNumber, totalSteps } = params;
 
@@ -57,14 +74,15 @@ export async function generateLLMEmail(params) {
     const cleaned = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
     const parsed = JSON.parse(cleaned);
 
+    const body = withMandatoryFooter(parsed.body, parsed.footer || mandatoryFooter(senderName));
     const qcResult = validateEmail(
-      { subject: parsed.subject, body: parsed.body },
+      { subject: parsed.subject, body },
       { isInitialOutreach: stepNumber === 1 }
     );
 
     return {
       subject: parsed.subject,
-      body: parsed.body,
+      body,
       archetype: archetype?.id || "diagnostic_filing",
       trigger_type: trigger?.type || null,
       qc_score: qcResult.score,
@@ -262,20 +280,21 @@ function generateFallbackEmail(params) {
 
   if (stepNumber === 1) {
     subject = `${company.name} & Revolut`;
-    body = `Hi ${firstName},\n\nI came across ${company.name}'s latest filing and noticed your international operations. At your turnover, there's often meaningful FX cost sitting in the payment flow that compresses significantly at interbank rates (during market hours within plan allowance).\n\nWould it make sense to compare your current rates against what we're seeing for similar businesses?\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\n${company.name}'s latest filing points to international activity, which often makes FX cost harder to see until year-end.\n\nRevolut Business can help finance teams compare that flow against interbank FX during market hours within plan allowance, without asking them to move credit relationships.\n\nDoes it make sense to compare the methodology against your current setup?`;
   } else if (stepNumber === totalSteps) {
     subject = `Closing the loop — ${company.name}`;
-    body = `Hi ${firstName},\n\nHaven't heard back, so I'll assume the timing isn't right.\n\nIf international payments or FX becomes a priority in the next few months, my line is open. Either way, wishing you and the team well.\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\nI'll assume timing is not right for now.\n\nIf international payments or FX becomes a priority later this year, the filing benchmark may still be useful as a reference point.\n\nEither way, wishing you and the team well.`;
   } else {
     subject = `Re: ${company.name} & Revolut`;
-    body = `Hi ${firstName},\n\nAdding a quick data point — businesses at ${company.name}'s size that move to interbank FX pricing (during market hours within plan allowance) typically see their payment costs compress by a meaningful amount.\n\nHappy to share a specific comparison if useful?\n\nBest,\n${name}`;
+    body = `Hi ${firstName},\n\nAdding one useful benchmark: when finance teams review FX after filing accounts, the first gap is usually visibility rather than rate.\n\nA simple comparison against interbank FX during market hours within plan allowance can show whether there is anything worth changing.\n\nWorth seeing the assumptions?`;
   }
 
-  const qcResult = validateEmail({ subject, body }, { isInitialOutreach: stepNumber === 1 });
+  const bodyWithFooter = withMandatoryFooter(body, mandatoryFooter(name));
+  const qcResult = validateEmail({ subject, body: bodyWithFooter }, { isInitialOutreach: stepNumber === 1 });
 
   return {
     subject,
-    body,
+    body: bodyWithFooter,
     archetype: archetype?.id || "diagnostic_filing",
     trigger_type: null,
     qc_score: qcResult.score,
@@ -342,11 +361,11 @@ function determineCadence(triggers, contact, merchantSpend) {
 
   let cadence;
   if (hasHighTrigger) {
-    cadence = { steps: 4, delays: [0, 3, 7, 12], strategy: "aggressive" };
+    cadence = { steps: 5, delays: [0, 3, 6, 10, 15], strategy: "high_trigger_multithread_ready" };
   } else if (triggers.some((t) => t.strength === "medium")) {
-    cadence = { steps: 3, delays: [0, 4, 10], strategy: "standard" };
+    cadence = { steps: 4, delays: [0, 3, 7, 15], strategy: "standard_value_add" };
   } else {
-    cadence = { steps: 3, delays: [0, 5, 12], strategy: "nurture" };
+    cadence = { steps: 4, delays: [0, 5, 12, 21], strategy: "nurture_insight_first" };
   }
 
   if (merchantSpend && merchantSpend.monthly_volume > 0) {

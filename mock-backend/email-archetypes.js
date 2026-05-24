@@ -137,7 +137,7 @@ export const COMPETITOR_DISPLACEMENT = {
   Wise: { weakness: "No hedging/forwards, no cards, no acquiring", angle: "Wise is great for one-off transfers. If you're scaling a team, managing cards, hedging exposure, or accepting payments, you need a platform." },
   Ebury: { weakness: "No banking ecosystem, tied to credit lines", angle: "If FX is the only thing you do with Ebury, you might be paying for a broader relationship you don't use. We give you the FX tools plus everyday banking, cards, and spend control." },
   Pleo: { weakness: "Higher pricing, weaker FX, no banking", angle: "Pleo starts at £9.50/user, charges 1.5–2.5% on FX, and doesn't give you the underlying banking. Revolut Business is £5/user for expenses, 0–0.6% on FX after allowance." },
-  Amex: { weakness: "High fees, limited acceptance, no FX/banking", angle: "Amex works for cashback at the cost of acceptance gaps. We give you Visa/Mastercard acceptance, FX savings that usually beat 1% cashback, and unlimited virtual cards for online spend." },
+  Amex: { weakness: "High fees, limited acceptance, no FX/banking", angle: "Amex works for cashback at the cost of acceptance gaps. Revolut Business supports Visa/Mastercard acceptance, FX tools, and virtual cards up to plan limits for online spend." },
 };
 
 export const SECTOR_ANGLES = {

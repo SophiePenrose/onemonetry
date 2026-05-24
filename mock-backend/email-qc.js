@@ -29,11 +29,15 @@ const FORBIDDEN_PHRASES = [
   { pattern: /save\s+thousands/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /save\s+millions/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /60[- ]?80%\s+cheaper/i, violation: "Unapproved claim (not in approved library)", deduction: 25 },
+  { pattern: /\b(?:solution|innovative|cutting[- ]edge|state[- ]of[- ]the[- ]art)\b/i, violation: "Unapproved sales language", deduction: 25 },
+  { pattern: /\b(?:free|guarantee|guaranteed|act\s+now|100%)\b/i, violation: "Spam or absolute language", deduction: 25 },
 ];
 
 const MINOR_DEDUCTIONS = [
   { check: (email, meta) => meta.isInitialOutreach && !email.body.match(/revolut\s+business/i), issue: "No RB explanation in initial outreach", deduction: 15 },
   { check: (email) => !email.body.match(/revolut\.com|revolut\.business/i) && !email.body.match(/\[.*link.*\]/i), issue: "Missing link to Revolut Business website", deduction: 15 },
+  { check: (email) => !email.body.match(/opt\s*out|sales outreach preferences|unsubscribe/i), issue: "Missing opt-out / sales preferences footer", deduction: 25 },
+  { check: (email) => !email.body.match(/does not constitute financial/i), issue: "Missing financial advice disclaimer", deduction: 25 },
   { check: (email) => email.body.match(/just\s+(?:checking|following)\s+(?:in|up)(?!\s+on\s+(?:a|the|my)\s+\w+)/i), issue: "Generic follow-up without value-add", deduction: 15 },
   { check: (email) => email.body.match(/i\s+never\s+heard\s+back/i), issue: "Guilt language", deduction: 15 },
   { check: (email) => email.body.match(/sorry\s+to\s+(?:disturb|bother)/i), issue: "Apologetic opener", deduction: 15 },
@@ -45,6 +49,11 @@ const MINOR_DEDUCTIONS = [
 
 const STRUCTURAL_CHECKS = [
   { check: (email) => wordCount(email.body) > 200, issue: "Body exceeds 200 words (abandonment cliff)", deduction: 10 },
+  { check: (email, meta) => meta.isInitialOutreach && (wordCount(email.body) < 50 || wordCount(email.body) > 150), issue: "Initial outreach outside 50–150 word range", deduction: 10 },
+  { check: (email) => {
+    const words = (email.subject || "").split(/\s+/).filter(Boolean).length;
+    return words > 0 && (words < 3 || words > 7);
+  }, issue: "Subject line outside 3–7 word range", deduction: 5 },
   { check: (email) => email.subject && email.subject.length > 50, issue: "Subject line too long (>50 chars, mobile truncation)", deduction: 5 },
   { check: (email) => (email.body.match(/!/g) || []).length > 1, issue: "Excessive exclamation marks", deduction: 5 },
   { check: (email) => email.body.match(/\bDear\b/i), issue: "Forbidden salutation (Dear)", deduction: 10 },
@@ -75,7 +84,7 @@ export function validateEmail(email, meta = {}) {
   }
 
   for (const rule of STRUCTURAL_CHECKS) {
-    if (rule.check(email)) {
+    if (rule.check(email, meta)) {
       issues.push({ type: "structural", violation: rule.issue, deduction: rule.deduction });
       score -= rule.deduction;
     }
