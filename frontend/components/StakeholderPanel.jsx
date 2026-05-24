@@ -75,8 +75,13 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ color: "#888", fontWeight: 400 }}>({s.role})</span></div>
                 <div style={{ fontSize: 11, color: "#888" }}>
-                  {s.buying_role} · {s.source === "manual" ? "manual contact" : "filing"}{s.email ? ` · ${s.email}` : ""}
+                  {s.buying_role} · {s.source === "manual" ? "manual contact" : "filing"} · source {Math.round((s.source_confidence || 0) * 100)}%{s.email ? ` · ${s.email}` : ""}
                 </div>
+                {s.category_familiarity?.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#0a8754", marginTop: 2 }}>
+                    Category familiarity: {s.category_familiarity.join(", ")}
+                  </div>
+                )}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: s.confidence_level === "high" ? "#0a8754" : s.confidence_level === "medium" ? "#c27b00" : "#6b7280" }}>{s.final_score}</div>
@@ -86,6 +91,11 @@ export default function StakeholderPanel({ stakeholders, companyId, onUpdated })
           ))}
           {assessment.readiness?.reason && (
             <div style={{ fontSize: 11, color: "#888", marginTop: 6 }}>{assessment.readiness.reason}</div>
+          )}
+          {assessment.readiness?.multi_threading?.steps?.length > 0 && (
+            <div style={{ fontSize: 11, color: "#555", marginTop: 8, lineHeight: 1.5 }}>
+              <strong>Outreach plan:</strong> {assessment.readiness.multi_threading.steps.join(" ")}
+            </div>
           )}
         </div>
       )}

@@ -43,7 +43,7 @@ import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
 import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
-import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
+import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany, mergeStakeholderIdentities } from "./stakeholder-scoring.js";
 import { runMigrations } from "./migrations.js";
 import {
   getAnalysisStatus,
@@ -1981,13 +1981,7 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     source: "manual",
   }));
   const filingPeople = (analysis?.key_people || []).map((person) => ({ ...person, source: "companies_house_filing" }));
-  const peopleByName = new Map();
-  for (const person of [...manualPeople, ...filingPeople]) {
-    if (!person.name) continue;
-    const key = person.name.toLowerCase();
-    peopleByName.set(key, { ...(peopleByName.get(key) || {}), ...person });
-  }
-  const people = [...peopleByName.values()];
+  const people = mergeStakeholderIdentities([...manualPeople, ...filingPeople]);
 
   if (people.length === 0) {
     return res.json({
