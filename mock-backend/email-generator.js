@@ -7,6 +7,7 @@ import { validateEmail, APPROVED_CLAIMS, isCompanyExcluded } from "./email-qc.js
 import { detectTriggers, selectArchetype, getPersonaGuidance, getSectorAngle, COMPETITOR_DISPLACEMENT } from "./email-archetypes.js";
 import { SYSTEM_PROMPT, selectInferencePattern, detectAccountHealth } from "./email-system-prompt.js";
 import { getSetting } from "./db.js";
+import { buildOutboundIntelligence } from "./outbound-intelligence.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
@@ -43,8 +44,9 @@ export async function generateLLMEmail(params) {
     : null;
   const inferenceData = selectInferencePattern(company, analysis);
   const accountHealth = detectAccountHealth(analysis, score);
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger });
 
-  const enrichedParams = { ...params, inferenceData, accountHealth };
+  const enrichedParams = { ...params, inferenceData, accountHealth, outboundIntelligence };
   const userPrompt = buildUserPrompt(enrichedParams, persona, sector, displacement);
 
   try {
@@ -89,6 +91,7 @@ export async function generateLLMEmail(params) {
       qc_pass: qcResult.pass,
       qc_issues: qcResult.issues,
       metrics: qcResult.metrics,
+      outbound_intelligence: outboundIntelligence,
       claims_used: parsed.claims_used || [],
       disclaimers_needed: parsed.disclaimers_needed || [],
       source: "llm",
@@ -259,10 +262,30 @@ This is how an insider would describe their situation. Adapt the language to mat
 Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sensitive — do NOT lead with loss. Focus on controllable costs." : params.accountHealth === "post_acquisition" ? "Frame around integration and consolidation opportunity." : params.accountHealth === "healthy_growing" ? "Be confident and forward-looking." : ""}`);
   }
 
+  if (params.outboundIntelligence) {
+    const { why_now, emotional_context, internal_politics } = params.outboundIntelligence;
+    parts.push(`\nWHY NOW / URGENCY:
+- Urgency: ${why_now.urgency} (${why_now.score}/100)
+- Reason: ${why_now.reason}
+- If urgency is cold, use nurture/benchmark language rather than urgent CTA.`);
+
+    parts.push(`\nEMOTIONAL CONTEXT:
+- State: ${emotional_context.state}
+- Tone: ${emotional_context.tone}`);
+
+    if (internal_politics.hints.length > 0) {
+      parts.push(`\nINTERNAL POLITICS / SWITCHING FRICTION:
+${internal_politics.hints.map((hint) => `- ${hint}`).join("\n")}`);
+    }
+  }
+
   parts.push(`\nSender name: ${params.senderName || "[Your Name]"}`);
   parts.push(`\nIMPORTANT REMINDERS:
 - Savings estimates MUST include caveat: "(based on estimated FX volume from filed accounts; actual savings depend on your current provider's rates and would require a brief review to confirm)"
 - Do NOT merely cite data. SYNTHESISE it into an insight about their business.
+- Calibrate uncertainty. Use "often", "typically", "may", "suggests", "worth checking" for inferred pain. Do not write as if inferred internal dynamics are facts.
+- Keep it impressive, not invasive. Do not reference private-feeling tracking such as "we can see your customers" or named internal politics.
+- Avoid over-polish: use natural, concise AE language rather than a perfect marketing paragraph.
 - The first sentence must make the prospect think "how do they know that?"
 - Use industry-specific terminology (not generic business language)
 - End with a genuine question, not a meeting request`);
@@ -272,7 +295,7 @@ Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sen
 }
 
 function generateFallbackEmail(params) {
-  const { company, contact, archetype, stepNumber, totalSteps, senderName } = params;
+  const { company, contact, archetype, stepNumber, totalSteps, senderName, analysis, trigger } = params;
   const firstName = contact.name?.split(" ")[0] || "there";
   const name = senderName || "[Your Name]";
 
@@ -291,6 +314,7 @@ function generateFallbackEmail(params) {
 
   const bodyWithFooter = withMandatoryFooter(body, mandatoryFooter(name));
   const qcResult = validateEmail({ subject, body: bodyWithFooter }, { isInitialOutreach: stepNumber === 1 });
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger });
 
   return {
     subject,
@@ -301,6 +325,7 @@ function generateFallbackEmail(params) {
     qc_pass: qcResult.pass,
     qc_issues: qcResult.issues,
     metrics: qcResult.metrics,
+    outbound_intelligence: outboundIntelligence,
     claims_used: [],
     disclaimers_needed: [2],
     source: "fallback",
@@ -317,6 +342,7 @@ export async function generateFullSequence(params) {
 
   const triggers = detectTriggers(company, analysis, score);
   const archetype = selectArchetype(triggers, analysis, company);
+  const outboundIntelligence = buildOutboundIntelligence({ company, analysis, trigger: triggers[0] || null });
   const senderName = getSetting("sender_name", "[Your Name]");
 
   const cadence = determineCadence(triggers, contact, merchantSpend);
@@ -352,6 +378,7 @@ export async function generateFullSequence(params) {
     cadence,
     steps,
     exclusion_check: { excluded: false },
+    outbound_intelligence: outboundIntelligence,
     merchant_spend_included: !!merchantSpend,
   };
 }

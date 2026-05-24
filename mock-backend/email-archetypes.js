@@ -156,7 +156,7 @@ export const SECTOR_ANGLES = {
 };
 
 export function detectTriggers(company, analysis, score) {
-  const triggers = [];
+  let triggers = [];
 
   if (analysis?.international_exposure?.present && company.turnover) {
     const estimatedFxVolume = company.turnover * (analysis.international_exposure.currencies?.length > 1 ? 0.4 : 0.2);
@@ -219,6 +219,7 @@ export function detectTriggers(company, analysis, score) {
     });
   }
 
+  triggers = triggers.map((trigger) => decayTriggerStrength(trigger));
   triggers.sort((a, b) => {
     const strengthOrder = { high: 0, medium: 1, low: 2 };
     return (strengthOrder[a.strength] || 2) - (strengthOrder[b.strength] || 2);
@@ -238,6 +239,14 @@ export function selectArchetype(triggers, analysis, company) {
     selected_trigger: topTrigger,
     all_triggers: triggers,
   };
+}
+
+export function decayTriggerStrength(trigger, now = new Date()) {
+  const days = trigger?.recency_days ?? trigger?.data?.recency_days;
+  if (days === undefined || days === null) return trigger;
+  if (days > 180) return { ...trigger, strength: "low", decay: "stale" };
+  if (days > 90 && trigger.strength === "high") return { ...trigger, strength: "medium", decay: "cooling" };
+  return { ...trigger, decay: "fresh", evaluated_at: now.toISOString() };
 }
 
 export function getPersonaGuidance(role) {

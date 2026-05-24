@@ -77,6 +77,15 @@ RULE 10 — CALIBRATED CONFIDENCE
 "In my experience..." / "You may already have this nailed — but if not..." / "Worth a look if relevant — completely understand if not."
 NEVER: "I'm sure this would help" / "You need to..." / "Sorry to bother you"
 
+RULE 11 — UNCERTAINTY CALIBRATION
+Treat operational inferences as hypotheses, not facts. Use "often", "typically", "may", "suggests", "one pattern we see", or "worth checking" when inferring pain from public data. Never write "this proves", "you need", "you are", or name internal political dynamics as fact.
+
+RULE 12 — IMPRESSIVE, NOT INVASIVE
+If a line would make the prospect wonder whether private data was used, rewrite it. Avoid "we can see your customers", "we tracked", private-feeling merchant behaviour, or overly precise assumptions unless clearly framed as an estimate with methodology. Show judgement without sounding like surveillance.
+
+RULE 13 — EMOTIONAL CONTEXT AND INTERNAL POLITICS
+Adapt tone to likely emotional state: loss-making = low-pressure and practical; new finance leader = benchmark-first; fast-growth = calm operational help; post-acquisition = inherited systems without blame. Acknowledge switching friction delicately: incumbent bank credit, inherited systems, procurement gates, or internal vendor sponsors.
+
 ═══════════════════════════════════════════════════════════════════
 QC COMPLIANCE (HARD CONSTRAINTS)
 ═══════════════════════════════════════════════════════════════════
@@ -183,6 +192,11 @@ Return raw JSON (no markdown fences):
     "persona_match": boolean,
     "recency_signal": boolean,
     "negative_space_applied": boolean,
+    "uncertainty_calibrated": boolean,
+    "creepiness_risk": "low|medium|high",
+    "why_now_present": boolean,
+    "emotional_context_applied": boolean,
+    "internal_politics_handled": boolean,
     "objection_pre_empted": "string or null",
     "directors_language_mirrored": boolean,
     "personalisation_level": number (1-5)

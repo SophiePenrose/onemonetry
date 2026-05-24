@@ -65,6 +65,44 @@ function wordCount(text) {
   return (text || "").split(/\s+/).filter(Boolean).length;
 }
 
+const UNCERTAINTY_TERMS = /\b(often|usually|typically|may|might|could|suggests|appears|in our experience|one pattern|worth checking|if relevant)\b/i;
+const OVERCERTAIN_INFERENCE = /\b(this means|this proves|you are|you have|you need|clearly|definitely|without doubt)\b/i;
+const INVASIVE_PHRASES = /\b(we know|we tracked|we can see your customers|your customers are already revolut users|we saw your customers)\b/i;
+
+export function assessInferenceSafety(email) {
+  const body = email.body || "";
+  const issues = [];
+  let score = 100;
+
+  if (OVERCERTAIN_INFERENCE.test(body)) {
+    issues.push({ issue: "Over-certain inference; use probabilistic language", deduction: 15 });
+    score -= 15;
+  }
+
+  if (INVASIVE_PHRASES.test(body)) {
+    issues.push({ issue: "Potentially creepy or invasive data reference", deduction: 25 });
+    score -= 25;
+  }
+
+  const hasInference = /\b(suggests|indicates|creates|points to|usually|typically|often|pattern)\b/i.test(body);
+  if (hasInference && !UNCERTAINTY_TERMS.test(body)) {
+    issues.push({ issue: "Inference lacks uncertainty calibration", deduction: 10 });
+    score -= 10;
+  }
+
+  const hasPreciseMoney = /£\s?\d+(?:[,.]\d+)?\s?(?:k|m|K|M|000)?\b/.test(body);
+  if (hasPreciseMoney && !/estimate|estimated|based on|actual|would require|assumption|methodology/i.test(body)) {
+    issues.push({ issue: "Precise monetary inference lacks caveat", deduction: 20 });
+    score -= 20;
+  }
+
+  return {
+    score: Math.max(score, 0),
+    level: score >= 85 ? "safe" : score >= 65 ? "review" : "unsafe",
+    issues,
+  };
+}
+
 export function validateEmail(email, meta = {}) {
   const issues = [];
   let score = 100;
@@ -90,6 +128,12 @@ export function validateEmail(email, meta = {}) {
     }
   }
 
+  const inferenceSafety = assessInferenceSafety(email);
+  for (const issue of inferenceSafety.issues) {
+    issues.push({ type: "inference_safety", violation: issue.issue, deduction: issue.deduction });
+    score -= issue.deduction;
+  }
+
   const wc = wordCount(email.body);
   const subjectLen = (email.subject || "").length;
 
@@ -103,6 +147,8 @@ export function validateEmail(email, meta = {}) {
       subject_words: (email.subject || "").split(/\s+/).filter(Boolean).length,
       within_word_limit: wc >= 50 && wc <= 150,
       within_subject_limit: subjectLen > 0 && subjectLen <= 45,
+      inference_safety_score: inferenceSafety.score,
+      inference_safety_level: inferenceSafety.level,
     },
   };
 }

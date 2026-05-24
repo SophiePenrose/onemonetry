@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "child_process";
-import { validateEmail } from "../email-qc.js";
+import { assessInferenceSafety, validateEmail } from "../email-qc.js";
 
 describe("email QC calibration", () => {
   it("blocks forbidden claims and missing compliance footer", () => {
@@ -50,5 +50,15 @@ describe("email QC calibration", () => {
     assert.match(email.body, /sales outreach preferences/i);
     assert.match(email.body, /does not constitute financial/i);
     assert.doesNotMatch(email.body, /60[- ]?80%|unlimited cards|just checking in/i);
+  });
+
+  it("flags creepy or over-certain operational inference", () => {
+    const safety = assessInferenceSafety({
+      body: "We can see your customers are already Revolut users. This proves you need to switch. The gap is £67k.",
+    });
+
+    assert.equal(safety.level, "unsafe");
+    assert.ok(safety.issues.some((issue) => issue.issue.includes("creepy")));
+    assert.ok(safety.issues.some((issue) => issue.issue.includes("Over-certain")));
   });
 });
