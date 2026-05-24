@@ -30,3 +30,16 @@ The current design focuses on:
 ## Notes
 
 This is a design and specification repository, not the final application itself. The files here are intended to support implementation in GitHub and Copilot.
+
+## Persistence
+
+The mock backend persists monitored companies, filings, analysis results, workflow state, auth sessions, and email sequences in SQLite. By default the database is `mock-backend/onemonetry.db`.
+
+For deployments or Cursor Cloud sessions that need data to survive container rebuilds, set:
+
+- `DATABASE_PATH=/path/on/persistent/volume/onemonetry.db`
+- `PROCESSED_ZIPS_DATA_DIR=/path/on/persistent/volume/processed-zips`
+
+Both paths should point at mounted persistent storage. `DATABASE_PATH` may be absolute or relative to the repo root, and the backend creates its parent directory if needed.
+
+Prototype gap: SQLite is suitable for local development and single-instance prototypes. Production should migrate to managed Postgres, with migrations for `company_monitor`, `company_filings`, `settings`, `workflow_*`, `import_*`, auth, stakeholder, and email sequence tables; a connection pool; transactional import writes; and a one-off SQLite-to-Postgres backfill script.
