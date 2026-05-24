@@ -285,6 +285,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           <tbody>
             {filtered.map((c) => {
               const sm = STATE_META[c.workflow_state] || STATE_META.new_candidate;
+              const statusBadge = c.excluded
+                ? { label: "Suppressed", color: "#c0392b" }
+                : c.suppressed
+                  ? { label: "Held", color: "#f39c12" }
+                  : sm;
               return (
                 <tr
                   key={c.id}
@@ -344,7 +349,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     )}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                    <Badge text={sm.label} bg={sm.color} />
+                    <Badge text={statusBadge.label} bg={statusBadge.color} />
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "right" }}>
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
