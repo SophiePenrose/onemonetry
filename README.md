@@ -1,10 +1,22 @@
 # Revolut Mid-Market Prospecting App
 
-This repository contains the design context for a prospecting app that helps a Revolut Business Mid-Market account executive identify, score, and prioritise the best companies to contact each week.
+This repository contains a personal-use outbound intelligence and drafting copilot for researching, prioritising, and engaging UK mid-market prospects.
 
 ## What this project is for
 
-The app is intended to turn a large universe of companies into a smaller, explainable weekly shortlist. It should help prioritise outreach based on product fit, pain signals, competitor context, commercial value, and response likelihood.
+The app is intended to turn a large universe of companies into a smaller, explainable shortlist, then help a single user draft high-quality outbound cadences. It should enrich companies from public and approved commercial sources, identify likely buyer personas, generate insights and outreach angles, and push campaigns into YAMM for optional human review and scheduled sending.
+
+## Scope boundaries
+
+This is a personal workflow tool, not an internal Revolut platform integration. It should not:
+
+- integrate with Revolut internal CRM systems,
+- sync with Salesforce,
+- write into company infrastructure,
+- automate compliance workflows,
+- or function as an autonomous AI SDR platform.
+
+The user remains responsible for reviewing outreach, deciding what to send, and scheduling any send through approved tools such as YAMM.
 
 ## What is in this repo
 
@@ -21,7 +33,7 @@ Use the outline as the main instruction file and the supplementary context as su
 The current design focuses on:
 
 - product-fit scoring,
-- weekly ranking and workspace flow,
+- ranking and workspace flow,
 - exclusions and closed-won suppression,
 - response propensity as a meta-signal,
 - competitor context,
@@ -29,7 +41,7 @@ The current design focuses on:
 
 ## Notes
 
-This is a design and specification repository, not the final application itself. The files here are intended to support implementation in GitHub and Copilot.
+This is a prototype application and supporting specification repository for a single-user workflow.
 
 ## Persistence
 
@@ -42,4 +54,4 @@ For deployments or Cursor Cloud sessions that need data to survive container reb
 
 Both paths should point at mounted persistent storage. `DATABASE_PATH` may be absolute or relative to the repo root, and the backend creates its parent directory if needed.
 
-Prototype gap: SQLite is suitable for local development and single-instance prototypes. Production should migrate to managed Postgres, with migrations for `company_monitor`, `company_filings`, `settings`, `workflow_*`, `import_*`, auth, stakeholder, and email sequence tables; a connection pool; transactional import writes; and a one-off SQLite-to-Postgres backfill script.
+Prototype gap: SQLite is suitable for local development and single-instance personal use. A hosted version should migrate to managed Postgres, with migrations for `company_monitor`, `company_filings`, `settings`, `workflow_*`, `import_*`, auth, stakeholder, and email sequence tables; a connection pool; transactional import writes; and a one-off SQLite-to-Postgres backfill script.

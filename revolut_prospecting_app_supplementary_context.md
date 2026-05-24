@@ -4,13 +4,13 @@ This document is the narrative companion to the master outline. It explains the 
 
 ## 1. What the app is for
 
-The app is being designed to help a Revolut Business Mid-Market account executive decide which companies are most worth contacting now. It is not a generic research tool and it is not just a scoring toy. Its job is to turn a very large universe of UK companies into a weekly, manageable, explainable, action-oriented shortlist.
+The app is being designed as a personal-use outbound intelligence and drafting copilot for one Revolut Business Mid-Market account executive. It is not a generic research tool and it is not just a scoring toy. Its job is to turn a very large universe of UK companies into a manageable, explainable, action-oriented shortlist and support human-reviewed outreach drafting.
 
 The score should represent prospecting priority. That means a company is high-scoring if it is relevant to one or more Revolut product motions, commercially meaningful, realistically actionable, and timely enough to justify effort this week. A lower score does not necessarily mean the company is bad; it may simply mean the fit is weaker, the evidence is thin, the timing is poor, or another account is a better use of time.
 
 ## 2. Why a layered model is needed
 
-The problem is not a lack of companies. The problem is that the relevant evidence is scattered across filings, annual reports, websites, news, product usage clues, and internal proprietary signals. A useful system therefore needs several layers rather than one blended score.
+The problem is not a lack of companies. The problem is that the relevant evidence is scattered across filings, annual reports, websites, news, product usage clues, and approved commercial enrichment sources. A useful system therefore needs several layers rather than one blended score.
 
 Those layers should remain separate: product fit, commercial value, urgency or response propensity, competitor context, proprietary boosts, and workflow suppression. If these get collapsed into a single black box, the result becomes hard to trust, hard to tune, and hard to explain.
 
