@@ -46,7 +46,7 @@ afterEach(() => {
 
 describe("Shortlist", () => {
   it("uses API totals and actual analysis queue status badges", async () => {
-    global.fetch = vi.fn(async (url) => {
+    globalThis.fetch = vi.fn(async (url) => {
       if (url.toString().startsWith("/api/analysis/status")) {
         return { ok: true, json: async () => ({ analysis: { running: false, queued: 0 } }) };
       }
@@ -61,6 +61,6 @@ describe("Shortlist", () => {
     expect(screen.getByText("Queued")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("↻ Refresh"));
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/unified-shortlist?"));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/unified-shortlist?"));
   });
 });
