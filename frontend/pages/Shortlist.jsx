@@ -116,6 +116,24 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     fetchData(next);
   }
 
+  async function suppressCompany(company, type) {
+    const reason = type === "permanent"
+      ? prompt(`Permanently suppress ${company.name}? Add a reason:`, "Manual exclusion")
+      : prompt(`Temporarily suppress ${company.name}? Add a reason:`, "Review later");
+    if (reason === null) return;
+    await fetch(`/api/company/${encodeURIComponent(company.id)}/suppress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, reason }),
+    });
+    fetchData(showSuppressed);
+  }
+
+  async function restoreCompany(company) {
+    await fetch(`/api/company/${encodeURIComponent(company.id)}/suppress`, { method: "DELETE" });
+    fetchData(showSuppressed);
+  }
+
   const stateCounts = {};
   companies.forEach((c) => { stateCounts[c.workflow_state] = (stateCounts[c.workflow_state] || 0) + 1; });
   const analysisReadyCount = companies.filter((c) => c.analysis_ready).length;
@@ -261,6 +279,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               <th style={{ padding: "10px 14px" }}>Growth</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Analysis</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -283,6 +302,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     <a href="#" onClick={(e) => { e.preventDefault(); onSelectCompany && onSelectCompany(c.id); }} style={{ color: "#0075EB", textDecoration: "none" }}>
                       {c.name}
                     </a>
+                    {c.name_needs_enrichment && (
+                      <div style={{ fontSize: 11, color: "#888", fontWeight: 400, marginTop: 2 }}>
+                        Company number: {c.company_number}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "10px 14px", color: "#666", fontSize: 13 }}>{c.industry}</td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
@@ -321,6 +345,33 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      {c.suppressed || c.excluded ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); restoreCompany(c); }}
+                          style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #0a8754", background: "#fff", color: "#0a8754", cursor: "pointer", fontSize: 11 }}
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); suppressCompany(c, "temporary"); }}
+                            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #f39c12", background: "#fff", color: "#92400e", cursor: "pointer", fontSize: 11 }}
+                          >
+                            Hold
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); suppressCompany(c, "permanent"); }}
+                            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #c0392b", background: "#fff", color: "#c0392b", cursor: "pointer", fontSize: 11 }}
+                          >
+                            Suppress
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

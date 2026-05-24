@@ -328,6 +328,34 @@ function getCompanyNumberFromId(id, company = null) {
   return id?.startsWith("ch-") ? id.replace("ch-", "") : id;
 }
 
+function canonicalCompanyId(idOrNumber) {
+  return idOrNumber?.startsWith("ch-") ? idOrNumber : `ch-${idOrNumber}`;
+}
+
+function displayCompanyName(name, companyNumber) {
+  return isPlaceholderCompanyName(name, companyNumber) ? "Name lookup needed" : name;
+}
+
+function operationalEntityScore(name = "", source = "", filingText = "") {
+  const haystack = `${name} ${source} ${filingText}`.toLowerCase();
+  let score = 0.5;
+  if (/\b(holdings?|investment|investments|property holding|group holding|spv|nominee|trustee)\b/.test(haystack)) score -= 0.25;
+  if (/\b(dormant|non[- ]trading|shell)\b/.test(haystack)) score -= 0.35;
+  if (/\b(trading|retail|manufactur|logistics|freight|services|operations|ecommerce|software|construction|hospitality|wholesale|distribution|payments?)\b/.test(haystack)) score += 0.15;
+  if (/\b(turnover|revenue|employees|staff|customers|sales|suppliers)\b/.test(haystack)) score += 0.1;
+  return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
+}
+
+function getManualSuppression(companyId, companyNumber = null) {
+  const exclusions = dbGetExclusions();
+  const identifiers = [companyId, companyNumber, companyNumber ? canonicalCompanyId(companyNumber) : null].filter(Boolean);
+  const excluded = identifiers.some((id) => exclusions.excluded_company_ids.includes(id));
+  if (excluded) return { suppressed: true, excluded: true, reason: "Manually excluded" };
+
+  const supp = isSuppressed(companyId);
+  return { ...supp, excluded: false };
+}
+
 function getManualStakeholders(companyId, company = null) {
   if (company?.stakeholders) return company.stakeholders;
   return getCompanyStakeholders(companyId);
@@ -596,9 +624,10 @@ app.get("/api/dashboard", (_req, res) => {
 });
 
 app.get("/api/unified-shortlist", (req, res) => {
-  const { limit, offset } = req.query;
+  const { limit, offset, show_suppressed } = req.query;
   const pageLimit = parseInt(limit) || 100;
   const pageOffset = parseInt(offset) || 0;
+  const includeSuppressed = show_suppressed === "true";
 
   const companies = getShortlistCompanies({
     min_turnover: getTurnoverThreshold(),
@@ -608,17 +637,24 @@ app.get("/api/unified-shortlist", (req, res) => {
 
   const totalCount = getShortlistCount(getTurnoverThreshold());
 
+  let excludedCount = 0;
+  let suppressedCount = 0;
+
   const entries = companies.map((c, idx) => {
     const companyId = `ch-${c.company_number}`;
     const ws = getCompanyState(companyId);
     const segment = guessTurnoverSegment(c.latest_turnover);
     const stored = getStoredScore(c.company_number);
     const analysisStatusValue = c.analysis_ready === 1 ? "completed" : c.analysis_status;
+    const manualSuppression = getManualSuppression(companyId, c.company_number);
+    const name = displayCompanyName(c.company_name, c.company_number);
+    const opScore = operationalEntityScore(c.company_name, c.source, c.raw_data);
 
     return {
       id: companyId,
       company_number: c.company_number,
-      name: c.company_name || `Company ${c.company_number}`,
+      name,
+      name_needs_enrichment: name === "Name lookup needed",
       industry: "—",
       turnover: c.latest_turnover,
       employee_count: stored?.employees || 0,
@@ -636,14 +672,29 @@ app.get("/api/unified-shortlist", (req, res) => {
       below_threshold: c.below_threshold === 1,
       scored: !!stored,
       source: c.source,
+      operational_entity_score: opScore,
+      suppressed: manualSuppression.suppressed,
+      excluded: manualSuppression.excluded,
+      suppression_reason: manualSuppression.reason || null,
       rank: pageOffset + idx + 1,
     };
+  }).filter((entry) => {
+    if (entry.excluded) {
+      excludedCount++;
+      return includeSuppressed;
+    }
+    if (entry.suppressed) {
+      suppressedCount++;
+      return includeSuppressed;
+    }
+    return true;
   });
 
   entries.sort((a, b) => {
     if (a.composite_score !== null && b.composite_score !== null) return b.composite_score - a.composite_score;
     if (a.composite_score !== null) return -1;
     if (b.composite_score !== null) return 1;
+    if (a.operational_entity_score !== b.operational_entity_score) return b.operational_entity_score - a.operational_entity_score;
     return b.turnover - a.turnover;
   });
   entries.forEach((e, i) => { e.rank = pageOffset + i + 1; });
@@ -657,6 +708,8 @@ app.get("/api/unified-shortlist", (req, res) => {
       offset: pageOffset,
       threshold: getTurnoverThreshold(),
       scored_count: entries.filter((e) => e.scored).length,
+      excluded: excludedCount,
+      suppressed: suppressedCount,
     },
   });
 });
@@ -742,12 +795,15 @@ app.get("/api/company/:id", async (req, res) => {
       const ws = getCompanyState(id);
       const segment = guessTurnoverSegment(monitored.latest_turnover);
       const chLink = `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`;
+      const displayName = displayCompanyName(monitored.company_name, companyNumber);
+      const manualSuppression = getManualSuppression(`ch-${companyNumber}`, companyNumber);
 
       return res.json({
         company: {
           id: `ch-${companyNumber}`,
           company_number: companyNumber,
-          name: monitored.company_name || `Company ${companyNumber}`,
+          name: displayName,
+          name_needs_enrichment: displayName === "Name lookup needed",
           industry: "—",
           turnover: monitored.latest_turnover,
           employee_count: 0,
@@ -759,6 +815,10 @@ app.get("/api/company/:id", async (req, res) => {
           workflow_history: ws.history || [],
           below_threshold: monitored.below_threshold === 1,
           source: monitored.source,
+          suppressed: manualSuppression.suppressed,
+          excluded: manualSuppression.excluded,
+          suppression_reason: manualSuppression.reason || null,
+          operational_entity_score: operationalEntityScore(monitored.company_name, monitored.source, filings[0]?.raw_data),
           filings: filings.map((f) => ({
             date: f.filing_date,
             turnover: f.turnover,
@@ -886,6 +946,68 @@ app.patch("/api/company/:id/state", (req, res) => {
     previous_state: current.state,
     new_state,
     allowed_transitions: ALLOWED_TRANSITIONS[new_state],
+    history: updated.history,
+  });
+});
+
+app.post("/api/company/:id/suppress", (req, res) => {
+  const { id } = req.params;
+  const { type = "temporary", reason } = req.body || {};
+  const companyNumber = getCompanyNumberFromId(id);
+  const companyId = canonicalCompanyId(companyNumber);
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id || c.company_number === companyNumber);
+  const monitored = getMonitoredCompany(companyNumber);
+
+  if (!company && !monitored) return res.status(404).json({ error: "Company not found" });
+
+  if (type === "permanent") {
+    const exclusions = dbGetExclusions();
+    const ids = new Set(exclusions.excluded_company_ids || []);
+    ids.add(company?.id || companyId);
+    if (companyNumber) ids.add(companyNumber);
+    dbSetExclusions({ ...exclusions, excluded_company_ids: [...ids] });
+    return res.json({
+      company_id: company?.id || companyId,
+      suppression: { suppressed: true, excluded: true, reason: reason || "Manually excluded" },
+    });
+  }
+
+  const current = getCompanyState(company?.id || companyId);
+  const targetState = type === "hold" ? "held_for_review" : "revisit_later";
+  setCompanyWorkflowState(company?.id || companyId, current.state, targetState, reason || "Manually suppressed");
+  const updated = getCompanyState(company?.id || companyId);
+  res.json({
+    company_id: company?.id || companyId,
+    suppression: { suppressed: true, excluded: false, reason: reason || `Status: ${targetState}` },
+    workflow_state: updated.state,
+    history: updated.history,
+  });
+});
+
+app.delete("/api/company/:id/suppress", (req, res) => {
+  const { id } = req.params;
+  const companyNumber = getCompanyNumberFromId(id);
+  const COMPANIES = loadCompanies();
+  const company = COMPANIES.find((c) => c.id === id || c.company_number === companyNumber);
+  const companyId = company?.id || canonicalCompanyId(companyNumber);
+  const exclusions = dbGetExclusions();
+  const removeIds = new Set([id, companyId, companyNumber].filter(Boolean));
+  dbSetExclusions({
+    ...exclusions,
+    excluded_company_ids: (exclusions.excluded_company_ids || []).filter((item) => !removeIds.has(item)),
+  });
+
+  const current = getCompanyState(companyId);
+  if (SUPPRESSED_STATES.includes(current.state)) {
+    setCompanyWorkflowState(companyId, current.state, "new_candidate", "Manual suppression removed");
+  }
+
+  const updated = getCompanyState(companyId);
+  res.json({
+    company_id: companyId,
+    suppression: getManualSuppression(companyId, companyNumber),
+    workflow_state: updated.state,
     history: updated.history,
   });
 });
