@@ -142,6 +142,20 @@ db.exec(`
     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (job_id) REFERENCES import_jobs(id)
   );
+
+  CREATE TABLE IF NOT EXISTS analysis_queue (
+    company_number TEXT PRIMARY KEY,
+    company_name TEXT,
+    turnover REAL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT,
+    queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT,
+    error TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status);
 `);
 
 // --- Workflow State ---
@@ -361,7 +375,8 @@ export function getShortlistCompanies(filters = {}) {
       (SELECT cf.filing_date FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_date,
       (SELECT cf.turnover FROM company_filings cf WHERE cf.company_number = cm.company_number ORDER BY cf.filing_date DESC LIMIT 1) as latest_filing_turnover,
       EXISTS(SELECT 1 FROM company_filings cf WHERE cf.company_number = cm.company_number AND cf.raw_data IS NOT NULL) as has_filing_text,
-      EXISTS(SELECT 1 FROM settings s WHERE s.key = 'analysis_' || cm.company_number) as analysis_ready
+      EXISTS(SELECT 1 FROM settings s WHERE s.key = 'analysis_' || cm.company_number) as analysis_ready,
+      (SELECT aq.status FROM analysis_queue aq WHERE aq.company_number = cm.company_number) as analysis_status
     FROM company_monitor cm
     WHERE cm.status = 'active'
     AND cm.latest_turnover >= ?
@@ -383,6 +398,110 @@ export function getShortlistCompanies(filters = {}) {
 
 export function getShortlistCount(minTurnover = 15000000) {
   return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
+}
+
+// --- Analysis Queue ---
+
+export function enqueueAnalysisJob(job) {
+  db.prepare(`
+    INSERT INTO analysis_queue (company_number, company_name, turnover, status, source, queued_at, error)
+    VALUES (?, ?, ?, 'pending', ?, datetime('now'), NULL)
+    ON CONFLICT(company_number) DO UPDATE SET
+      company_name = COALESCE(excluded.company_name, analysis_queue.company_name),
+      turnover = COALESCE(excluded.turnover, analysis_queue.turnover),
+      source = COALESCE(excluded.source, analysis_queue.source),
+      status = CASE
+        WHEN analysis_queue.status IN ('failed', 'skipped') THEN 'pending'
+        ELSE analysis_queue.status
+      END,
+      queued_at = CASE
+        WHEN analysis_queue.status IN ('failed', 'skipped') THEN datetime('now')
+        ELSE analysis_queue.queued_at
+      END,
+      error = CASE
+        WHEN analysis_queue.status IN ('failed', 'skipped') THEN NULL
+        ELSE analysis_queue.error
+      END
+  `).run(job.company_number, job.company_name || null, job.turnover || null, job.source || null);
+}
+
+export function resetProcessingAnalysisJobs() {
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'pending', started_at = NULL, error = NULL
+    WHERE status = 'processing'
+  `).run();
+}
+
+export function claimNextAnalysisJob() {
+  const job = db.prepare(`
+    SELECT * FROM analysis_queue
+    WHERE status = 'pending'
+    ORDER BY queued_at ASC
+    LIMIT 1
+  `).get();
+  if (!job) return null;
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'processing', started_at = datetime('now'), error = NULL
+    WHERE company_number = ?
+  `).run(job.company_number);
+  return { ...job, status: "processing" };
+}
+
+export function completeAnalysisJob(companyNumber, status, error = null) {
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = ?, completed_at = datetime('now'), error = ?
+    WHERE company_number = ?
+  `).run(status, error, companyNumber);
+}
+
+export function getAnalysisQueueStats() {
+  const rows = db.prepare("SELECT status, COUNT(*) as count FROM analysis_queue GROUP BY status").all();
+  const counts = Object.fromEntries(rows.map((row) => [row.status, row.count]));
+  const current = db.prepare(`
+    SELECT company_number FROM analysis_queue
+    WHERE status = 'processing'
+    ORDER BY started_at ASC
+    LIMIT 1
+  `).get();
+  return {
+    pending: counts.pending || 0,
+    processing: counts.processing || 0,
+    completed: counts.completed || 0,
+    skipped: counts.skipped || 0,
+    failed: counts.failed || 0,
+    current_company: current?.company_number || null,
+  };
+}
+
+export function getAnalysisStatuses(companyNumbers = []) {
+  if (companyNumbers.length === 0) return {};
+  const placeholders = companyNumbers.map(() => "?").join(",");
+  const rows = db.prepare(`
+    SELECT company_number, status FROM analysis_queue
+    WHERE company_number IN (${placeholders})
+  `).all(...companyNumbers);
+  return Object.fromEntries(rows.map((row) => [row.company_number, row.status]));
+}
+
+export function clearAnalysisQueueForTests() {
+  db.prepare("DELETE FROM analysis_queue").run();
+}
+
+// --- Company Stakeholders ---
+
+function stakeholderKey(companyId) {
+  return `stakeholders_${companyId}`;
+}
+
+export function getCompanyStakeholders(companyId) {
+  return getSetting(stakeholderKey(companyId), []);
+}
+
+export function saveCompanyStakeholders(companyId, stakeholders) {
+  setSetting(stakeholderKey(companyId), stakeholders || []);
 }
 
 // --- Company Groups ---

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import PropTypes from "prop-types";
 
 const ACTION_COLORS = {
   imported: { bg: "#d1fae5", color: "#065f46" },
@@ -17,6 +18,12 @@ function Badge({ text, bg, color }) {
   );
 }
 
+Badge.propTypes = {
+  text: PropTypes.string.isRequired,
+  bg: PropTypes.string,
+  color: PropTypes.string,
+};
+
 function StatusBadge({ status }) {
   const meta = {
     running: { bg: "#0075EB", label: "Running" },
@@ -27,6 +34,10 @@ function StatusBadge({ status }) {
   const m = meta[status] || meta.pending;
   return <Badge text={m.label} bg={m.bg} color="#fff" />;
 }
+
+StatusBadge.propTypes = {
+  status: PropTypes.string,
+};
 
 export default function Import() {
   const [jobs, setJobs] = useState([]);

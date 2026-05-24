@@ -63,6 +63,26 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 5,
+    name: "add_analysis_queue",
+    up: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS analysis_queue (
+          company_number TEXT PRIMARY KEY,
+          company_name TEXT,
+          turnover REAL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          source TEXT,
+          queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+          started_at TEXT,
+          completed_at TEXT,
+          error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status);
+      `);
+    },
+  },
 ];
 
 export function runMigrations() {

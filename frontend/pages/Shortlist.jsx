@@ -98,6 +98,18 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
 
   useEffect(() => { fetchData(false); }, []);
 
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetch("/api/analysis/status")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.analysis?.running || data.analysis?.queued > 0) fetchData(showSuppressed);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [showSuppressed]);
+
   function toggleSuppressed() {
     const next = !showSuppressed;
     setShowSuppressed(next);
@@ -127,7 +139,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           <h2 style={{ margin: 0, fontSize: 20 }}>Shortlist</h2>
           {!loading && !error && (
             <span style={{ color: "#888", fontSize: 14 }}>
-              {filtered.length} of {companies.length} companies
+              {searchQuery.trim() || stateFilter !== "all"
+                ? `${filtered.length} filtered · ${meta?.total ?? companies.length} total`
+                : `${meta?.showing ?? companies.length} shown · ${meta?.total ?? companies.length} total`}
             </span>
           )}
         </div>
@@ -153,6 +167,16 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           >
             ↓ CSV
           </a>
+          <button
+            onClick={() => fetchData(showSuppressed)}
+            disabled={loading}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
+              background: "#fff", color: "#555", fontSize: 13, cursor: loading ? "wait" : "pointer",
+            }}
+          >
+            ↻ Refresh
+          </button>
           {onShowAddCompany && (
             <button
               onClick={onShowAddCompany}
@@ -281,11 +305,19 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     {c.growth_trend || "—"}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                    {c.analysis_ready
-                      ? <Badge text="Ready" bg="#0a8754" />
-                      : c.has_filing_text
-                        ? <Badge text="Queued" bg="#c27b00" />
-                        : <Badge text="No filing" bg="#6b7280" />}
+                    {c.analysis_ready ? (
+                      <Badge text="Ready" bg="#0a8754" />
+                    ) : c.analysis_status === "pending" ? (
+                      <Badge text="Queued" bg="#c27b00" />
+                    ) : c.analysis_status === "processing" ? (
+                      <Badge text="Analysing" bg="#0075EB" />
+                    ) : c.analysis_status === "failed" ? (
+                      <Badge text="Failed" bg="#c0392b" />
+                    ) : c.has_filing_text ? (
+                      <Badge text="Pending analysis" bg="#6b7280" />
+                    ) : (
+                      <Badge text="No filing" bg="#6b7280" />
+                    )}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />

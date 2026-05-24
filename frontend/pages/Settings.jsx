@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import PropTypes from "prop-types";
 
 const LAYER_LABELS = {
   product_fit: "Product Fit",
@@ -35,6 +36,13 @@ function WeightSlider({ layer, value, color, onChange }) {
   );
 }
 
+WeightSlider.propTypes = {
+  layer: PropTypes.string.isRequired,
+  value: PropTypes.number.isRequired,
+  color: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+};
+
 function SegmentWeightsCard({ segment, weights, onChange, total }) {
   const isValid = Math.abs(total - 1) < 0.02;
   return (
@@ -61,6 +69,13 @@ function SegmentWeightsCard({ segment, weights, onChange, total }) {
     </div>
   );
 }
+
+SegmentWeightsCard.propTypes = {
+  segment: PropTypes.string.isRequired,
+  weights: PropTypes.objectOf(PropTypes.number).isRequired,
+  onChange: PropTypes.func.isRequired,
+  total: PropTypes.number.isRequired,
+};
 
 export default function Settings() {
   const [config, setConfig] = useState(null);

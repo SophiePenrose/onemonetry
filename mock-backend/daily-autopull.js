@@ -4,6 +4,7 @@ import { getMonthlyAutoPullPlan } from "./monthly-autopull-planner.js";
 import { processZipInChunks } from "./stream-processor.js";
 import { createImportJob, updateImportJob, addImportLogEntry, getFilingCount, getMonitoredCompanyCount } from "./db.js";
 import { markZipsProcessed } from "./processed-zips.js";
+import { queueCompanyAnalysis } from "./analysis-queue.js";
 
 let autoPullTimer = null;
 let autoPullStatus = {
@@ -74,6 +75,7 @@ async function runMonthlyCheck() {
       console.log(`[AutoPull] Processing monthly: ${file.filename}`);
       try {
         const result = await processZipInChunks(file.url, file.filename, `monthly:${file.period}`, {});
+        queueCompanyAnalysis(result.companies, { source: "monthly_autopull" });
         console.log(`[AutoPull] ✅ Monthly ${file.filename}: ${result.qualifying} qualifying from ${result.total_files} files`);
       } catch (err) {
         console.log(`[AutoPull] ❌ Monthly ${file.filename}: ${err.message}`);
@@ -132,8 +134,8 @@ async function runAutoPullCycle() {
     console.log(`[AutoPull] Found ${unprocessed.length} new daily files to process`);
 
     const results = [];
-    for (const file of unprocessed) {
-      const jobId = `autopull-${Date.now()}`;
+    for (const [index, file] of unprocessed.entries()) {
+      const jobId = `autopull-${Date.now()}-${index}`;
       createImportJob(jobId, "daily_autopull", 0, { filename: file.filename, url: file.url });
 
       console.log(`[AutoPull] Processing: ${file.filename}`);
@@ -152,6 +154,7 @@ async function runAutoPullCycle() {
           addImportLogEntry(jobId, co.company_number, null, "imported",
             `£${(co.turnover / 1e6).toFixed(1)}M (${file.date})`, co.turnover);
         }
+        queueCompanyAnalysis(result.companies, { source: "daily_autopull" });
 
         updateImportJob(jobId, {
           status: "completed",
