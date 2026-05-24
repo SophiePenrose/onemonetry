@@ -31,6 +31,10 @@ const FORBIDDEN_PHRASES = [
   { pattern: /60[- ]?80%\s+cheaper/i, violation: "Unapproved claim (not in approved library)", deduction: 25 },
   { pattern: /\b(?:solution|innovative|cutting[- ]edge|state[- ]of[- ]the[- ]art)\b/i, violation: "Unapproved sales language", deduction: 25 },
   { pattern: /\b(?:free|guarantee|guaranteed|act\s+now|100%)\b/i, violation: "Spam or absolute language", deduction: 25 },
+  { pattern: /\{\{\s*(?:first_?name|job_?title|company_?name|company)\s*\}\}/i, violation: "Mail merge placeholder leaked", deduction: 25 },
+  { pattern: /\b(?:daughter|son|child|school|moved\s+from|moved\s+to|home address|where you live)\b/i, violation: "Creepy personal detail", deduction: 25 },
+  { pattern: /\b(?:tomorrow|today)\s+at\s+\d{1,2}(?::\d{2})?\s?(?:am|pm)?\b/i, violation: "Aggressive calendar ask", deduction: 25 },
+  { pattern: /\b30[- ]?minute\s+(?:demo|call|meeting)\b/i, violation: "Aggressive demo ask", deduction: 25 },
 ];
 
 const MINOR_DEDUCTIONS = [
@@ -67,7 +71,7 @@ function wordCount(text) {
 
 const UNCERTAINTY_TERMS = /\b(often|usually|typically|may|might|could|suggests|appears|in our experience|one pattern|worth checking|if relevant)\b/i;
 const OVERCERTAIN_INFERENCE = /\b(this means|this proves|you are|you have|you need|clearly|definitely|without doubt)\b/i;
-const INVASIVE_PHRASES = /\b(we know|we tracked|we can see your customers|your customers are already revolut users|we saw your customers)\b/i;
+const INVASIVE_PHRASES = /\b(we know|we tracked|we can see your customers|your customers are already revolut users|we saw your customers|daughter|son|school|moved from|moved to|where you live)\b/i;
 
 export function assessInferenceSafety(email) {
   const body = email.body || "";

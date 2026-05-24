@@ -18,6 +18,15 @@ This is a personal workflow tool, not an internal Revolut platform integration. 
 
 The user remains responsible for reviewing outreach, deciding what to send, and scheduling any send through approved tools such as YAMM.
 
+## Current user setup choices
+
+- People/contact enrichment should prioritise LinkedIn public profile research, company websites/team pages, news, and a Lusha-style contact enrichment tool chosen after review.
+- Sales Navigator is not assumed.
+- Email sending should use Google Sheets/YAMM export. The user reviews rows, adds missing emails, then schedules/sends.
+- The safety list should include opted-out people, bounced emails, and companies the user manually excludes.
+- Generated outreach should follow the user's preferred style: observant, commercially intelligent, operationally grounded, evidence-based, concise, low-ego, consultative, and relevant without being invasive.
+- Bad outreach patterns include scraped personal details, fake certainty, generic AI fluff, aggressive calendar asks, and obvious mail-merge placeholders.
+
 ## What is in this repo
 
 - `master_prompt_outline_v2.md` — the structured master outline and source-of-truth design spec.

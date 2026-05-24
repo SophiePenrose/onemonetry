@@ -61,4 +61,47 @@ describe("email QC calibration", () => {
     assert.ok(safety.issues.some((issue) => issue.issue.includes("creepy")));
     assert.ok(safety.issues.some((issue) => issue.issue.includes("Over-certain")));
   });
+
+  it("passes calibrated consultative outreach examples", () => {
+    const result = validateEmail(
+      {
+        subject: "FX visibility at Acme",
+        body: `Hi Sarah,
+
+Noticed Acme has expanded across several European entities over the last 12 months.
+
+We often see finance teams at that stage start running into friction around FX visibility, fragmented banking relationships, and reconciliation complexity as cross-border payment volume increases.
+
+There may be an opportunity to simplify parts of that operational layer, particularly around multicurrency management and treasury workflows.
+
+Worth a quick conversation if this is becoming an active area internally?
+
+Alex
+Account Executive | Revolut Business
+revolut.com/business
+
+To manage your sales outreach preferences or opt out, reply with your preference.
+Any information provided does not constitute financial, investment, or trading advice.`,
+      },
+      { isInitialOutreach: true }
+    );
+
+    assert.equal(result.pass, true);
+    assert.equal(result.metrics.inference_safety_level, "safe");
+  });
+
+  it("blocks creepy details, mail merge residue, and aggressive calendar asks", () => {
+    const result = validateEmail(
+      {
+        subject: "Quick demo tomorrow",
+        body: "Hi {{first_name}}, saw your daughter started school after you moved from Manchester to London. Are you free tomorrow at 2pm for a 30-minute demo?",
+      },
+      { isInitialOutreach: true }
+    );
+
+    assert.equal(result.pass, false);
+    assert.ok(result.issues.some((issue) => issue.violation.includes("Creepy personal detail")));
+    assert.ok(result.issues.some((issue) => issue.violation.includes("Mail merge placeholder")));
+    assert.ok(result.issues.some((issue) => issue.violation.includes("Aggressive")));
+  });
 });
