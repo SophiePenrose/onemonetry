@@ -16,6 +16,38 @@
 
 import db from "./db.js";
 
+const COMPLIANCE_FOOTER = "To manage your sales outreach preferences or opt out, reply with your preference.\nAny information provided does not constitute financial, investment, or trading advice.";
+
+function stripSignatureAndLegacyFooter(text) {
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
+
+  const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+    || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
+
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
+    lines.pop();
+  }
+
+  let removedSignatureMarkers = false;
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isSignatureLine(lines[lines.length - 1]))) {
+    if (isSignatureLine(lines[lines.length - 1])) removedSignatureMarkers = true;
+    lines.pop();
+  }
+
+  if (removedSignatureMarkers && lines.length > 0) {
+    const candidate = lines[lines.length - 1].trim();
+    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+      lines.pop();
+    }
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function exportSequenceForYAMM(sequenceId, options = {}) {
   const seq = db.prepare("SELECT * FROM email_sequences WHERE id = ?").get(sequenceId);
   if (!seq) return null;
@@ -25,7 +57,7 @@ export function exportSequenceForYAMM(sequenceId, options = {}) {
   ).all(sequenceId);
 
   const startDate = options.startDate ? new Date(options.startDate) : new Date();
-  const senderName = options.senderName || "[Your Name]";
+  const includeComplianceFooter = options.includeComplianceFooter !== false;
 
   const rows = [];
   let cumulativeDelay = 0;
@@ -41,17 +73,15 @@ export function exportSequenceForYAMM(sequenceId, options = {}) {
     if (sendDay === 0) sendDate.setDate(sendDate.getDate() + 1);
     if (sendDay === 6) sendDate.setDate(sendDate.getDate() + 2);
 
-    let body = step.body || "";
-    body = body.replace(/\[Your Name\]|\[AE_NAME\]/g, senderName);
-    body = body.replace(/\[AE_TITLE\]/g, options.title || "Account Executive");
-    body = body.replace(/\[Your Title\]/g, options.title || "Account Executive");
-
-    const footer = `\nTo manage your sales outreach preferences or opt out, reply with your preference.\nAny information provided does not constitute financial, investment, or trading advice.`;
+    let body = stripSignatureAndLegacyFooter(step.body || "");
+    if (includeComplianceFooter && !/To manage your sales outreach preferences/i.test(body)) {
+      body = `${body}\n\n${COMPLIANCE_FOOTER}`;
+    }
 
     rows.push({
       to: seq.stakeholder_email || "",
       subject: step.subject || "",
-      body: body + footer,
+      body,
       scheduled_date: sendDate.toISOString().split("T")[0],
       scheduled_time: options.sendTime || "08:30",
       step_number: step.step_number,

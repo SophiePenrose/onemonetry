@@ -104,6 +104,8 @@ db.exec(`
     company_name TEXT,
     last_checked_at TEXT,
     last_filing_date TEXT,
+    stale_filing_checked_at TEXT,
+    stale_filing_due_at TEXT,
     latest_turnover REAL,
     previous_turnover REAL,
     status TEXT DEFAULT 'active',
@@ -117,6 +119,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_monitor_status ON company_monitor(status);
   CREATE INDEX IF NOT EXISTS idx_monitor_threshold ON company_monitor(below_threshold);
+
+  CREATE TABLE IF NOT EXISTS company_charge_summary (
+    company_number TEXT PRIMARY KEY,
+    summary_json TEXT NOT NULL,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_charge_summary_updated ON company_charge_summary(updated_at);
 
   CREATE TABLE IF NOT EXISTS import_jobs (
     id TEXT PRIMARY KEY,
@@ -161,6 +173,82 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status);
   CREATE INDEX IF NOT EXISTS idx_analysis_queue_queued_at ON analysis_queue(queued_at);
 `);
+
+function ensureAnalysisQueueSchema() {
+  const columns = db.prepare("PRAGMA table_info(analysis_queue)").all();
+  const names = new Set(columns.map((col) => col.name));
+
+  if (!names.has("company_number")) {
+    throw new Error("analysis_queue table is missing required company_number column");
+  }
+
+  if (!names.has("company_name")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN company_name TEXT");
+  }
+  if (!names.has("source")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN source TEXT");
+  }
+  if (!names.has("status")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'queued'");
+  }
+
+  if (!names.has("attempts")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.has("last_error")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN last_error TEXT");
+  }
+  if (!names.has("queued_at")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN queued_at TEXT");
+  }
+  if (!names.has("started_at")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN started_at TEXT");
+  }
+  if (!names.has("completed_at")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN completed_at TEXT");
+  }
+  if (!names.has("updated_at")) {
+    db.exec("ALTER TABLE analysis_queue ADD COLUMN updated_at TEXT");
+  }
+
+  // Backfill safe defaults for legacy rows created before these columns existed.
+  db.exec(`
+    UPDATE analysis_queue SET status = COALESCE(status, 'queued');
+    UPDATE analysis_queue SET attempts = COALESCE(attempts, 0);
+    UPDATE analysis_queue SET queued_at = COALESCE(queued_at, datetime('now'));
+    UPDATE analysis_queue SET updated_at = COALESCE(updated_at, datetime('now'));
+  `);
+}
+
+ensureAnalysisQueueSchema();
+
+function ensureCompanyMonitorSchema() {
+  const columns = db.prepare("PRAGMA table_info(company_monitor)").all();
+  const names = new Set(columns.map((col) => col.name));
+
+  if (!names.has("stale_filing_checked_at")) {
+    db.exec("ALTER TABLE company_monitor ADD COLUMN stale_filing_checked_at TEXT");
+  }
+  if (!names.has("stale_filing_due_at")) {
+    db.exec("ALTER TABLE company_monitor ADD COLUMN stale_filing_due_at TEXT");
+  }
+
+  // Backfill due timestamps for stale filings in legacy rows.
+  db.exec(`
+    UPDATE company_monitor
+    SET stale_filing_due_at = datetime('now')
+    WHERE last_filing_date IS NOT NULL
+      AND date(last_filing_date) <= date('now', '-12 months')
+      AND stale_filing_due_at IS NULL;
+
+    UPDATE company_monitor
+    SET stale_filing_due_at = NULL
+    WHERE last_filing_date IS NOT NULL
+      AND date(last_filing_date) > date('now', '-12 months');
+  `);
+}
+
+ensureCompanyMonitorSchema();
 
 // --- Workflow State ---
 
@@ -298,8 +386,12 @@ export function upsertFiling(filing) {
   );
 }
 
-export function getFilingsForCompany(companyNumber, limit = 20) {
-  return db.prepare("SELECT * FROM company_filings WHERE company_number = ? ORDER BY filing_date DESC LIMIT ?").all(companyNumber, limit);
+export function getFilingsForCompany(companyNumber, limit = 240) {
+  const parsedLimit = Number.parseInt(String(limit), 10);
+  const safeLimit = Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(parsedLimit, 2000))
+    : 240;
+  return db.prepare("SELECT * FROM company_filings WHERE company_number = ? ORDER BY filing_date DESC LIMIT ?").all(companyNumber, safeLimit);
 }
 
 export function getLatestFiling(companyNumber) {
@@ -328,6 +420,29 @@ export function getMonitoredCompany(companyNumber) {
   return db.prepare("SELECT * FROM company_monitor WHERE company_number = ?").get(companyNumber);
 }
 
+export function upsertCompanyChargeSummary(companyNumber, summary, source = "companies_house_api") {
+  if (!companyNumber || !summary) return;
+  db.prepare(`
+    INSERT INTO company_charge_summary (company_number, summary_json, source, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(company_number) DO UPDATE SET
+      summary_json = excluded.summary_json,
+      source = excluded.source,
+      updated_at = datetime('now')
+  `).run(String(companyNumber), JSON.stringify(summary), source || "companies_house_api");
+}
+
+export function getCompanyChargeSummary(companyNumber, defaultValue = null) {
+  if (!companyNumber) return defaultValue;
+  const row = db.prepare("SELECT summary_json FROM company_charge_summary WHERE company_number = ?").get(String(companyNumber));
+  if (!row?.summary_json) return defaultValue;
+  try {
+    return JSON.parse(row.summary_json);
+  } catch {
+    return defaultValue;
+  }
+}
+
 export function getMonitoredCompanies(filters = {}) {
   let sql = "SELECT * FROM company_monitor WHERE 1=1";
   const params = [];
@@ -336,8 +451,19 @@ export function getMonitoredCompanies(filters = {}) {
   if (filters.no_filings !== undefined) { sql += " AND no_filings = ?"; params.push(filters.no_filings ? 1 : 0); }
   if (filters.needs_check) {
     sql += " AND (last_checked_at IS NULL OR last_checked_at < datetime('now', '-7 days'))";
+    sql += " AND (last_filing_date IS NULL OR date(last_filing_date) > date('now', '-12 months'))";
   }
-  sql += " ORDER BY latest_turnover DESC";
+  if (filters.stale_needs_check) {
+    sql += " AND last_filing_date IS NOT NULL";
+    sql += " AND date(last_filing_date) <= date('now', '-12 months')";
+    sql += " AND (stale_filing_due_at IS NULL OR stale_filing_due_at <= datetime('now'))";
+  }
+
+  if (filters.stale_needs_check) {
+    sql += " ORDER BY date(last_filing_date) ASC";
+  } else {
+    sql += " ORDER BY latest_turnover DESC";
+  }
   if (filters.limit) { sql += " LIMIT ?"; params.push(filters.limit); }
   if (filters.offset) { sql += " OFFSET ?"; params.push(filters.offset); }
   return db.prepare(sql).all(...params);
@@ -351,6 +477,8 @@ export function getMonitorStats() {
     no_filings: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE no_filings = 1").get().c,
     inactive: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE status IN ('dormant','dissolved','liquidation','inactive')").get().c,
     needs_check: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE last_checked_at IS NULL OR last_checked_at < datetime('now', '-7 days')").get().c,
+    stale_due: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE last_filing_date IS NOT NULL AND date(last_filing_date) <= date('now', '-12 months') AND (stale_filing_due_at IS NULL OR stale_filing_due_at <= datetime('now'))").get().c,
+    stale_total: db.prepare("SELECT COUNT(*) as c FROM company_monitor WHERE last_filing_date IS NOT NULL AND date(last_filing_date) <= date('now', '-12 months')").get().c,
   };
 }
 
@@ -600,6 +728,26 @@ export function markAnalysisQueueItemFailed(companyNumber, errorMessage) {
         last_error = ?
     WHERE company_number = ?
   `).run((errorMessage || "Unknown analysis error").slice(0, 1000), companyNumber);
+}
+
+export function reconcileAnalysisQueueWithStoredAnalyses() {
+  const result = db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'ready',
+        completed_at = COALESCE(completed_at, datetime('now')),
+        updated_at = datetime('now'),
+        last_error = NULL
+    WHERE status IN ('queued', 'failed')
+      AND EXISTS (
+        SELECT 1
+        FROM settings s
+        WHERE s.key = ('analysis_' || analysis_queue.company_number)
+          AND s.value IS NOT NULL
+          AND length(trim(s.value)) > 0
+      )
+  `).run();
+
+  return result.changes;
 }
 
 export function resetProcessingAnalysisQueueItems(reason = "Recovered processing jobs after restart") {

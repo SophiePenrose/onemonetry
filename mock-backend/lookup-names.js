@@ -8,7 +8,8 @@ async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function run() {
   if (!isCompaniesHouseConfigured()) {
-    console.log("❌ COMPANIES_HOUSE_API_KEY not set. Cannot look up names.");
+    console.log("❌ Companies House API key not set. Cannot look up names.");
+    console.log("Use COMPANIES_HOUSE_API_KEY (or CH_API_KEY). ");
     console.log("Set the environment variable and try again.");
     process.exit(1);
   }

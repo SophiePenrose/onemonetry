@@ -162,6 +162,24 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("GET /api/unified-shortlist/distribution", () => {
+    it("returns shortlist bucket distributions and top-window summaries", async () => {
+      const { status, data } = await fetchJSON("/api/unified-shortlist/distribution?limit=500&top_n=25");
+      assert.equal(status, 200);
+      assert.equal(typeof data.summary?.total, "number");
+      assert.equal(typeof data.summary?.confidence_distribution, "object");
+      assert.equal(typeof data.summary?.volatility_distribution, "object");
+      assert.equal(typeof data.summary?.velocity_distribution, "object");
+      assert.equal(data.summary?.top?.label, "top_25");
+      assert.ok(data.summary?.top?.count <= 25);
+      assert.equal(data.meta?.top_n, 25);
+
+      const velocityCounts = Object.values(data.summary?.velocity_distribution || {})
+        .reduce((sum, count) => sum + Number(count || 0), 0);
+      assert.equal(velocityCounts, data.summary?.total);
+    });
+  });
+
   describe("GET /api/dashboard", () => {
     it("returns pipeline, motion summary, and active prospects", async () => {
       const { status, data } = await fetchJSON("/api/dashboard");
