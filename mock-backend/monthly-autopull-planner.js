@@ -1,5 +1,11 @@
-export function getMonthlyAutoPullPlan(monthlyFiles) {
+export const MONTHLY_BACKFILL_FILE_COUNT = 24;
+
+export function getMonthlyAutoPullPlan(monthlyFiles, options = {}) {
+  const fileCount = options.fileCount ?? MONTHLY_BACKFILL_FILE_COUNT;
+  const filesToCheck = monthlyFiles.slice(0, fileCount);
+
   return {
-    filesToProcess: monthlyFiles.filter((file) => !file.processed),
+    filesToCheck,
+    filesToProcess: filesToCheck.filter((file) => !file.processed),
   };
 }

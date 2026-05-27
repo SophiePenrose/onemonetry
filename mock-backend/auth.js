@@ -9,6 +9,13 @@
 import crypto from "crypto";
 import db from "./db.js";
 
+function isAuthEnforced() {
+  const explicit = (process.env.ENFORCE_AUTH || "").toLowerCase();
+  if (explicit === "true") return true;
+  if (explicit === "false") return false;
+  return process.env.NODE_ENV === "production";
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS auth_config (
     key TEXT PRIMARY KEY,
@@ -77,6 +84,11 @@ export function cleanExpiredSessions() {
 }
 
 export function authMiddleware(req, res, next) {
+  // Default to open access in local/dev unless explicitly enforced.
+  if (!isAuthEnforced()) {
+    return next();
+  }
+
   if (req.path === "/api/auth/login" || req.path === "/api/auth/setup" || req.path === "/api/auth/status") {
     return next();
   }

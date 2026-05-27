@@ -229,18 +229,258 @@ Best,
   },
 };
 
+const HOLISTIC_MOTION = "Holistic Narrative";
+const PLACEHOLDER_TOKEN_PATTERN = /\[(?:rounded\s*figure|your\s*name|your\s*title|ae_name|ae_title)\]/i;
+const RESEARCH_HEADER_PREFIX = "Revolut X";
+const INTERNAL_MOTION_PRIORITY = {
+  "Cards": 0.95,
+  "FX": 0.9,
+  "FX Forwards": 0.85,
+  "Merchant Acquiring": 0.8,
+  "Revolut Pay": 0.75,
+  "API Integrations": 0.6,
+  "Spend Management": 0.5,
+  "Monthly Plans": 0.4,
+};
+
+function buildResearchHeaderSubject(companyName) {
+  const safeCompanyName = String(companyName || "Company").trim() || "Company";
+  return `${RESEARCH_HEADER_PREFIX} ${safeCompanyName} - I've done my research`;
+}
+
+function rankUseCasesByInternalPriority(useCases) {
+  return [...(useCases || [])]
+    .map((item) => ({
+      ...item,
+      _priorityWeight: INTERNAL_MOTION_PRIORITY[String(item?.product || "")] ?? 0,
+    }))
+    .sort((a, b) => {
+      if (b._priorityWeight !== a._priorityWeight) {
+        return b._priorityWeight - a._priorityWeight;
+      }
+      return String(a.product || "").localeCompare(String(b.product || ""));
+    })
+    .map(({ _priorityWeight, ...item }) => item);
+}
+
+function extractPlaceholderToken(text) {
+  const match = String(text || "").match(PLACEHOLDER_TOKEN_PATTERN);
+  return match ? match[0] : null;
+}
+
+function stripSignatureAndFooterForYamm(text) {
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
+
+  const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+    || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
+
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
+    lines.pop();
+  }
+
+  let removedSignatureMarkers = false;
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isSignatureLine(lines[lines.length - 1]))) {
+    if (isSignatureLine(lines[lines.length - 1])) removedSignatureMarkers = true;
+    lines.pop();
+  }
+
+  if (removedSignatureMarkers && lines.length > 0) {
+    const candidate = lines[lines.length - 1].trim();
+    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+      lines.pop();
+    }
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function getSequenceTemplates() {
-  return Object.keys(SEQUENCE_TEMPLATES);
+  return [HOLISTIC_MOTION, ...Object.keys(SEQUENCE_TEMPLATES)];
+}
+
+function uniqStrings(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items || []) {
+    const value = String(item || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function firstOrFallback(items, fallback) {
+  return (Array.isArray(items) && items.length > 0) ? items[0] : fallback;
+}
+
+function buildHolisticSteps(params) {
+  const {
+    companyName,
+    stakeholderName,
+    stakeholderRole,
+    analysis,
+    turnover,
+    senderName,
+  } = params;
+
+  const firstName = stakeholderName?.split(" ")[0] || "there";
+  const company = companyName || "your company";
+  const painList = uniqStrings((analysis?.pain_indicators || []).map((p) => p.pain || p));
+  const oppList = uniqStrings((analysis?.opportunities || []).map((o) => o.product || ""));
+  const competitorList = uniqStrings((analysis?.competitors_detected || []).map((c) => c.name || c));
+  const painSnippet = firstOrFallback(analysis?.evidence_snippets?.pains || [], null);
+  const fitSnippet = firstOrFallback(analysis?.evidence_snippets?.suitability || [], null);
+  const gapSnippet = firstOrFallback(analysis?.evidence_snippets?.gaps || [], null);
+  const narrative = analysis?.outreach_narrative || {};
+  const level5 = analysis?.level5_extraction || {};
+  const sequenceInputs = level5.sequence_inputs || {};
+  const painRegister = level5.pain_register || [];
+  const useCases = rankUseCasesByInternalPriority(level5.revolut_opportunity?.recommended_use_cases || []);
+
+  const primaryPain = firstOrFallback(painList, "payment and treasury inefficiency");
+  const primaryPath = firstOrFallback(oppList, "an operational finance first step");
+  const competitor = firstOrFallback(competitorList, "your current stack");
+  const turnoverBand = turnover ? `around £${(turnover / 1e6).toFixed(1)}M` : "mid-market scale";
+  const recommendedAngle = analysis?.recommended_approach || narrative.revolut_advantage || "a sequencing approach that starts from the highest-confidence pain and expands only where value is proven.";
+  const topPain = firstOrFallback(painRegister, null);
+  const topUseCase = firstOrFallback(useCases, null);
+  const secondUseCase = useCases.length > 1 ? useCases[1] : null;
+  const nowTrigger = sequenceInputs.now_trigger || "your latest filing context";
+  const quantifiedHook = sequenceInputs.quantified_hook || "a quantification pass after confirming your current provider rates";
+  const operationsHook = sequenceInputs.operations_hook || `teams operating at ${turnoverBand}`;
+  const governanceHook = sequenceInputs.governance_hook || competitor;
+  const objectionPreempt = sequenceInputs.objection_to_preempt || "This can usually run alongside existing facilities and ownership structures.";
+  const directorsPhrase = firstOrFallback(sequenceInputs.directors_language || [], null);
+  const roleLower = String(stakeholderRole || "").toLowerCase();
+  const roleAnchor = roleLower.includes("cfo") || roleLower.includes("finance")
+    ? "from a finance-control perspective"
+    : "from an operating-model perspective";
+  const fixedSubject = buildResearchHeaderSubject(company);
+
+  const steps = [
+    {
+      delay: 0,
+      subject: fixedSubject,
+      body: `Observation & Origin: ${nowTrigger || `${company} has a live finance execution signal in the latest filing`}. ${painSnippet?.quote ? `Source line: "${painSnippet.quote}".` : topPain?.evidence ? `Source line: "${topPain.evidence}".` : "Source: latest filing narrative and accounts context."}\n\nMain Pain Link: ${topPain?.inferred_problem || primaryPain}. This likely creates avoidable execution drag ${roleAnchor}.\n\nValue Path (Suggestions): Start with ${topUseCase?.product || primaryPath} to validate one high-confidence lane first, then expand only where data confirms value.\n\nIf useful, I can share the exact pain-to-action map we would use, including what we would not change initially.`,
+    },
+    {
+      delay: 3,
+      subject: fixedSubject,
+      body: `Observation & Origin: ${quantifiedHook}. ${fitSnippet?.quote ? `Source line: "${fitSnippet.quote}".` : "Source: filing signals on scale, complexity, and current process design."}\n\nMain Pain Link: ${operationsHook}. Without a controlled first-step sequence, teams at this scale often carry hidden cost and reconciliation overhead.\n\nValue Path (Suggestions): Prioritise ${topUseCase?.product || primaryPath}${secondUseCase ? `, then ${secondUseCase.product}` : ""}. ${topUseCase?.example_use_case || "Run the first lane in parallel with current setup to avoid disruption."}\n\nWould a one-page assumptions sheet be useful?`,
+    },
+    {
+      delay: 7,
+      subject: fixedSubject,
+      body: `Observation & Origin: Governance risk usually appears where strategy intent and day-to-day execution diverge; in your case that appears tied to ${governanceHook}. ${gapSnippet?.quote ? `Source line: "${gapSnippet.quote}".` : directorsPhrase ? `Source line: "${directorsPhrase}".` : "Source: filing context and operating narrative."}\n\nMain Pain Link: Left unaddressed, this typically shows up as avoidable delay, leakage, and fragmented accountability across finance workflows.\n\nValue Path (Suggestions): ${objectionPreempt} ${recommendedAngle} Keep scope tight at first: one lane, one owner, one measurement loop.\n\nIf useful, I can share the short brief we would use with a CFO/FD team to validate this in one pass.`,
+    },
+  ];
+
+  return steps.map((step, idx) => ({
+    step_number: idx + 1,
+    subject: step.subject,
+    body: step.body,
+    send_delay_days: step.delay,
+    status: "pending",
+  }));
+}
+
+function normalizeSteps(steps) {
+  return (steps || [])
+    .map((step, idx) => {
+      const stepNumber = Number.parseInt(String(step.step_number || idx + 1), 10);
+      const delay = Number.parseInt(String(step.send_delay_days || 0), 10);
+      const safeBody = stripSignatureAndFooterForYamm(String(step.body || "").trim());
+      const footer = stripSignatureAndFooterForYamm(String(step.footer || "").trim());
+      const mergedBody = [safeBody, footer].filter(Boolean).join("\n\n").trim();
+      return {
+        step_number: Number.isFinite(stepNumber) && stepNumber > 0 ? stepNumber : idx + 1,
+        subject: String(step.subject || "").trim() || `Step ${idx + 1}`,
+        body: mergedBody,
+        send_delay_days: Number.isFinite(delay) && delay >= 0 ? delay : 0,
+        status: String(step.status || "pending"),
+      };
+    })
+    .sort((a, b) => a.step_number - b.step_number);
+}
+
+export function saveGeneratedSequence(params) {
+  const {
+    id,
+    companyId,
+    companyName,
+    stakeholderName,
+    stakeholderRole,
+    stakeholderEmail,
+    motion,
+    steps,
+    sequenceStatus,
+  } = params;
+
+  const fixedSubject = companyName ? buildResearchHeaderSubject(companyName) : null;
+  const normalizedSteps = normalizeSteps(steps).map((step) => ({
+    ...step,
+    subject: fixedSubject || step.subject,
+  }));
+  if (!companyId || !stakeholderName || normalizedSteps.length === 0) return null;
+
+  const sequenceId = id || `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const resolvedMotion = motion || HOLISTIC_MOTION;
+
+  db.prepare(`
+    INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    sequenceId,
+    companyId,
+    stakeholderName,
+    stakeholderRole || null,
+    stakeholderEmail || null,
+    resolvedMotion,
+    sequenceStatus || "draft"
+  );
+
+  for (const step of normalizedSteps) {
+    db.prepare(`
+      INSERT INTO email_steps (sequence_id, step_number, subject, body, send_delay_days, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(sequenceId, step.step_number, step.subject, step.body, step.send_delay_days, step.status || "pending");
+  }
+
+  return { id: sequenceId, steps: normalizedSteps, motion: resolvedMotion };
 }
 
 export function generateSequence(params) {
   const { companyId, companyName, stakeholderName, stakeholderRole, motion, analysis, turnover, employeeCount, industry } = params;
 
-  const template = SEQUENCE_TEMPLATES[motion];
-  if (!template) return null;
+  const requestedMotion = motion && SEQUENCE_TEMPLATES[motion] ? motion : HOLISTIC_MOTION;
+  const senderName = String(getSetting("sender_name", "") || "").trim();
+
+  let steps = [];
+
+  if (requestedMotion === HOLISTIC_MOTION) {
+    steps = buildHolisticSteps({
+      companyName,
+      stakeholderName,
+      stakeholderRole,
+      analysis,
+      turnover,
+      employeeCount,
+      industry,
+      senderName,
+    });
+  }
+
+  const template = requestedMotion === HOLISTIC_MOTION ? null : SEQUENCE_TEMPLATES[requestedMotion];
+  if (!template && requestedMotion !== HOLISTIC_MOTION) return null;
 
   const firstName = stakeholderName?.split(" ")[0] || "there";
-  const senderName = getSetting("sender_name", "[Your Name]");
 
   const internationalDetail = analysis?.international_exposure?.present
     ? ` (${analysis.international_exposure.details})`
@@ -269,36 +509,35 @@ export function generateSequence(params) {
   };
 
   const sequenceId = `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const fixedSubject = buildResearchHeaderSubject(companyName || "Company");
 
-  const steps = template.steps.map((step, idx) => {
-    let subject = step.subject_template;
-    let body = step.body_template;
-    for (const [key, val] of Object.entries(vars)) {
-      subject = subject.replaceAll(key, val);
-      body = body.replaceAll(key, val);
-    }
-    return {
-      step_number: idx + 1,
-      subject,
-      body,
-      send_delay_days: step.delay,
-      status: "pending",
-    };
-  });
-
-  db.prepare(`
-    INSERT INTO email_sequences (id, company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'draft')
-  `).run(sequenceId, companyId, stakeholderName, stakeholderRole || null, params.stakeholderEmail || null, motion);
-
-  for (const step of steps) {
-    db.prepare(`
-      INSERT INTO email_steps (sequence_id, step_number, subject, body, send_delay_days, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `).run(sequenceId, step.step_number, step.subject, step.body, step.send_delay_days);
+  if (template) {
+    steps = template.steps.map((step, idx) => {
+      let body = step.body_template;
+      for (const [key, val] of Object.entries(vars)) {
+        body = body.replaceAll(key, val);
+      }
+      return {
+        step_number: idx + 1,
+        subject: fixedSubject,
+        body,
+        send_delay_days: step.delay,
+        status: "pending",
+      };
+    });
   }
 
-  return { id: sequenceId, steps };
+  return saveGeneratedSequence({
+    id: sequenceId,
+    companyId,
+    companyName,
+    stakeholderName,
+    stakeholderRole,
+    stakeholderEmail: params.stakeholderEmail,
+    motion: requestedMotion,
+    steps,
+    sequenceStatus: "draft",
+  });
 }
 
 export function getSequencesForCompany(companyId) {
@@ -337,6 +576,50 @@ export function updateStepContent(sequenceId, stepNumber, subject, body) {
 export function deleteSequence(sequenceId) {
   db.prepare("DELETE FROM email_steps WHERE sequence_id = ?").run(sequenceId);
   db.prepare("DELETE FROM email_sequences WHERE id = ?").run(sequenceId);
+}
+
+export function purgePlaceholderSequencesForCompany(companyId, options = {}) {
+  const dryRun = options.dryRun === true;
+  const rows = db.prepare("SELECT id, created_at FROM email_sequences WHERE company_id = ? ORDER BY created_at DESC").all(companyId);
+  const matches = [];
+
+  for (const row of rows) {
+    const steps = db.prepare("SELECT step_number, subject, body FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(row.id);
+    let matchDetail = null;
+
+    for (const step of steps) {
+      const token = extractPlaceholderToken(`${step.subject || ""}\n${step.body || ""}`);
+      if (!token) continue;
+      matchDetail = {
+        step_number: step.step_number,
+        token,
+      };
+      break;
+    }
+
+    if (!matchDetail) continue;
+
+    matches.push({
+      id: row.id,
+      created_at: row.created_at,
+      ...matchDetail,
+    });
+  }
+
+  if (!dryRun) {
+    for (const match of matches) {
+      deleteSequence(match.id);
+    }
+  }
+
+  return {
+    company_id: companyId,
+    dry_run: dryRun,
+    scanned_sequences: rows.length,
+    matched_sequences: matches.length,
+    deleted_sequences: dryRun ? 0 : matches.length,
+    matches,
+  };
 }
 
 export { SEQUENCE_TEMPLATES };

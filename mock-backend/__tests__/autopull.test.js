@@ -60,14 +60,46 @@ describe("daily auto-pull planning", () => {
 });
 
 describe("monthly auto-pull planning", () => {
-  it("processes unprocessed current and archive monthly files", () => {
-    const currentFile = { filename: "Accounts_Monthly_Data-April2026.zip", source: "current", processed: false };
-    const archiveFile = { filename: "Accounts_Monthly_Data-May2024.zip", source: "archive", processed: false };
-    const processedArchiveFile = { filename: "Accounts_Monthly_Data-June2024.zip", source: "archive", processed: true };
+  it("processes unprocessed archive files inside the latest 24-month backfill window", () => {
+    const files = [
+      ...Array.from({ length: 13 }, (_, index) => ({
+        filename: `current-${index + 1}.zip`,
+        source: "current",
+        processed: false,
+      })),
+      ...Array.from({ length: 11 }, (_, index) => ({
+        filename: `archive-in-window-${index + 1}.zip`,
+        source: "archive",
+        processed: false,
+      })),
+      {
+        filename: "archive-outside-window.zip",
+        source: "archive",
+        processed: false,
+      },
+    ];
 
-    const plan = getMonthlyAutoPullPlan([currentFile, archiveFile, processedArchiveFile]);
+    const plan = getMonthlyAutoPullPlan(files);
 
-    assert.deepEqual(plan.filesToProcess, [currentFile, archiveFile]);
+    assert.equal(plan.filesToCheck.length, 24);
+    assert.equal(plan.filesToProcess.length, 24);
+    assert.ok(plan.filesToProcess.some((file) => file.source === "archive"));
+    assert.equal(
+      plan.filesToProcess.some((file) => file.filename === "archive-outside-window.zip"),
+      false
+    );
+  });
+
+  it("skips processed files within the latest 24-month backfill window", () => {
+    const files = [
+      { filename: "Accounts_Monthly_Data-April2026.zip", source: "current", processed: true },
+      { filename: "Accounts_Monthly_Data-March2026.zip", source: "current", processed: false },
+      { filename: "Accounts_Monthly_Data-February2026.zip", source: "archive", processed: false },
+    ];
+
+    const plan = getMonthlyAutoPullPlan(files);
+
+    assert.deepEqual(plan.filesToProcess, [files[1], files[2]]);
   });
 });
 
