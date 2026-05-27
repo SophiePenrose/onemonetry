@@ -5,7 +5,7 @@ const LAYER_LABELS = {
   commercial_value: "Commercial Value",
   pain_strength: "Pain Strength",
   urgency: "Urgency",
-  competitor_context: "Competitor Context",
+  competitor_context: "Current Stack Context",
 };
 
 const LAYER_COLORS = {
@@ -69,6 +69,17 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [integrationStatus, setIntegrationStatus] = useState(null);
+  const [integrationLoading, setIntegrationLoading] = useState(false);
+
+  function loadIntegrationStatus() {
+    setIntegrationLoading(true);
+    fetch("/api/integrations/status")
+      .then((r) => r.json())
+      .then((d) => setIntegrationStatus(d))
+      .catch(() => setIntegrationStatus(null))
+      .finally(() => setIntegrationLoading(false));
+  }
 
   useEffect(() => {
     fetch("/api/scoring-weights")
@@ -79,6 +90,10 @@ export default function Settings() {
         setPropensityWeight(d.propensity_weight);
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadIntegrationStatus();
   }, []);
 
   useEffect(() => {
@@ -215,6 +230,57 @@ export default function Settings() {
             {Math.round(propensityWeight * 100)}%
           </span>
         </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <h4 style={{ margin: 0, fontSize: 15 }}>API Integrations Setup</h4>
+          <button
+            onClick={loadIntegrationStatus}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+              cursor: "pointer", fontSize: 12, color: "#555",
+            }}
+          >
+            Refresh Status
+          </button>
+        </div>
+
+        {integrationLoading && (
+          <div style={{ fontSize: 12, color: "#888" }}>Checking integration status...</div>
+        )}
+
+        {!integrationLoading && integrationStatus?.integrations && (
+          <div>
+            {Object.entries(integrationStatus.integrations).map(([name, cfg]) => (
+              <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333", textTransform: "capitalize" }}>{name.replace(/_/g, " ")}</div>
+                  <div style={{ fontSize: 12, color: "#777" }}>{cfg.purpose}</div>
+                  {cfg.env_var && <div style={{ fontSize: 11, color: "#999" }}>env: {cfg.env_var}</div>}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cfg.configured ? "#166534" : cfg.required ? "#991b1b" : "#92400e" }}>
+                  {cfg.configured ? "Configured" : cfg.required ? "Missing (required)" : "Not configured"}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 10, fontSize: 12, color: integrationStatus.ready_for_production ? "#166534" : "#991b1b", fontWeight: 600 }}>
+              {integrationStatus.ready_for_production
+                ? "Required integrations are configured."
+                : `Missing required: ${(integrationStatus.missing_required || []).join(", ")}`}
+            </div>
+
+            {integrationStatus.env_template?.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>Suggested .env entries</div>
+                <pre style={{ margin: 0, background: "#f8f9fb", border: "1px solid #eceff3", borderRadius: 6, padding: 10, fontSize: 11, overflowX: "auto" }}>
+                  {integrationStatus.env_template.join("\n")}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {preview && preview.length > 0 && (

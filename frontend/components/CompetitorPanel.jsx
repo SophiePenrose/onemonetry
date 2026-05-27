@@ -8,11 +8,13 @@ const STRENGTH_META = {
   absent: { label: "None", color: "#6b7280", bg: "#f3f4f6" },
 };
 
-export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
+export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", product: "", strength: "medium", notes: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const waitingForAnalysis = analysisStatus === "queued";
+  const analysisFailed = analysisStatus === "failed";
 
   async function handleAdd(e) {
     e.preventDefault();
@@ -36,7 +38,7 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
   }
 
   async function handleDelete(competitor, idx) {
-    if (!confirm("Remove this competitor?")) return;
+    if (!confirm("Remove this stack entry?")) return;
     setError(null);
     try {
       const deleteIdx = competitor._manual_index ?? idx;
@@ -54,13 +56,13 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <h3 style={{ fontSize: 16, margin: 0 }}>Competitors</h3>
+        <h3 style={{ fontSize: 16, margin: 0 }}>Current Tech Stack</h3>
         {companyId && (
           <button onClick={() => setShowForm(!showForm)} style={{
             padding: "6px 14px", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer",
             background: showForm ? "#f3f4f6" : "#0075EB", color: showForm ? "#555" : "#fff",
           }}>
-            {showForm ? "Cancel" : "+ Add Competitor"}
+            {showForm ? "Cancel" : "+ Add Stack Entry"}
           </button>
         )}
       </div>
@@ -68,9 +70,9 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
       {showForm && (
         <form onSubmit={handleAdd} style={{ background: "#f8f9fb", borderRadius: 6, padding: 14, marginBottom: 14, border: "1px solid #e0e3e8" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <div><label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Name *</label>
+            <div><label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Provider / Tool *</label>
               <input style={inputStyle} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Worldpay" /></div>
-            <div><label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Product Motion</label>
+            <div><label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Category</label>
               <input style={inputStyle} value={form.product} onChange={(e) => setForm({ ...form, product: e.target.value })} placeholder="e.g. Merchant Acquiring" /></div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginBottom: 10 }}>
@@ -89,7 +91,7 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
             padding: "6px 18px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff",
             fontWeight: 600, fontSize: 13, cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.6 : 1,
           }}>
-            {submitting ? "Saving…" : "Add Competitor"}
+            {submitting ? "Saving…" : "Add Stack Entry"}
           </button>
         </form>
       )}
@@ -97,7 +99,13 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
       {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
 
       {(!competitors || competitors.length === 0) && !showForm && (
-        <div style={{ color: "#888", fontSize: 13 }}>No competitor data. Click &quot;Add Competitor&quot; to start mapping the competitive landscape.</div>
+        <div style={{ color: "#888", fontSize: 13 }}>
+          {waitingForAnalysis
+            ? "Tech stack inference is in progress. Entries should appear automatically once analysis completes."
+            : analysisFailed
+              ? "Stack inference failed on last run. Add entries manually now, then rerun analysis later."
+              : "No stack data. Click \"Add Stack Entry\" to map the current provider setup."}
+        </div>
       )}
 
       {competitors && competitors.length > 0 && (
@@ -118,6 +126,16 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated }) {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, color: "#555" }}>{c.notes}</div>
+                  {c.snippet && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#666", background: "#fff", border: "1px solid #eceff3", borderRadius: 6, padding: "6px 8px" }}>
+                      "{c.snippet}"
+                    </div>
+                  )}
+                  {c.inferred_advantage && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#0b3b74", background: "#eff6ff", borderRadius: 6, padding: "6px 8px" }}>
+                      Inferred advantage: {c.inferred_advantage}
+                    </div>
+                  )}
                 </div>
                 <div style={{ flexShrink: 0 }}>
                   <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 10, fontSize: 11, fontWeight: 600, color: sm.color, background: sm.bg }}>
@@ -137,4 +155,5 @@ CompetitorPanel.propTypes = {
   competitors: PropTypes.array,
   companyId: PropTypes.string,
   onUpdated: PropTypes.func,
+  analysisStatus: PropTypes.string,
 };

@@ -140,15 +140,56 @@ export default function CompanyAnalysis({ companyNumber, initialAnalysis }) {
             </div>
           )}
 
-          {/* Competitors */}
+          {/* Current stack */}
           {analysis.competitors_detected?.length > 0 && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Competitors Detected</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Current Stack Signals</div>
               {analysis.competitors_detected.map((c, idx) => (
                 <div key={idx} style={{ fontSize: 13, color: "#333", background: "#fff7ed", padding: "8px 12px", borderRadius: 6, marginBottom: 6, borderLeft: "3px solid #e67e22" }}>
-                  <strong>{c.name}</strong>{c.product ? ` · ${c.product}` : ""}{c.displacement_angle ? ` — ${c.displacement_angle}` : ""}
+                  <strong>{c.name}</strong>{c.product ? ` · ${c.product}` : ""}{c.displacement_angle ? ` - ${c.displacement_angle}` : ""}
+                  {c.inferred_advantage && (
+                    <div style={{ marginTop: 4, color: "#0b3b74", fontSize: 12 }}>Advantage angle: {c.inferred_advantage}</div>
+                  )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {analysis.evidence_snippets && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 8 }}>Scoring Proof Snippets</div>
+              {[
+                { key: "pains", label: "Pain" },
+                { key: "suitability", label: "Suitability" },
+                { key: "competitors", label: "Current Stack" },
+              ].map((group) => (
+                <div key={group.key} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: 4 }}>{group.label}</div>
+                  {(analysis.evidence_snippets[group.key] || []).slice(0, 2).map((item, idx) => (
+                    <div key={`${group.key}-${idx}`} style={{ background: "#fafbfc", border: "1px solid #eceff3", borderRadius: 6, padding: "6px 8px", fontSize: 12, color: "#444", marginBottom: 4 }}>
+                      "{item.quote}"{item.insight ? ` - ${item.insight}` : ""}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {analysis.outreach_narrative && (
+            <div style={{ marginBottom: 16, padding: "10px 12px", background: "#f8fafc", borderRadius: 6, borderLeft: "3px solid #2563eb" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Pain-to-Communication Link</div>
+              {analysis.outreach_narrative.primary_pains?.length > 0 && (
+                <div style={{ fontSize: 13, color: "#333", marginBottom: 4 }}><strong>Pains:</strong> {analysis.outreach_narrative.primary_pains.join(", ")}</div>
+              )}
+              {analysis.outreach_narrative.gaps_we_can_fill?.length > 0 && (
+                <div style={{ fontSize: 13, color: "#333", marginBottom: 4 }}><strong>Gaps:</strong> {analysis.outreach_narrative.gaps_we_can_fill.join(" ")}</div>
+              )}
+              {analysis.outreach_narrative.execution_plan && (
+                <div style={{ fontSize: 13, color: "#333", marginBottom: 4 }}><strong>Execution:</strong> {analysis.outreach_narrative.execution_plan}</div>
+              )}
+              {analysis.outreach_narrative.communication_strategy && (
+                <div style={{ fontSize: 13, color: "#333" }}><strong>Comms:</strong> {analysis.outreach_narrative.communication_strategy}</div>
+              )}
             </div>
           )}
 

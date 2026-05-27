@@ -27,18 +27,77 @@ StatCard.propTypes = { label: PropTypes.string.isRequired, value: PropTypes.node
 export default function Home({ onNavigateToCompany }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [turnoverBand, setTurnoverBand] = useState("all");
+  const [sortBy, setSortBy] = useState("turnover");
+  const [sortDir, setSortDir] = useState("desc");
+  const [companySearch, setCompanySearch] = useState("");
+  const [landingCompanies, setLandingCompanies] = useState([]);
+  const [landingLoading, setLandingLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/dashboard")
       .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false); })
+      .then((d) => {
+        setData(d);
+        setLandingCompanies(d.top_companies || []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    setLandingLoading(true);
+    const params = new URLSearchParams({
+      limit: "150",
+      sort_by: sortBy,
+      sort_dir: sortDir,
+      turnover_band: turnoverBand,
+    });
+
+    fetch(`/api/unified-shortlist?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setLandingCompanies(d.companies || []);
+      })
+      .catch(() => {})
+      .finally(() => setLandingLoading(false));
+  }, [turnoverBand, sortBy, sortDir]);
 
   if (loading) return <div style={{ color: "#888", padding: 24 }}>Loading dashboard…</div>;
   if (!data) return <div style={{ color: "#c0392b", padding: 24 }}>Failed to load dashboard.</div>;
 
   const turnoverDist = data.turnover_distribution || {};
+  const filteredLandingCompanies = companySearch.trim()
+    ? landingCompanies.filter((c) =>
+        String(c.name || "").toLowerCase().includes(companySearch.toLowerCase())
+        || String(c.company_number || "").toLowerCase().includes(companySearch.toLowerCase())
+      )
+    : landingCompanies;
+  const visibleLandingCompanies = filteredLandingCompanies.slice(0, 20);
+
+  function handleColumnSort(field) {
+    if (sortBy === field) {
+      setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+      return;
+    }
+    setSortBy(field);
+    setSortDir("desc");
+  }
+
+  function renderSortLabel(field, label) {
+    if (sortBy !== field) return label;
+    return `${label} ${sortDir === "desc" ? "↓" : "↑"}`;
+  }
+
+  const headerButtonStyle = {
+    border: "none",
+    background: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    color: "inherit",
+    cursor: "pointer",
+  };
 
   return (
     <div>
@@ -103,20 +162,67 @@ export default function Home({ onNavigateToCompany }) {
       </div>
 
       <div>
-        <h4 style={{ margin: "0 0 12px", fontSize: 15 }}>Top Companies by Turnover</h4>
-        {data.top_companies?.length > 0 ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <h4 style={{ margin: 0, fontSize: 15 }}>Landing List by Turnover</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <input
+              type="text"
+              value={companySearch}
+              onChange={(e) => setCompanySearch(e.target.value)}
+              placeholder="Search company number or name"
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, minWidth: 220 }}
+            />
+            <select
+              value={turnoverBand}
+              onChange={(e) => setTurnoverBand(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, background: "#fff" }}
+            >
+              <option value="all">All turnover bands</option>
+              <option value="15-25">£15M-£25M</option>
+              <option value="25-50">£25M-£50M</option>
+              <option value="50-100">£50M-£100M</option>
+              <option value="100-500">£100M-£500M</option>
+              <option value="500+">£500M+</option>
+            </select>
+            <button
+              onClick={() => setSortDir((prev) => (prev === "desc" ? "asc" : "desc"))}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 13 }}
+            >
+              {sortBy} · {sortDir === "desc" ? "↓ Desc" : "↑ Asc"}
+            </button>
+          </div>
+        </div>
+        {landingLoading ? (
+          <div style={{ background: "#fff", borderRadius: 8, padding: 18, color: "#888" }}>Refreshing landing list…</div>
+        ) : visibleLandingCompanies.length > 0 ? (
           <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
             <thead>
               <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
                 <th style={{ padding: "10px 16px" }}>#</th>
-                <th style={{ padding: "10px 16px" }}>Company</th>
-                <th style={{ padding: "10px 16px", textAlign: "center" }}>Segment</th>
-                <th style={{ padding: "10px 16px", textAlign: "right" }}>Turnover</th>
-                <th style={{ padding: "10px 16px", textAlign: "center" }}>Filings</th>
+                <th style={{ padding: "10px 16px" }}>
+                  <button type="button" onClick={() => handleColumnSort("name")} style={headerButtonStyle}>
+                    {renderSortLabel("name", "Company")}
+                  </button>
+                </th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>
+                  <button type="button" onClick={() => handleColumnSort("segment")} style={headerButtonStyle}>
+                    {renderSortLabel("segment", "Segment")}
+                  </button>
+                </th>
+                <th style={{ padding: "10px 16px", textAlign: "right" }}>
+                  <button type="button" onClick={() => handleColumnSort("turnover")} style={headerButtonStyle}>
+                    {renderSortLabel("turnover", "Turnover")}
+                  </button>
+                </th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>
+                  <button type="button" onClick={() => handleColumnSort("filing_count")} style={headerButtonStyle}>
+                    {renderSortLabel("filing_count", "Filings")}
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {data.top_companies.map((c, idx) => (
+              {visibleLandingCompanies.map((c, idx) => (
                 <tr
                   key={c.id}
                   style={{ borderBottom: "1px solid #eee", cursor: "pointer" }}
@@ -146,7 +252,7 @@ export default function Home({ onNavigateToCompany }) {
           </table>
         ) : (
           <div style={{ background: "#fff", borderRadius: 8, padding: 24, textAlign: "center", color: "#888" }}>
-            No companies loaded yet. Import data from the Import tab.
+            No companies match the selected turnover band/search.
           </div>
         )}
       </div>

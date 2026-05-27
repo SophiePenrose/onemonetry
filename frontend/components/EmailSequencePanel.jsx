@@ -68,14 +68,22 @@ CopyButton.propTypes = {
 export default function EmailSequencePanel({ companyId, companyName, stakeholders, keyPeople, motions }) {
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState({});
+  const [guidance, setGuidance] = useState(null);
   const [showGenerate, setShowGenerate] = useState(false);
   const [expandedSeq, setExpandedSeq] = useState(null);
   const [editingStep, setEditingStep] = useState(null);
   const [form, setForm] = useState({ name: "", role: "", email: "", motion: "" });
   const [generating, setGenerating] = useState(false);
+  const [purgingLegacy, setPurgingLegacy] = useState(false);
 
   useEffect(() => {
-    fetch("/api/email/templates").then((r) => r.json()).then((d) => setTemplates(d.templates || {})).catch(() => {});
+    fetch("/api/email/templates")
+      .then((r) => r.json())
+      .then((d) => {
+        setTemplates(d.templates || {});
+        setGuidance(d.guidance || null);
+      })
+      .catch(() => {});
     if (companyId) loadSequences();
   }, [companyId]);
 
@@ -88,19 +96,21 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
 
   async function handleGenerate(e) {
     e.preventDefault();
-    if (!form.name || !form.motion) return;
+    if (!form.name) return;
     setGenerating(true);
     try {
+      const payload = {
+        company_id: companyId,
+        stakeholder_name: form.name,
+        stakeholder_role: form.role,
+        stakeholder_email: form.email,
+      };
+      if (form.motion) payload.motion = form.motion;
+
       const res = await fetch("/api/email/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          company_id: companyId,
-          stakeholder_name: form.name,
-          stakeholder_role: form.role,
-          stakeholder_email: form.email,
-          motion: form.motion,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setForm({ name: "", role: "", email: "", motion: "" });
@@ -136,6 +146,32 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
     loadSequences();
   }
 
+  async function handlePurgeLegacySequences() {
+    if (!companyId || purgingLegacy) return;
+    if (!confirm("Delete old drafts that still contain placeholder tokens like [Your Name] or [rounded figure]?")) return;
+
+    setPurgingLegacy(true);
+    try {
+      const res = await fetch(`/api/email/sequences/${encodeURIComponent(companyId)}/purge-placeholders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dry_run: false }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to purge legacy sequences");
+
+      const deleted = Number(data.deleted_sequences || 0);
+      alert(deleted > 0
+        ? `Deleted ${deleted} legacy placeholder sequence${deleted === 1 ? "" : "s"}.`
+        : "No legacy placeholder sequences found.");
+      loadSequences();
+    } catch (err) {
+      alert(err.message || "Failed to purge legacy sequences");
+    } finally {
+      setPurgingLegacy(false);
+    }
+  }
+
   const allPeople = [
     ...(keyPeople || []).map((p) => ({ ...p, source: "LLM" })),
     ...(stakeholders || []).map((s) => ({ name: s.name, role: s.role || s.title, source: "Manual" })),
@@ -148,15 +184,27 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <h3 style={{ fontSize: 16, margin: 0 }}>Email Sequences</h3>
-        <button
-          onClick={() => setShowGenerate(!showGenerate)}
-          style={{
-            padding: "6px 14px", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer",
-            background: showGenerate ? "#f3f4f6" : "#0075EB", color: showGenerate ? "#555" : "#fff",
-          }}
-        >
-          {showGenerate ? "Cancel" : "+ Generate Sequence"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={handlePurgeLegacySequences}
+            disabled={purgingLegacy}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 12, fontWeight: 600, cursor: purgingLegacy ? "wait" : "pointer",
+              background: "#fff", color: "#374151", opacity: purgingLegacy ? 0.7 : 1,
+            }}
+          >
+            {purgingLegacy ? "Cleaning..." : "Clean Legacy Drafts"}
+          </button>
+          <button
+            onClick={() => setShowGenerate(!showGenerate)}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              background: showGenerate ? "#f3f4f6" : "#0075EB", color: showGenerate ? "#555" : "#fff",
+            }}
+          >
+            {showGenerate ? "Cancel" : "+ Generate Sequence"}
+          </button>
+        </div>
       </div>
 
       {showGenerate && (
@@ -204,16 +252,43 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
           </div>
 
           <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Product Motion *</label>
+            <label style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>Sequence Strategy</label>
             <select style={inputStyle} value={form.motion} onChange={(e) => setForm({ ...form, motion: e.target.value })}>
-              <option value="">Select motion...</option>
+              <option value="">Auto (Level 5 holistic narrative)</option>
               {availableMotions.map((m) => (
                 <option key={m} value={m}>{m} ({templates[m]?.steps} steps)</option>
               ))}
             </select>
+            <div style={{ fontSize: 11, color: "#777", marginTop: 4 }}>
+              Auto mode runs an evidence-first 3-step sequence using filing insight, quantified operational angle, and governance narrative.
+            </div>
           </div>
 
-          <button type="submit" disabled={generating || !form.name || !form.motion} style={{
+          {guidance && (
+            <div style={{ marginBottom: 10, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 6 }}>Internal Revolut sequencing guardrails</div>
+              <div style={{ fontSize: 11, color: "#4b5563", marginBottom: 6 }}>
+                Header template: <strong>{guidance.header_template || "Revolut X [Company Name] - I've done my research"}</strong>
+              </div>
+              {Array.isArray(guidance.lead_with) && guidance.lead_with.length > 0 && (
+                <div style={{ fontSize: 11, color: "#374151", marginBottom: 4 }}>
+                  <strong>Lead with:</strong> {guidance.lead_with.join(" | ")}
+                </div>
+              )}
+              {Array.isArray(guidance.avoid_leading_with) && guidance.avoid_leading_with.length > 0 && (
+                <div style={{ fontSize: 11, color: "#7f1d1d", marginBottom: 4 }}>
+                  <strong>Avoid leading with:</strong> {guidance.avoid_leading_with.join(" | ")}
+                </div>
+              )}
+              {Array.isArray(guidance.reliable_format) && guidance.reliable_format.length > 0 && (
+                <div style={{ fontSize: 11, color: "#374151" }}>
+                  <strong>Reliable format:</strong> {guidance.reliable_format.join(" -> ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button type="submit" disabled={generating || !form.name} style={{
             padding: "8px 20px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff",
             fontWeight: 600, fontSize: 13, cursor: generating ? "wait" : "pointer", opacity: generating ? 0.6 : 1,
           }}>

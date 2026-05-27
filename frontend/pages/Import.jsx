@@ -38,7 +38,12 @@ export default function Import() {
   const [monthlyFiles, setMonthlyFiles] = useState([]);
   const [dailyFiles, setDailyFiles] = useState([]);
   const [autoPull, setAutoPull] = useState(null);
+  const [backfillStatus, setBackfillStatus] = useState(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
   const [bulkTab, setBulkTab] = useState("monthly");
+  const [bulkSortDir, setBulkSortDir] = useState("desc");
+  const [jobSortDir, setJobSortDir] = useState("desc");
+  const [logSortDir, setLogSortDir] = useState("desc");
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -46,6 +51,7 @@ export default function Import() {
     refreshJobs();
     refreshBulkFiles();
     refreshAutoPull();
+    refreshBackfillStatus();
   }, []);
 
   function refreshJobs() {
@@ -59,6 +65,13 @@ export default function Import() {
 
   function refreshAutoPull() {
     fetch("/api/import/autopull/status").then((r) => r.json()).then(setAutoPull).catch(() => {});
+  }
+
+  function refreshBackfillStatus() {
+    fetch("/api/import/bulk/process-remaining/status")
+      .then((r) => r.json())
+      .then(setBackfillStatus)
+      .catch(() => {});
   }
 
   function loadJobDetail(jobId) {
@@ -118,6 +131,26 @@ export default function Import() {
     }
   }
 
+  async function handleRunBackfill(mode = "all") {
+    setBackfillBusy(true);
+    try {
+      const res = await fetch("/api/import/bulk/process-remaining", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start backfill");
+      refreshBackfillStatus();
+      setTimeout(refreshBackfillStatus, 3000);
+      setTimeout(refreshJobs, 2000);
+    } catch (err) {
+      alert(err.message || "Failed to start backfill");
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
+
   async function handleLookup() {
     const num = prompt("Enter a company number:");
     if (!num) return;
@@ -133,6 +166,11 @@ export default function Import() {
   if (selectedJob && jobDetail) {
     const { job, logs } = jobDetail;
     const pct = job.total_items > 0 ? Math.round((job.processed_items / job.total_items) * 100) : 0;
+    const sortedLogs = [...logs].sort((a, b) => {
+      const aTs = String(a.timestamp || "");
+      const bTs = String(b.timestamp || "");
+      return logSortDir === "asc" ? aTs.localeCompare(bTs) : bTs.localeCompare(aTs);
+    });
     return (
       <div>
         <button onClick={() => { setSelectedJob(null); setJobDetail(null); refreshJobs(); refreshBulkFiles(); }} style={{ padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
@@ -161,7 +199,15 @@ export default function Import() {
         </div>
         {logs.length > 0 && (
           <div style={{ background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-            <h3 style={{ fontSize: 15, margin: "0 0 12px" }}>Import Log ({logs.length})</h3>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: 15, margin: 0 }}>Import Log ({logs.length})</h3>
+              <button
+                onClick={() => setLogSortDir((prev) => (prev === "desc" ? "asc" : "desc"))}
+                style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12 }}
+              >
+                {logSortDir === "desc" ? "Newest first" : "Oldest first"}
+              </button>
+            </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ background: "#f0f2f5", color: "#555" }}>
                 <th style={{ padding: "8px 12px", textAlign: "left" }}>Company</th>
@@ -171,7 +217,7 @@ export default function Import() {
                 <th style={{ padding: "8px 12px", textAlign: "left" }}>Detail</th>
               </tr></thead>
               <tbody>
-                {logs.map((log, idx) => {
+                {sortedLogs.map((log, idx) => {
                   const ac = ACTION_COLORS[log.action] || ACTION_COLORS.error;
                   return (
                     <tr key={idx} style={{ borderBottom: "1px solid #eee" }}>
@@ -193,6 +239,16 @@ export default function Import() {
 
   // --- Main Dashboard ---
   const bulkFiles = bulkTab === "monthly" ? monthlyFiles : dailyFiles;
+  const sortedBulkFiles = [...bulkFiles].sort((a, b) => {
+    const aKey = String(a.period || a.date || "");
+    const bKey = String(b.period || b.date || "");
+    return bulkSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
+  });
+  const sortedJobs = [...jobs].sort((a, b) => {
+    const aKey = String(a.created_at || "");
+    const bKey = String(b.created_at || "");
+    return jobSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
+  });
 
   return (
     <div>
@@ -200,7 +256,7 @@ export default function Import() {
         <h2 style={{ margin: 0, fontSize: 20 }}>Data Import</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleLookup} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>🔍 Lookup</button>
-          <button onClick={() => { refreshJobs(); refreshBulkFiles(); refreshAutoPull(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
+          <button onClick={() => { refreshJobs(); refreshBulkFiles(); refreshAutoPull(); refreshBackfillStatus(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
         </div>
       </div>
 
@@ -257,6 +313,40 @@ export default function Import() {
           Daily files (Tue-Sat) contain the latest filings. Only £20M+ turnover companies are imported.
         </p>
 
+        <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 6, padding: 10, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, color: "#374151" }}>
+              <strong>24-month backfill runner:</strong> {backfillStatus?.running ? "running" : "idle"}
+              {backfillStatus?.running && (
+                <span> · {backfillStatus.processed_files || 0}/{backfillStatus.total_files || 0} files · current: {backfillStatus.current_file || "-"}</span>
+              )}
+              {!backfillStatus?.running && backfillStatus?.pending && (
+                <span> · pending monthly: {backfillStatus.pending.monthly_pending || 0}, daily: {backfillStatus.pending.daily_pending || 0}</span>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => handleRunBackfill("monthly")} disabled={backfillBusy || backfillStatus?.running} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: (backfillBusy || backfillStatus?.running) ? "not-allowed" : "pointer", fontSize: 12 }}>
+                Run Monthly 24m
+              </button>
+              <button onClick={() => handleRunBackfill("all")} disabled={backfillBusy || backfillStatus?.running} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff", cursor: (backfillBusy || backfillStatus?.running) ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600 }}>
+                Run Remaining All
+              </button>
+            </div>
+          </div>
+          {(backfillStatus?.processed_files || 0) > 0 && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "#4b5563" }}>
+              Files: {backfillStatus.processed_files || 0}/{backfillStatus.total_files || 0}
+              {" · "}Qualifying: {backfillStatus.total_qualifying_companies || 0}
+              {" · "}Records processed: {backfillStatus.total_records_processed || 0}
+              {" · "}Parse errors: {backfillStatus.total_parse_errors || 0}
+              {" · "}Retries: {backfillStatus.retry_attempts || 0}
+            </div>
+          )}
+          {backfillStatus?.last_error && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "#b91c1c" }}>Last backfill error: {backfillStatus.last_error}</div>
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 0, marginBottom: 12 }}>
           {[{ id: "monthly", label: `Monthly (${monthlyFiles.length})` }, { id: "daily", label: `Daily (${dailyFiles.length})` }].map((t) => (
             <button key={t.id} onClick={() => setBulkTab(t.id)} style={{
@@ -267,6 +357,21 @@ export default function Import() {
               {t.label}
             </button>
           ))}
+          <button
+            onClick={() => setBulkSortDir((prev) => (prev === "desc" ? "asc" : "desc"))}
+            style={{
+              marginLeft: 8,
+              padding: "8px 14px",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              background: "#fff",
+              color: "#555",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {bulkSortDir === "desc" ? "Newest first" : "Oldest first"}
+          </button>
         </div>
 
         <div style={{ maxHeight: 300, overflowY: "auto" }}>
@@ -278,7 +383,7 @@ export default function Import() {
               <th style={{ padding: "6px 12px", textAlign: "right" }}>Action</th>
             </tr></thead>
             <tbody>
-              {bulkFiles.map((f) => (
+              {sortedBulkFiles.map((f) => (
                 <tr key={f.filename} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 12px", fontFamily: "monospace", fontSize: 11 }}>{f.filename}</td>
                   <td style={{ padding: "6px 12px" }}>{f.period || f.date} {f.day_name ? `(${f.day_name})` : ""}</td>
@@ -306,14 +411,22 @@ export default function Import() {
 
       {/* Import Jobs */}
       <div>
-        <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>Import Jobs</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
+          <h3 style={{ fontSize: 16, margin: 0 }}>Import Jobs</h3>
+          <button
+            onClick={() => setJobSortDir((prev) => (prev === "desc" ? "asc" : "desc"))}
+            style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12 }}
+          >
+            {jobSortDir === "desc" ? "Newest first" : "Oldest first"}
+          </button>
+        </div>
         {jobs.length === 0 ? (
           <div style={{ background: "#fff", borderRadius: 8, padding: 24, textAlign: "center", color: "#888", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
             No import jobs yet.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {jobs.map((job) => {
+            {sortedJobs.map((job) => {
               const pct = job.total_items > 0 ? Math.round((job.processed_items / job.total_items) * 100) : 0;
               return (
                 <div key={job.id} onClick={() => loadJobDetail(job.id)} style={{

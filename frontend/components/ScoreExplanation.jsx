@@ -6,7 +6,7 @@ const LAYER_LABELS = {
   commercial_value: "Commercial Value",
   pain_strength: "Pain Strength",
   urgency: "Urgency",
-  competitor_context: "Competitor Context",
+  competitor_context: "Current Stack Context",
 };
 
 const LAYER_COLORS = {

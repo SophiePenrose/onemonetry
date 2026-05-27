@@ -1,17 +1,31 @@
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 
-export default function StakeholderPanel({ stakeholders, stakeholderAssessment, companyId, onUpdated }) {
+export default function StakeholderPanel({ stakeholders, stakeholderAssessment, companyId, onUpdated, analysisStatus }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", role: "", email: "", linkedin: "", notes: "" });
   const [submitting, setSubmitting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState(null);
+  const [supplementary, setSupplementary] = useState(null);
+  const [supplementaryLoading, setSupplementaryLoading] = useState(false);
   const reviewRef = useRef(null);
 
   const automatedStakeholders = (stakeholders || []).filter((s) => s.source === "analysis");
   const manualStakeholders = (stakeholders || []).filter((s) => s.source !== "analysis");
   const readiness = stakeholderAssessment?.readiness;
+  const waitingForAnalysis = analysisStatus === "queued";
+  const analysisFailed = analysisStatus === "failed";
+
+  React.useEffect(() => {
+    if (!companyId) return;
+    setSupplementaryLoading(true);
+    fetch(`/api/company/${encodeURIComponent(companyId)}/supplementary-context`)
+      .then((r) => r.json())
+      .then((d) => setSupplementary(d.context || null))
+      .catch(() => setSupplementary(null))
+      .finally(() => setSupplementaryLoading(false));
+  }, [companyId]);
 
   async function handleRunReview() {
     if (!companyId) return;
@@ -120,7 +134,35 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
             ))}
           </div>
         ) : (
-          <div style={{ fontSize: 12, color: "#888" }}>No automated stakeholder recommendations yet.</div>
+          <div style={{ fontSize: 12, color: "#888" }}>
+            {waitingForAnalysis
+              ? "Analysis is running. Stakeholder recommendations will populate automatically."
+              : analysisFailed
+                ? "Last analysis failed. Run review to refresh stakeholders."
+                : "No automated stakeholder recommendations yet."}
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: "#fff", border: "1px solid #e6ecf2", borderRadius: 6, padding: 10, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 6 }}>Supplementary context integrations</div>
+        {supplementaryLoading && <div style={{ fontSize: 12, color: "#888" }}>Loading context...</div>}
+        {!supplementaryLoading && supplementary && (
+          <div>
+            <div style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>
+              News: {supplementary.integrations?.news_lookup?.configured ? "configured" : "disabled"} ({supplementary.integrations?.news_lookup?.signals_found || 0} signals) | LinkedIn research: {supplementary.integrations?.linkedin_research?.signals_found || 0} targets | Lusha: {supplementary.integrations?.lusha?.configured ? "configured" : "not configured"}
+            </div>
+            {supplementary.news_signals?.length > 0 && (
+              <div style={{ fontSize: 12, color: "#444", marginBottom: 4 }}>
+                <strong>Latest news:</strong> {supplementary.news_signals[0].title}
+              </div>
+            )}
+            {supplementary.mna_signals?.length > 0 && (
+              <div style={{ fontSize: 12, color: "#444" }}>
+                <strong>M&A signals:</strong> {supplementary.mna_signals.slice(0, 2).map((s) => s.signal).join(", ")}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -154,7 +196,11 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
       {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
 
       {manualStakeholders.length === 0 && automatedStakeholders.length === 0 && !showForm && (
-        <div style={{ color: "#888", fontSize: 13 }}>No stakeholder data. Click &quot;Add Contact&quot; to start building your contact map.</div>
+        <div style={{ color: "#888", fontSize: 13 }}>
+          {waitingForAnalysis
+            ? "No stakeholder data yet. Analysis is still processing and will add recommendations automatically."
+            : "No stakeholder data. Click \"Add Contact\" to start building your contact map."}
+        </div>
       )}
 
       {manualStakeholders.length > 0 && (
@@ -189,4 +235,5 @@ StakeholderPanel.propTypes = {
   stakeholderAssessment: PropTypes.object,
   companyId: PropTypes.string,
   onUpdated: PropTypes.func,
+  analysisStatus: PropTypes.string,
 };

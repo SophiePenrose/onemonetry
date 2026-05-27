@@ -23,6 +23,30 @@ const ANALYSIS_META = {
   none: { label: "Pending", color: "#6b7280" },
 };
 
+const TURNOVER_BANDS = [
+  { value: "all", label: "All turnover bands" },
+  { value: "15-25", label: "£15M-£25M" },
+  { value: "25-50", label: "£25M-£50M" },
+  { value: "50-100", label: "£50M-£100M" },
+  { value: "100-500", label: "£100M-£500M" },
+  { value: "500+", label: "£500M+" },
+];
+
+const SORT_OPTIONS = [
+  { value: "priority_score", label: "Priority score" },
+  { value: "combined_score", label: "Composite score" },
+  { value: "name", label: "Company name" },
+  { value: "industry", label: "Industry" },
+  { value: "segment", label: "Segment" },
+  { value: "turnover", label: "Turnover" },
+  { value: "best_motion", label: "Best motion" },
+  { value: "growth_trend", label: "Growth trend" },
+  { value: "workflow_state", label: "Workflow status" },
+  { value: "filing_count", label: "Filing count" },
+  { value: "latest_filing_date", label: "Latest filing date" },
+  { value: "analysis_status", label: "Analysis status" },
+];
+
 function Badge({ text, bg }) {
   return (
     <span style={{
@@ -93,14 +117,20 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const [stateFilter, setStateFilter] = useState("all");
   const [showSuppressed, setShowSuppressed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [turnoverBand, setTurnoverBand] = useState("all");
+  const [sortBy, setSortBy] = useState("priority_score");
+  const [sortDir, setSortDir] = useState("desc");
   const [queueBusy, setQueueBusy] = useState(false);
   const [retryingCompany, setRetryingCompany] = useState(null);
 
-  async function fetchData(suppressedFlag) {
+  async function fetchData(suppressedFlag = showSuppressed, sortByValue = sortBy, sortDirValue = sortDir, turnoverBandValue = turnoverBand) {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
     if (suppressedFlag) params.set("show_suppressed", "true");
+    params.set("sort_by", sortByValue);
+    params.set("sort_dir", sortDirValue);
+    params.set("turnover_band", turnoverBandValue);
     const qs = params.toString();
 
     try {
@@ -126,12 +156,48 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     }
   }
 
-  useEffect(() => { fetchData(false); }, []);
+  function applySort(nextSortBy, nextSortDir) {
+    setSortBy(nextSortBy);
+    setSortDir(nextSortDir);
+    fetchData(showSuppressed, nextSortBy, nextSortDir, turnoverBand);
+  }
+
+  function handleHeaderSort(field) {
+    const nextSortBy = field;
+    const nextSortDir = sortBy === nextSortBy
+      ? (sortDir === "desc" ? "asc" : "desc")
+      : "desc";
+    applySort(nextSortBy, nextSortDir);
+  }
+
+  function renderSortLabel(field, label) {
+    if (sortBy !== field) return label;
+    return `${label} ${sortDir === "desc" ? "↓" : "↑"}`;
+  }
+
+  const sortableHeaderButtonStyle = {
+    border: "none",
+    background: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    color: "inherit",
+    cursor: "pointer",
+  };
+
+  useEffect(() => { fetchData(false, sortBy, sortDir, turnoverBand); }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchData(showSuppressed, sortBy, sortDir, turnoverBand);
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [showSuppressed, sortBy, sortDir, turnoverBand]);
 
   function toggleSuppressed() {
     const next = !showSuppressed;
     setShowSuppressed(next);
-    fetchData(next);
+    fetchData(next, sortBy, sortDir, turnoverBand);
   }
 
   async function handleProcessQueueNow() {
@@ -142,7 +208,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batch_size: 5 }),
       });
-      await fetchData(showSuppressed);
+      await fetchData(showSuppressed, sortBy, sortDir, turnoverBand);
     } finally {
       setQueueBusy(false);
     }
@@ -163,7 +229,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(companyNumber ? { company_number: companyNumber } : {}),
       });
-      await fetchData(showSuppressed);
+      await fetchData(showSuppressed, sortBy, sortDir, turnoverBand);
     } finally {
       if (companyNumber) setRetryingCompany(null);
       else setQueueBusy(false);
@@ -179,9 +245,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
 
   const filtered = searchQuery.trim()
     ? afterStateFilter.filter((c) =>
-        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.industry.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.company_number?.toLowerCase().includes(searchQuery.toLowerCase())
+        String(c.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(c.industry || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(c.company_number || "").toLowerCase().includes(searchQuery.toLowerCase())
       )
     : afterStateFilter;
 
@@ -199,7 +265,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             type="text"
-            placeholder="Search companies…"
+            placeholder="Search company or number…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -207,6 +273,45 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               fontSize: 13, width: 200,
             }}
           />
+          <select
+            value={turnoverBand}
+            onChange={(e) => {
+              const nextBand = e.target.value;
+              setTurnoverBand(nextBand);
+              fetchData(showSuppressed, sortBy, sortDir, nextBand);
+            }}
+            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd", fontSize: 13, background: "#fff" }}
+          >
+            {TURNOVER_BANDS.map((band) => (
+              <option key={band.value} value={band.value}>{band.label}</option>
+            ))}
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => {
+              const nextSortBy = e.target.value;
+              const nextSortDir = sortBy === nextSortBy ? sortDir : "desc";
+              applySort(nextSortBy, nextSortDir);
+            }}
+            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd", fontSize: 13, background: "#fff" }}
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              const nextDir = sortDir === "desc" ? "asc" : "desc";
+              applySort(sortBy, nextDir);
+            }}
+            style={{
+              padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd",
+              background: "#fff", color: "#555", fontSize: 13, cursor: "pointer",
+            }}
+            title={`Sort ${sortDir === "desc" ? "descending" : "ascending"}`}
+          >
+            {sortDir === "desc" ? "↓ Desc" : "↑ Asc"}
+          </button>
           <a
             href="/api/export/shortlist?format=csv"
             download
@@ -219,7 +324,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             ↓ CSV
           </a>
           <button
-            onClick={() => fetchData(showSuppressed)}
+            onClick={() => fetchData(showSuppressed, sortBy, sortDir, turnoverBand)}
             style={{
               padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
               background: "#fff", color: "#555", fontSize: 13, cursor: "pointer",
@@ -272,6 +377,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           {(meta.analysis.failed || 0) > 0 && (
             <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
               {meta.analysis.failed} failed
+            </span>
+          )}
+          {(meta.analysis_seeded || 0) > 0 && (
+            <span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+              auto-seeded {meta.analysis_seeded}
             </span>
           )}
         </div>
@@ -352,16 +462,56 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
           <thead>
             <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
-              <th style={{ padding: "10px 14px" }}>#</th>
-              <th style={{ padding: "10px 14px" }}>Company</th>
-              <th style={{ padding: "10px 14px" }}>Industry</th>
-              <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
-              <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
-              <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
-              <th style={{ padding: "10px 14px" }}>Best Motion</th>
-              <th style={{ padding: "10px 14px" }}>Growth</th>
-              <th style={{ padding: "10px 14px", textAlign: "center" }}>Analysis</th>
-              <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
+              <th style={{ padding: "10px 14px" }}>
+                <button type="button" onClick={() => handleHeaderSort("priority_score")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("priority_score", "#")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px" }}>
+                <button type="button" onClick={() => handleHeaderSort("name")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("name", "Company")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px" }}>
+                <button type="button" onClick={() => handleHeaderSort("industry")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("industry", "Industry")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>
+                <button type="button" onClick={() => handleHeaderSort("segment")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("segment", "Segment")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>
+                <button type="button" onClick={() => handleHeaderSort("turnover")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("turnover", "Turnover")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px", textAlign: "right" }}>
+                <button type="button" onClick={() => handleHeaderSort("combined_score")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("combined_score", "Score")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px" }}>
+                <button type="button" onClick={() => handleHeaderSort("best_motion")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("best_motion", "Best Motion")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px" }}>
+                <button type="button" onClick={() => handleHeaderSort("growth_trend")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("growth_trend", "Growth")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>
+                <button type="button" onClick={() => handleHeaderSort("analysis_status")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("analysis_status", "Analysis")}
+                </button>
+              </th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>
+                <button type="button" onClick={() => handleHeaderSort("workflow_state")} style={sortableHeaderButtonStyle}>
+                  {renderSortLabel("workflow_state", "Status")}
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>

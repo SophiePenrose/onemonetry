@@ -48,7 +48,7 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("Commercial Value")).toBeInTheDocument();
     expect(screen.getByText("Pain Strength")).toBeInTheDocument();
     expect(screen.getByText("Urgency")).toBeInTheDocument();
-    expect(screen.getByText("Competitor Context")).toBeInTheDocument();
+    expect(screen.getByText("Current Stack Context")).toBeInTheDocument();
   });
 
   it("renders evidence text for each layer", () => {
