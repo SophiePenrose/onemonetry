@@ -296,18 +296,6 @@ const backfillAutoStatus = {
   last_error: null,
 };
 
-const MERCHANT_MOTIONS = ["Merchant Acquiring", "Revolut Pay"];
-const MERCHANT_BOOST_MAX = 0.08;
-
-function computeMerchantBoost(merchantSpend, motion) {
-  if (!merchantSpend || !MERCHANT_MOTIONS.includes(motion)) return 0;
-  const volume = merchantSpend.annual_card_volume || 0;
-  const growth = merchantSpend.growth_rate || 0;
-  const volumeScore = Math.min(volume / 20_000_000, 1);
-  const growthScore = Math.min(growth / 0.25, 1);
-  return Math.round((volumeScore * 0.6 + growthScore * 0.4) * MERCHANT_BOOST_MAX * 100) / 100;
-}
-
 function getWeightsForSegment(segment) {
   const weights = getSegmentWeights();
   return weights[segment] || DEFAULT_WEIGHTS;
