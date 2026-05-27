@@ -1,13 +1,15 @@
 import fs from "fs";
 import path from "path";
 import { createWriteStream } from "fs";
-import { pipeline } from "stream/promises";
+import { execFileSync, execFile } from "child_process";
+import { promisify } from "util";
 import { upsertFiling, upsertMonitoredCompany, getMonitoredCompany } from "./db.js";
 import { markZipProcessed } from "./processed-zips.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
-const CHUNK_SIZE = 50;
+const ADMZIP_MAX_BYTES = (2 * 1024 * 1024 * 1024) - 1;
+const execFileAsync = promisify(execFile);
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -102,11 +104,6 @@ export function extractCompanyNumberFromFilename(filename) {
   return match ? match[1] : null;
 }
 
-function meaningfulCompanyName(name, companyNumber) {
-  if (!name || name === companyNumber || name === `Company ${companyNumber}`) return null;
-  return name;
-}
-
 export function extractBalanceSheetDate(filename) {
   const match = filename.match(/_(\d{8})(?:\.|$)/);
   if (!match) return null;
@@ -145,9 +142,222 @@ export async function downloadFile(url, destPath, onProgress) {
   return { path: destPath, size: downloaded };
 }
 
+function canUseSystemUnzip() {
+  try {
+    execFileSync("unzip", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listFilesRecursive(dirPath) {
+  if (!fs.existsSync(dirPath)) return [];
+  const out = [];
+  const stack = [dirPath];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else {
+        out.push(fullPath);
+      }
+    }
+  }
+
+  return out;
+}
+
+function processFilingContent(name, content, source, state) {
+  const companyNumber = extractCompanyNumberFromFilename(name);
+  if (!companyNumber) return;
+
+  state.processed++;
+
+  try {
+    const turnover = extractTurnoverFromContent(content);
+
+    if (turnover === null) {
+      state.noTurnoverData++;
+      return;
+    }
+
+    const bsDate = extractBalanceSheetDate(name);
+
+    if (turnover < TURNOVER_THRESHOLD) {
+      state.belowThreshold++;
+      return;
+    }
+
+    state.qualifying++;
+
+    const extractedText = extractReadableText(content);
+    const companyName = extractCompanyName(content);
+
+    upsertFiling({
+      company_number: companyNumber,
+      filing_date: bsDate,
+      description: `Accounts filed (turnover £${(turnover / 1e6).toFixed(1)}M)`,
+      filing_type: "accounts",
+      barcode: name.replace(/\.[^.]+$/, ""),
+      turnover,
+      balance_sheet_date: bsDate,
+      source,
+      source_file: name,
+      raw_data: extractedText,
+    });
+
+    const existing = getMonitoredCompany(companyNumber);
+    upsertMonitoredCompany({
+      company_number: companyNumber,
+      company_name: companyName || existing?.company_name || `Company ${companyNumber}`,
+      latest_turnover: turnover,
+      status: "active",
+      source,
+    });
+
+    state.qualifyingCompanies.push({ company_number: companyNumber, turnover, balance_sheet_date: bsDate });
+  } catch {
+    state.parseErrors++;
+  }
+}
+
+async function processAccountsZipWithSystemUnzip(zipPath, source, onProgress) {
+  let AdmZip;
+  try {
+    AdmZip = (await import("adm-zip")).default;
+  } catch {
+    throw new Error("adm-zip not installed. Run: npm install adm-zip");
+  }
+
+  const { stdout: entryListRaw } = await execFileAsync("unzip", ["-Z1", zipPath], {
+    encoding: "utf-8",
+    maxBuffer: 128 * 1024 * 1024,
+  });
+
+  const entryNames = entryListRaw.split(/\r?\n/).filter(Boolean);
+  const state = {
+    processed: 0,
+    qualifying: 0,
+    belowThreshold: 0,
+    noTurnoverData: 0,
+    parseErrors: 0,
+    qualifyingCompanies: [],
+  };
+
+  const tempDir = path.join(DATA_DIR, `nested-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  try {
+    try {
+      await execFileAsync("unzip", ["-qq", "-o", zipPath, "*.zip", "-d", tempDir], {
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch {
+      // No nested zips matched, or unzip reported a non-fatal warning. Continue.
+    }
+
+    const nestedZipPaths = listFilesRecursive(tempDir).filter((f) => /\.zip$/i.test(f));
+
+    for (let i = 0; i < nestedZipPaths.length; i++) {
+      const nestedPath = nestedZipPaths[i];
+      try {
+        const nested = new AdmZip(nestedPath);
+        const nestedEntries = nested.getEntries();
+
+        for (const nestedEntry of nestedEntries) {
+          if (nestedEntry.isDirectory) continue;
+          const nestedName = nestedEntry.entryName;
+          const nestedContent = nestedEntry.getData().toString("utf-8");
+          processFilingContent(nestedName, nestedContent, source, state);
+        }
+      } catch {
+        state.parseErrors++;
+      }
+
+      if (i % 5 === 0 && onProgress) {
+        onProgress({
+          stage: "processing_nested",
+          processed: state.processed,
+          totalFiles: entryNames.length,
+          qualifying: state.qualifying,
+          belowThreshold: state.belowThreshold,
+          noTurnoverData: state.noTurnoverData,
+          parseErrors: state.parseErrors,
+        });
+      }
+    }
+
+    // For huge CH monthly files, the useful data is usually inside nested ZIP members.
+    // Skipping outer non-zip entries avoids loading very large top-level files into memory.
+    if (nestedZipPaths.length === 0) {
+      for (let i = 0; i < entryNames.length; i++) {
+        const name = entryNames[i];
+        if (name.endsWith("/")) continue;
+
+        try {
+          if (!/\.zip$/i.test(name)) {
+            const { stdout: content } = await execFileAsync("unzip", ["-p", zipPath, name], {
+              encoding: "utf-8",
+              maxBuffer: 128 * 1024 * 1024,
+            });
+            processFilingContent(name, content, source, state);
+          }
+        } catch {
+          state.parseErrors++;
+        }
+
+        if (i % 200 === 0 && onProgress) {
+          onProgress({
+            processed: state.processed,
+            totalFiles: entryNames.length,
+            qualifying: state.qualifying,
+            belowThreshold: state.belowThreshold,
+            noTurnoverData: state.noTurnoverData,
+            parseErrors: state.parseErrors,
+            percent: Math.round((i / Math.max(entryNames.length, 1)) * 100),
+          });
+        }
+      }
+    }
+  } finally {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // cleanup best-effort
+    }
+  }
+
+  return {
+    total_files: entryNames.length,
+    processed: state.processed,
+    qualifying: state.qualifying,
+    below_threshold: state.belowThreshold,
+    no_turnover_data: state.noTurnoverData,
+    parse_errors: state.parseErrors,
+    companies: state.qualifyingCompanies,
+  };
+}
+
 // --- Process a ZIP file in streaming chunks ---
 
 export async function processAccountsZip(zipPath, source, onProgress) {
+  const stats = fs.statSync(zipPath);
+  if (stats.size > ADMZIP_MAX_BYTES) {
+    if (!canUseSystemUnzip()) {
+      const err = new Error(`File size (${stats.size}) is greater than 2 GiB and system unzip is unavailable`);
+      err.code = "ZIP_TOO_LARGE";
+      err.zipSize = stats.size;
+      err.maxSize = ADMZIP_MAX_BYTES;
+      throw err;
+    }
+    return processAccountsZipWithSystemUnzip(zipPath, source, onProgress);
+  }
+
   let AdmZip;
   try {
     AdmZip = (await import("adm-zip")).default;
@@ -159,91 +369,59 @@ export async function processAccountsZip(zipPath, source, onProgress) {
   const entries = zip.getEntries();
   const totalFiles = entries.length;
 
-  let processed = 0;
-  let qualifying = 0;
-  let belowThreshold = 0;
-  let noTurnoverData = 0;
-  let parseErrors = 0;
-  const qualifyingCompanies = [];
+  const state = {
+    processed: 0,
+    qualifying: 0,
+    belowThreshold: 0,
+    noTurnoverData: 0,
+    parseErrors: 0,
+    qualifyingCompanies: [],
+  };
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (entry.isDirectory) continue;
 
     const name = entry.entryName;
-    const companyNumber = extractCompanyNumberFromFilename(name);
-    if (!companyNumber) continue;
-
-    processed++;
-
     try {
-      const content = entry.getData().toString("utf-8");
-      const turnover = extractTurnoverFromContent(content);
-
-      if (turnover === null) {
-        noTurnoverData++;
-        continue;
+      if (/\.zip$/i.test(name)) {
+        const nested = new AdmZip(entry.getData());
+        const nestedEntries = nested.getEntries();
+        for (const nestedEntry of nestedEntries) {
+          if (nestedEntry.isDirectory) continue;
+          const nestedName = nestedEntry.entryName;
+          const nestedContent = nestedEntry.getData().toString("utf-8");
+          processFilingContent(nestedName, nestedContent, source, state);
+        }
+      } else {
+        const content = entry.getData().toString("utf-8");
+        processFilingContent(name, content, source, state);
       }
-
-      const bsDate = extractBalanceSheetDate(name);
-
-      if (turnover < TURNOVER_THRESHOLD) {
-        belowThreshold++;
-        continue;
-      }
-
-      qualifying++;
-
-      const extractedText = extractReadableText(content);
-      const companyName = extractCompanyName(content);
-
-      upsertFiling({
-        company_number: companyNumber,
-        filing_date: bsDate,
-        description: `Accounts filed (turnover £${(turnover / 1e6).toFixed(1)}M)`,
-        filing_type: "accounts",
-        barcode: name.replace(/\.[^.]+$/, ""),
-        turnover,
-        balance_sheet_date: bsDate,
-        source,
-        source_file: name,
-        raw_data: extractedText,
-      });
-
-      const existing = getMonitoredCompany(companyNumber);
-      const prevTurnover = existing?.latest_turnover || null;
-      const storedName = meaningfulCompanyName(existing?.company_name, companyNumber);
-      const resolvedName = companyName || storedName;
-      upsertMonitoredCompany({
-        company_number: companyNumber,
-        company_name: resolvedName,
-        latest_turnover: turnover,
-        status: "active",
-        source,
-      });
-
-      if (prevTurnover && prevTurnover >= TURNOVER_THRESHOLD && turnover < TURNOVER_THRESHOLD) {
-        // Will be handled by the flag below
-      }
-
-      qualifyingCompanies.push({ company_number: companyNumber, company_name: resolvedName, turnover, balance_sheet_date: bsDate });
     } catch {
-      parseErrors++;
+      state.parseErrors++;
     }
 
     if (i % 500 === 0 && onProgress) {
-      onProgress({ processed, totalFiles, qualifying, belowThreshold, noTurnoverData, parseErrors, percent: Math.round((i / totalFiles) * 100) });
+      onProgress({
+        processed: state.processed,
+        totalFiles,
+        qualifying: state.qualifying,
+        belowThreshold: state.belowThreshold,
+        noTurnoverData: state.noTurnoverData,
+        parseErrors: state.parseErrors,
+        percent: Math.round((i / Math.max(totalFiles, 1)) * 100),
+      });
     }
   }
 
   return {
     total_files: totalFiles,
-    processed,
-    qualifying,
-    below_threshold: belowThreshold,
-    no_turnover_data: noTurnoverData,
-    parse_errors: parseErrors,
-    companies: qualifyingCompanies,
+    processed: state.processed,
+    qualifying: state.qualifying,
+    below_threshold: state.belowThreshold,
+    no_turnover_data: state.noTurnoverData,
+    parse_errors: state.parseErrors,
+    companies: state.qualifyingCompanies,
   };
 }
 
@@ -270,6 +448,32 @@ export async function processZipInChunks(url, filename, source, callbacks) {
     return result;
   } catch (err) {
     try { fs.unlinkSync(zipPath); } catch { /* cleanup */ }
+
+    if (err.code === "ZIP_TOO_LARGE") {
+      markZipProcessed(filename, {
+        skipped: true,
+        reason: "zip_too_large_for_adm_zip",
+        size_bytes: err.zipSize,
+        max_supported_bytes: err.maxSize,
+        source,
+      });
+
+      const result = {
+        total_files: 0,
+        processed: 0,
+        qualifying: 0,
+        below_threshold: 0,
+        no_turnover_data: 0,
+        parse_errors: 0,
+        companies: [],
+        skipped_file: true,
+        skipped_reason: err.message,
+      };
+
+      if (onComplete) onComplete(result);
+      return result;
+    }
+
     if (onError) onError(err);
     throw err;
   }

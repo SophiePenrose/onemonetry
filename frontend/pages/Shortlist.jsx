@@ -16,6 +16,13 @@ const STATE_META = {
 
 const FIT_COLORS = { strong: "#0a8754", medium: "#c27b00", weak: "#c0392b" };
 
+const ANALYSIS_META = {
+  ready: { label: "Ready", color: "#0a8754" },
+  queued: { label: "Queued", color: "#d97706" },
+  failed: { label: "Failed", color: "#c0392b" },
+  none: { label: "Pending", color: "#6b7280" },
+};
+
 function Badge({ text, bg }) {
   return (
     <span style={{
@@ -80,20 +87,43 @@ MotionChip.propTypes = { motion: PropTypes.string.isRequired, score: PropTypes.n
 export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const [companies, setCompanies] = useState([]);
   const [meta, setMeta] = useState(null);
+  const [queueStatus, setQueueStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [stateFilter, setStateFilter] = useState("all");
   const [showSuppressed, setShowSuppressed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [retryingCompany, setRetryingCompany] = useState(null);
 
-  function fetchData(suppressedFlag) {
+  async function fetchData(suppressedFlag) {
     setLoading(true);
     setError(null);
-    const qs = suppressedFlag ? "show_suppressed=true" : "";
-    fetch(`/api/unified-shortlist?${qs}`)
-      .then((res) => { if (!res.ok) throw new Error("Failed to fetch"); return res.json(); })
-      .then((data) => { setCompanies(data.companies || []); setMeta(data.meta || null); setLoading(false); })
-      .catch((err) => { setError(err.message); setLoading(false); });
+    const params = new URLSearchParams();
+    if (suppressedFlag) params.set("show_suppressed", "true");
+    const qs = params.toString();
+
+    try {
+      const [shortlistRes, queueRes] = await Promise.all([
+        fetch(`/api/unified-shortlist${qs ? `?${qs}` : ""}`),
+        fetch("/api/analysis-queue/status"),
+      ]);
+
+      if (!shortlistRes.ok) throw new Error("Failed to fetch");
+
+      const shortlistData = await shortlistRes.json();
+      setCompanies(shortlistData.companies || []);
+      setMeta(shortlistData.meta || null);
+
+      if (queueRes.ok) {
+        const queueData = await queueRes.json();
+        setQueueStatus(queueData);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { fetchData(false); }, []);
@@ -102,6 +132,42 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     const next = !showSuppressed;
     setShowSuppressed(next);
     fetchData(next);
+  }
+
+  async function handleProcessQueueNow() {
+    setQueueBusy(true);
+    try {
+      await fetch("/api/analysis-queue/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_size: 5 }),
+      });
+      await fetchData(showSuppressed);
+    } finally {
+      setQueueBusy(false);
+    }
+  }
+
+  async function handleRetryFailed(companyNumber = null, event = null) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    if (companyNumber) setRetryingCompany(companyNumber);
+    else setQueueBusy(true);
+
+    try {
+      await fetch("/api/analysis-queue/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(companyNumber ? { company_number: companyNumber } : {}),
+      });
+      await fetchData(showSuppressed);
+    } finally {
+      if (companyNumber) setRetryingCompany(null);
+      else setQueueBusy(false);
+    }
   }
 
   const stateCounts = {};
@@ -152,6 +218,15 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           >
             ↓ CSV
           </a>
+          <button
+            onClick={() => fetchData(showSuppressed)}
+            style={{
+              padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
+              background: "#fff", color: "#555", fontSize: 13, cursor: "pointer",
+            }}
+          >
+            ↻ Refresh
+          </button>
           {onShowAddCompany && (
             <button
               onClick={onShowAddCompany}
@@ -183,6 +258,60 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <input type="checkbox" checked={showSuppressed} onChange={toggleSuppressed} style={{ cursor: "pointer" }} />
             <span>Show suppressed</span>
           </label>
+        </div>
+      )}
+
+      {!loading && !error && meta?.analysis && (
+        <div style={{ fontSize: 12, color: "#666", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ background: "#ffedd5", color: "#9a3412", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+            {meta.analysis.queued || 0} queued
+          </span>
+          <span style={{ background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+            {meta.analysis.ready || 0} ready
+          </span>
+          {(meta.analysis.failed || 0) > 0 && (
+            <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+              {meta.analysis.failed} failed
+            </span>
+          )}
+        </div>
+      )}
+
+      {!loading && !error && queueStatus && (
+        <div style={{ marginBottom: 14, background: "#fff", border: "1px solid #eceff3", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#555" }}>
+              <strong style={{ fontSize: 13 }}>Analysis Queue</strong>
+              <span style={{ background: queueStatus.enabled ? "#dcfce7" : "#f3f4f6", color: queueStatus.enabled ? "#166534" : "#4b5563", padding: "2px 8px", borderRadius: 999 }}>
+                {queueStatus.enabled ? "Worker On" : "Worker Off"}
+              </span>
+              <span>{queueStatus.counts?.queued || 0} queued</span>
+              <span>{queueStatus.counts?.processing || 0} processing</span>
+              <span>{queueStatus.counts?.ready || 0} ready</span>
+              {(queueStatus.counts?.failed || 0) > 0 && (
+                <span style={{ color: "#b91c1c", fontWeight: 600 }}>{queueStatus.counts.failed} failed</span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={handleProcessQueueNow}
+                disabled={queueBusy}
+                style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #d5d9df", background: "#fff", cursor: queueBusy ? "wait" : "pointer", fontSize: 12 }}
+              >
+                {queueBusy ? "Working..." : "Process Now"}
+              </button>
+              <button
+                onClick={() => handleRetryFailed()}
+                disabled={queueBusy || (queueStatus.counts?.failed || 0) === 0}
+                style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #d5d9df", background: "#fff", cursor: (queueBusy || (queueStatus.counts?.failed || 0) === 0) ? "not-allowed" : "pointer", fontSize: 12 }}
+              >
+                Retry Failed
+              </button>
+            </div>
+          </div>
+          {queueStatus.last_error && (
+            <div style={{ marginTop: 8, color: "#991b1b" }}>Last queue error: {queueStatus.last_error}</div>
+          )}
         </div>
       )}
 
@@ -225,11 +354,13 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
               <th style={{ padding: "10px 14px" }}>#</th>
               <th style={{ padding: "10px 14px" }}>Company</th>
+              <th style={{ padding: "10px 14px" }}>Industry</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Segment</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Turnover</th>
               <th style={{ padding: "10px 14px", textAlign: "right" }}>Score</th>
               <th style={{ padding: "10px 14px" }}>Best Motion</th>
               <th style={{ padding: "10px 14px" }}>Growth</th>
+              <th style={{ padding: "10px 14px", textAlign: "center" }}>Analysis</th>
               <th style={{ padding: "10px 14px", textAlign: "center" }}>Status</th>
             </tr>
           </thead>
@@ -273,6 +404,20 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   </td>
                   <td style={{ padding: "10px 14px", fontSize: 12, color: c.growth_trend === "strong_growth" ? "#0a8754" : c.growth_trend === "declining" ? "#c0392b" : "#888" }}>
                     {c.growth_trend || "—"}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                    <Badge
+                      text={(ANALYSIS_META[c.analysis_status] || ANALYSIS_META.none).label}
+                      bg={(ANALYSIS_META[c.analysis_status] || ANALYSIS_META.none).color}
+                    />
+                    {c.analysis_status === "failed" && (
+                      <button
+                        onClick={(e) => handleRetryFailed(c.company_number, e)}
+                        style={{ marginLeft: 8, padding: "2px 6px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", color: "#333", fontSize: 11, cursor: "pointer" }}
+                      >
+                        {retryingCompany === c.company_number ? "Retrying..." : "Retry"}
+                      </button>
+                    )}
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
                     <Badge text={sm.label} bg={sm.color} />

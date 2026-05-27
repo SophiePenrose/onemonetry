@@ -1,7 +1,17 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const DB_PATH = path.join(process.cwd(), "mock-backend", "onemonetry.db");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const configuredDbPath = (process.env.DATABASE_PATH || "").trim();
+const DB_PATH = configuredDbPath
+  ? (path.isAbsolute(configuredDbPath) ? configuredDbPath : path.resolve(process.cwd(), configuredDbPath))
+  : path.join(__dirname, "onemonetry.db");
+
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
@@ -134,6 +144,22 @@ db.exec(`
     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (job_id) REFERENCES import_jobs(id)
   );
+
+  CREATE TABLE IF NOT EXISTS analysis_queue (
+    company_number TEXT PRIMARY KEY,
+    company_name TEXT,
+    source TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status);
+  CREATE INDEX IF NOT EXISTS idx_analysis_queue_queued_at ON analysis_queue(queued_at);
 `);
 
 // --- Workflow State ---
@@ -461,6 +487,186 @@ export function addImportLogEntry(jobId, companyNumber, companyName, action, det
 
 export function getImportLogs(jobId, limit = 100) {
   return db.prepare("SELECT * FROM import_log WHERE job_id = ? ORDER BY timestamp DESC LIMIT ?").all(jobId, limit);
+}
+
+// --- Analysis Queue ---
+
+const stmtUpsertAnalysisQueueItem = db.prepare(`
+  INSERT INTO analysis_queue (company_number, company_name, source, status, queued_at, started_at, completed_at, updated_at, last_error)
+  VALUES (?, ?, ?, 'queued', datetime('now'), NULL, NULL, datetime('now'), NULL)
+  ON CONFLICT(company_number) DO UPDATE SET
+    company_name = COALESCE(excluded.company_name, analysis_queue.company_name),
+    source = excluded.source,
+    status = 'queued',
+    queued_at = datetime('now'),
+    started_at = NULL,
+    completed_at = NULL,
+    updated_at = datetime('now'),
+    last_error = NULL
+`);
+
+const claimNextAnalysisQueueItemTx = db.transaction(() => {
+  const next = db.prepare(`
+    SELECT * FROM analysis_queue
+    WHERE status = 'queued'
+    ORDER BY queued_at ASC
+    LIMIT 1
+  `).get();
+
+  if (!next) return null;
+
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'processing', started_at = datetime('now'), attempts = attempts + 1, updated_at = datetime('now')
+    WHERE company_number = ?
+  `).run(next.company_number);
+
+  return db.prepare("SELECT * FROM analysis_queue WHERE company_number = ?").get(next.company_number);
+});
+
+const claimAnalysisQueueItemTx = db.transaction((companyNumber) => {
+  const next = db.prepare(`
+    SELECT * FROM analysis_queue
+    WHERE company_number = ? AND status = 'queued'
+    LIMIT 1
+  `).get(companyNumber);
+
+  if (!next) return null;
+
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'processing', started_at = datetime('now'), attempts = attempts + 1, updated_at = datetime('now')
+    WHERE company_number = ?
+  `).run(companyNumber);
+
+  return db.prepare("SELECT * FROM analysis_queue WHERE company_number = ?").get(companyNumber);
+});
+
+export function enqueueAnalysisQueueItem(companyNumber, companyName = null, source = "import") {
+  if (!companyNumber) return false;
+  stmtUpsertAnalysisQueueItem.run(companyNumber, companyName || null, source || "import");
+  return true;
+}
+
+export function enqueueAnalysisQueueItems(companies, source = "import") {
+  if (!Array.isArray(companies) || companies.length === 0) return 0;
+
+  const tx = db.transaction((rows) => {
+    let queued = 0;
+    for (const row of rows) {
+      const companyNumber = typeof row === "string"
+        ? row
+        : (row.company_number || row.companyNumber || null);
+      if (!companyNumber) continue;
+      const companyName = typeof row === "string"
+        ? null
+        : (row.company_name || row.companyName || null);
+      stmtUpsertAnalysisQueueItem.run(companyNumber, companyName, source || "import");
+      queued++;
+    }
+    return queued;
+  });
+
+  return tx(companies);
+}
+
+export function claimNextAnalysisQueueItem() {
+  return claimNextAnalysisQueueItemTx();
+}
+
+export function claimAnalysisQueueItem(companyNumber) {
+  if (!companyNumber) return null;
+  return claimAnalysisQueueItemTx(companyNumber);
+}
+
+export function markAnalysisQueueItemReady(companyNumber, companyName = null) {
+  db.prepare(`
+    UPDATE analysis_queue
+    SET company_name = COALESCE(?, company_name),
+        status = 'ready',
+        completed_at = datetime('now'),
+        updated_at = datetime('now'),
+        last_error = NULL
+    WHERE company_number = ?
+  `).run(companyName || null, companyNumber);
+}
+
+export function markAnalysisQueueItemFailed(companyNumber, errorMessage) {
+  db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'failed',
+        completed_at = datetime('now'),
+        updated_at = datetime('now'),
+        last_error = ?
+    WHERE company_number = ?
+  `).run((errorMessage || "Unknown analysis error").slice(0, 1000), companyNumber);
+}
+
+export function resetProcessingAnalysisQueueItems(reason = "Recovered processing jobs after restart") {
+  const result = db.prepare(`
+    UPDATE analysis_queue
+    SET status = 'queued',
+        queued_at = datetime('now'),
+        started_at = NULL,
+        completed_at = NULL,
+        updated_at = datetime('now'),
+        last_error = COALESCE(last_error, ?)
+    WHERE status = 'processing'
+  `).run(reason);
+  return result.changes;
+}
+
+export function getAnalysisQueueItem(companyNumber) {
+  return db.prepare("SELECT * FROM analysis_queue WHERE company_number = ?").get(companyNumber);
+}
+
+export function getAnalysisQueueItemsByCompanyNumbers(companyNumbers) {
+  if (!Array.isArray(companyNumbers) || companyNumbers.length === 0) return {};
+  const placeholders = companyNumbers.map(() => "?").join(",");
+  const rows = db.prepare(`
+    SELECT * FROM analysis_queue
+    WHERE company_number IN (${placeholders})
+  `).all(...companyNumbers);
+  const map = {};
+  for (const row of rows) map[row.company_number] = row;
+  return map;
+}
+
+export function getAnalysisQueueCounts() {
+  const grouped = db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM analysis_queue
+    GROUP BY status
+  `).all();
+  const counts = { queued: 0, processing: 0, ready: 0, failed: 0, total: 0 };
+  for (const row of grouped) {
+    counts[row.status] = row.count;
+    counts.total += row.count;
+  }
+  return counts;
+}
+
+export function listAnalysisQueueItems(filters = {}) {
+  let sql = "SELECT * FROM analysis_queue WHERE 1=1";
+  const params = [];
+
+  if (filters.status) {
+    sql += " AND status = ?";
+    params.push(filters.status);
+  }
+
+  sql += " ORDER BY queued_at ASC, updated_at ASC";
+
+  if (filters.limit) {
+    sql += " LIMIT ?";
+    params.push(filters.limit);
+  }
+
+  return db.prepare(sql).all(...params);
+}
+
+export function listFailedAnalysisQueueItems(limit = 500) {
+  return listAnalysisQueueItems({ status: "failed", limit });
 }
 
 export function closeDb() {

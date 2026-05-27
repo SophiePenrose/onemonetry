@@ -1,6 +1,6 @@
 // companies-house.js
 
-const CH_API_KEY = process.env.COMPANIES_HOUSE_API_KEY || null;
+const CH_API_KEY = (process.env.COMPANIES_HOUSE_API_KEY || "").trim() || null;
 const CH_BASE_URL = "https://api.company-information.service.gov.uk";
 const CH_DOWNLOAD_URL = "https://download.companieshouse.gov.uk";
 

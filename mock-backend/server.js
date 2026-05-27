@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import {
   getCompanyWorkflowState,
   setCompanyWorkflowState,
@@ -32,6 +33,14 @@ import {
   startAutoPull,
   stopAutoPull,
 } from "./daily-autopull.js";
+import {
+  enqueueCompanyForAnalysis,
+  enqueueCompaniesForAnalysis,
+  processAnalysisQueueBatch,
+  processAnalysisQueueItem,
+  startAnalysisQueueWorker,
+  getAnalysisQueueWorkerStatus,
+} from "./analysis-queue.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
 import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES } from "./email-sequences.js";
@@ -40,7 +49,7 @@ import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
 import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
-import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, deactivateContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
+import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
 import { runMigrations } from "./migrations.js";
 import {
   runWeeklyMonitorBatch,
@@ -64,12 +73,24 @@ import {
   getCadenceLog,
   addCadenceEntry,
   pruneHistoricMonthlyFilingsBefore,
+  getAnalysisQueueItemsByCompanyNumbers,
+  getAnalysisQueueCounts,
+  listFailedAnalysisQueueItems,
 } from "./db.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, "..");
+const configuredCompaniesPath = (process.env.COMPANIES_PATH || "").trim();
+const COMPANIES_FILE = configuredCompaniesPath
+  ? (path.isAbsolute(configuredCompaniesPath) ? configuredCompaniesPath : path.resolve(process.cwd(), configuredCompaniesPath))
+  : path.join(__dirname, "companies.json");
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(authMiddleware);
-const PORT = 8000;
+const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
 
 // --- Authentication ---
 
@@ -208,7 +229,6 @@ function getPropensityWeight() {
 }
 
 const DEFAULT_WEIGHTS = DEFAULT_SEGMENT_WEIGHTS["Mid-Market"];
-const PROPENSITY_WEIGHT = DEFAULT_PROPENSITY_WEIGHT;
 
 const MERCHANT_MOTIONS = ["Merchant Acquiring", "Revolut Pay"];
 const MERCHANT_BOOST_MAX = 0.08;
@@ -320,13 +340,11 @@ function computeCompanyProfile(company) {
 // --- Data loading ---
 
 function loadCompanies() {
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  return JSON.parse(fs.readFileSync(COMPANIES_FILE, "utf-8"));
 }
 
 function saveCompanies(companies) {
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(companies, null, 2));
+  fs.writeFileSync(COMPANIES_FILE, JSON.stringify(companies, null, 2));
 }
 
 function canonicalCompanyId(id) {
@@ -646,7 +664,7 @@ app.get("/api/dashboard", (_req, res) => {
 });
 
 app.get("/api/unified-shortlist", (req, res) => {
-  const { limit, offset } = req.query;
+  const { limit, offset, show_suppressed } = req.query;
   const pageLimit = parseInt(limit) || 100;
   const pageOffset = parseInt(offset) || 0;
 
@@ -655,42 +673,72 @@ app.get("/api/unified-shortlist", (req, res) => {
     limit: pageLimit,
     offset: pageOffset,
   });
+  const queueRows = getAnalysisQueueItemsByCompanyNumbers(companies.map((c) => c.company_number));
 
   const totalCount = getShortlistCount(getTurnoverThreshold());
+  let suppressedCount = 0;
 
-  const entries = companies.map((c, idx) => {
-    const ws = getCompanyState(`ch-${c.company_number}`);
-    const segment = guessTurnoverSegment(c.latest_turnover);
-    const stored = getStoredScore(c.company_number);
+  const entries = companies
+    .filter((c) => {
+      const supp = isSuppressed(`ch-${c.company_number}`);
+      if (!supp.suppressed) return true;
+      suppressedCount++;
+      return show_suppressed === "true";
+    })
+    .map((c, idx) => {
+      const ws = getCompanyState(`ch-${c.company_number}`);
+      const segment = guessTurnoverSegment(c.latest_turnover);
+      const stored = getStoredScore(c.company_number);
+      const supp = isSuppressed(`ch-${c.company_number}`);
+      const queue = queueRows[c.company_number] || null;
+      const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
 
-    return {
-      id: `ch-${c.company_number}`,
-      company_number: c.company_number,
-      name: formatMonitorName(c.company_name, c.company_number),
-      industry: "—",
-      turnover: c.latest_turnover,
-      employee_count: stored?.employees || 0,
-      segment,
-      composite_score: stored?.composite_score ?? 0,
-      combined_score: stored?.composite_score ?? 0,
-      best_motion: stored?.layers?.product_fit?.best_motion || null,
-      product_fit_score: stored?.layers?.product_fit?.score || null,
-      growth_trend: stored?.growth?.trend || null,
-      filing_count: c.filing_count || 0,
-      latest_filing_date: c.latest_filing_date,
-      workflow_state: ws.state,
-      below_threshold: c.below_threshold === 1,
-      scored: !!stored,
-      source: c.source,
-      rank: pageOffset + idx + 1,
-    };
-  });
+      let analysis_status = "none";
+      if (queue?.status === "ready" || (!queue && storedAnalysis)) {
+        analysis_status = "ready";
+      } else if (queue?.status === "queued" || queue?.status === "processing") {
+        analysis_status = "queued";
+      } else if (queue?.status === "failed") {
+        analysis_status = "failed";
+      }
+
+      return {
+        id: `ch-${c.company_number}`,
+        company_number: c.company_number,
+        name: formatMonitorName(c.company_name, c.company_number),
+        industry: "—",
+        turnover: c.latest_turnover,
+        employee_count: stored?.employees || 0,
+        segment,
+        composite_score: stored?.composite_score ?? 0,
+        combined_score: stored?.composite_score ?? 0,
+        best_motion: stored?.layers?.product_fit?.best_motion || null,
+        product_fit_score: stored?.layers?.product_fit?.score || null,
+        growth_trend: stored?.growth?.trend || null,
+        filing_count: c.filing_count || 0,
+        latest_filing_date: c.latest_filing_date,
+        workflow_state: ws.state,
+        below_threshold: c.below_threshold === 1,
+        scored: !!stored,
+        source: c.source,
+        suppressed: supp.suppressed,
+        suppression_reason: supp.reason || null,
+        analysis_status,
+        rank: pageOffset + idx + 1,
+      };
+    });
 
   entries.sort((a, b) => {
     if (a.composite_score !== b.composite_score) return b.composite_score - a.composite_score;
     return b.turnover - a.turnover;
   });
   entries.forEach((e, i) => { e.rank = pageOffset + i + 1; });
+
+  const analysisMeta = {
+    queued: entries.filter((e) => e.analysis_status === "queued").length,
+    ready: entries.filter((e) => e.analysis_status === "ready").length,
+    failed: entries.filter((e) => e.analysis_status === "failed").length,
+  };
 
   res.json({
     companies: entries,
@@ -701,6 +749,10 @@ app.get("/api/unified-shortlist", (req, res) => {
       offset: pageOffset,
       threshold: getTurnoverThreshold(),
       scored_count: entries.filter((e) => e.scored).length,
+      excluded: 0,
+      suppressed: suppressedCount,
+      analysis: analysisMeta,
+      queue_totals: getAnalysisQueueCounts(),
     },
   });
 });
@@ -1210,8 +1262,7 @@ app.post("/api/companies", (req, res) => {
   };
 
   COMPANIES.push(newCompany);
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  saveCompanies(COMPANIES);
 
   res.status(201).json({ company: newCompany });
 });
@@ -1310,6 +1361,7 @@ async function processCSVImport(jobId, companyNumbers) {
         COMPANIES.push(newCompany);
         existingNumbers.add(num);
         addImportLogEntry(jobId, num, newCompany.name, "imported", `Added as ${newCompany.segment}`, newCompany.turnover);
+        enqueueCompanyForAnalysis({ company_number: num, company_name: newCompany.name }, "csv_import");
         imported++;
       }
     } catch (err) {
@@ -1322,8 +1374,9 @@ async function processCSVImport(jobId, companyNumbers) {
     if (isCompaniesHouseConfigured()) await new Promise((r) => setTimeout(r, 500));
   }
 
-  const filePath = path.join(process.cwd(), "mock-backend", "companies.json");
-  fs.writeFileSync(filePath, JSON.stringify(COMPANIES, null, 2));
+  await processAnalysisQueueBatch({ batchSize: 3 });
+
+  saveCompanies(COMPANIES);
 
   updateImportJob(jobId, {
     status: "completed",
@@ -1428,6 +1481,11 @@ app.post("/api/import/bulk/process", async (req, res) => {
         `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
     }
 
+    const queued = enqueueCompaniesForAnalysis(result.companies, `bulk_import:${filename}`);
+    if (queued.queued > 0) {
+      await processAnalysisQueueBatch({ batchSize: 3 });
+    }
+
     updateImportJob(jobId, {
       status: "completed",
       completed_at: new Date().toISOString(),
@@ -1436,6 +1494,7 @@ app.post("/api/import/bulk/process", async (req, res) => {
       imported_items: result.qualifying,
       skipped_items: result.below_threshold,
       error_count: result.parse_errors,
+      metadata: JSON.stringify({ filename, url, analysis_queued: queued.queued }),
     });
   } catch (err) {
     updateImportJob(jobId, {
@@ -1501,6 +1560,65 @@ app.post("/api/import/autopull/start", (_req, res) => {
 app.post("/api/import/autopull/stop", (_req, res) => {
   const status = stopAutoPull();
   res.json({ message: "Auto-pull stopped", ...status });
+});
+
+app.get("/api/analysis-queue/status", (_req, res) => {
+  res.json(getAnalysisQueueWorkerStatus());
+});
+
+app.post("/api/analysis-queue/process", async (req, res) => {
+  const batchSize = parseInt(req.body?.batch_size) || undefined;
+  const result = await processAnalysisQueueBatch({ batchSize });
+  res.json(result);
+});
+
+app.post("/api/analysis-queue/retry", async (req, res) => {
+  const rawCompanyNumber = String(req.body?.company_number || "").trim();
+
+  if (rawCompanyNumber) {
+    const normalized = companyNumberFromId(canonicalCompanyId(rawCompanyNumber));
+    const companyNumber = /^\d{1,8}$/.test(normalized)
+      ? normalized.padStart(8, "0")
+      : normalized;
+
+    enqueueCompanyForAnalysis({ company_number: companyNumber }, "manual_retry");
+    const processed = await processAnalysisQueueItem(companyNumber);
+
+    return res.json({
+      retried: processed.processed,
+      queued: 1,
+      company_number: companyNumber,
+      processed,
+      queue: getAnalysisQueueWorkerStatus(),
+    });
+  }
+
+  const failedItems = listFailedAnalysisQueueItems(500);
+  if (failedItems.length === 0) {
+    return res.json({
+      retried: 0,
+      processed: 0,
+      queue: getAnalysisQueueWorkerStatus(),
+      message: "No failed analysis items to retry.",
+    });
+  }
+
+  const queued = enqueueCompaniesForAnalysis(
+    failedItems.map((item) => ({
+      company_number: item.company_number,
+      company_name: item.company_name,
+    })),
+    "manual_retry_bulk"
+  );
+
+  const batchSize = Math.max(1, Math.min(10, queued.queued));
+  const processed = await processAnalysisQueueBatch({ batchSize });
+
+  return res.json({
+    retried: queued.queued,
+    processed,
+    queue: getAnalysisQueueWorkerStatus(),
+  });
 });
 
 // --- Company Monitor (Method 2) ---
@@ -2224,7 +2342,7 @@ app.post("/api/score/batch-llm", async (req, res) => {
 
 // --- Serve frontend in production ---
 
-const frontendDist = path.join(process.cwd(), "frontend", "dist");
+const frontendDist = path.join(REPO_ROOT, "frontend", "dist");
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
   app.get("*", (_req, res) => {
@@ -2234,8 +2352,6 @@ if (fs.existsSync(frontendDist)) {
 }
 
 // --- Weekly Report Auto-Generation (Saturday evenings) ---
-
-let reportScheduleTimer = null;
 
 function getNextSaturdayEvening() {
   const now = new Date();
@@ -2254,7 +2370,7 @@ function scheduleWeeklyReport() {
 
   console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
 
-  reportScheduleTimer = setTimeout(async () => {
+  setTimeout(async () => {
     await generateAndSaveWeeklyReport();
     scheduleWeeklyReport();
   }, delay);
@@ -2295,6 +2411,8 @@ app.listen(PORT, () => {
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
   console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
+  const queueStatus = startAnalysisQueueWorker();
+  console.log(`Analysis queue: enabled (${queueStatus.batch_size} per batch every ${queueStatus.interval_ms}ms), recovered ${queueStatus.recovered_processing_items} in-flight items`);
   scheduleWeeklyReport();
   startAutoPull();
   console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);

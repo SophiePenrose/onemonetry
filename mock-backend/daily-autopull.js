@@ -4,6 +4,7 @@ import { getMonthlyAutoPullPlan } from "./monthly-autopull-planner.js";
 import { processZipInChunks } from "./stream-processor.js";
 import { createImportJob, updateImportJob, addImportLogEntry, getFilingCount, getMonitoredCompanyCount } from "./db.js";
 import { markZipsProcessed } from "./processed-zips.js";
+import { enqueueCompaniesForAnalysis, processAnalysisQueueBatch } from "./analysis-queue.js";
 
 let autoPullTimer = null;
 let autoPullStatus = {
@@ -15,7 +16,6 @@ let autoPullStatus = {
 };
 
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours
-const MONTHLY_CHECK_INTERVAL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export function getAutoPullStatus() {
   return {
@@ -62,18 +62,23 @@ async function runMonthlyCheck() {
   try {
     const { getMonthlyZipURLs } = await import("./bulk-processor.js");
     const monthlyFiles = await getMonthlyZipURLs();
-    const { filesToProcess: unprocessed } = getMonthlyAutoPullPlan(monthlyFiles);
+    const plan = getMonthlyAutoPullPlan(monthlyFiles);
+    const unprocessed = plan.filesToProcess;
 
     if (unprocessed.length === 0) {
       console.log(`[AutoPull] No new monthly files to process`);
       return;
     }
 
-    console.log(`[AutoPull] Found ${unprocessed.length} new monthly files`);
+    console.log(`[AutoPull] Found ${unprocessed.length} unprocessed monthly files from the latest ${plan.filesToCheck.length} periods`);
     for (const file of unprocessed) {
       console.log(`[AutoPull] Processing monthly: ${file.filename}`);
       try {
         const result = await processZipInChunks(file.url, file.filename, `monthly:${file.period}`, {});
+        const queued = enqueueCompaniesForAnalysis(result.companies, `autopull_monthly:${file.period}`);
+        if (queued.queued > 0) {
+          await processAnalysisQueueBatch({ batchSize: 2 });
+        }
         console.log(`[AutoPull] ✅ Monthly ${file.filename}: ${result.qualifying} qualifying from ${result.total_files} files`);
       } catch (err) {
         console.log(`[AutoPull] ❌ Monthly ${file.filename}: ${err.message}`);
@@ -151,6 +156,11 @@ async function runAutoPullCycle() {
         for (const co of result.companies) {
           addImportLogEntry(jobId, co.company_number, co.company_name || null, "imported",
             `£${(co.turnover / 1e6).toFixed(1)}M (${file.date})`, co.turnover);
+        }
+
+        const queued = enqueueCompaniesForAnalysis(result.companies, `autopull_daily:${file.date}`);
+        if (queued.queued > 0) {
+          await processAnalysisQueueBatch({ batchSize: 2 });
         }
 
         updateImportJob(jobId, {

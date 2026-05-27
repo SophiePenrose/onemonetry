@@ -1,7 +1,99 @@
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const BASE = "http://localhost:8000";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_PORT = Number.parseInt(process.env.API_TEST_PORT || "", 10)
+  || (18080 + Math.floor(Math.random() * 1000));
+const BASE = `http://127.0.0.1:${TEST_PORT}`;
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "onemonetry-api-tests-"));
+const testDatabasePath = path.join(tempDir, "api-tests.db");
+const sourceCompaniesPath = path.resolve(__dirname, "..", "companies.json");
+const testCompaniesPath = path.join(tempDir, "companies.json");
+
+let serverProcess = null;
+let startedServerForTests = false;
+let serverLogs = "";
+
+function appendServerLog(chunk) {
+  if (!chunk) return;
+  serverLogs += chunk.toString();
+  if (serverLogs.length > 8000) {
+    serverLogs = serverLogs.slice(-8000);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function isServerReady() {
+  try {
+    // Auth status endpoint is explicitly unauthenticated, so it is a reliable health check.
+    const res = await fetch(`${BASE}/api/auth/status`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForServerReady(timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (serverProcess?.exitCode !== null) {
+      return false;
+    }
+    if (await isServerReady()) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
+before(async () => {
+  fs.copyFileSync(sourceCompaniesPath, testCompaniesPath);
+
+  const serverPath = path.resolve(__dirname, "..", "server.js");
+  serverProcess = spawn(process.execPath, [serverPath], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      PORT: String(TEST_PORT),
+      DATABASE_PATH: testDatabasePath,
+      COMPANIES_PATH: testCompaniesPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  serverProcess.stdout?.on("data", appendServerLog);
+  serverProcess.stderr?.on("data", appendServerLog);
+  startedServerForTests = true;
+
+  const ready = await waitForServerReady();
+  if (!ready) {
+    throw new Error(
+      `API test server did not start on port ${TEST_PORT}. `
+      + `exitCode=${serverProcess?.exitCode ?? "running"}. `
+      + `Recent logs:\n${serverLogs || "<none>"}`
+    );
+  }
+});
+
+after(async () => {
+  if (startedServerForTests && serverProcess) {
+    serverProcess.kill("SIGTERM");
+    await sleep(400);
+
+    if (!serverProcess.killed) {
+      serverProcess.kill("SIGKILL");
+    }
+  }
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 async function fetchJSON(path, options) {
   const res = await fetch(`${BASE}${path}`, options);
