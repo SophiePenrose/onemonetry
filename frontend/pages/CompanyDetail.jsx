@@ -225,7 +225,7 @@ export default function CompanyDetail({ companyId }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+      <div className="detail-two-column">
         <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} analysisStatus={analysisStatus} />
         <StakeholderPanel
           stakeholders={company.stakeholders}

@@ -42,5 +42,93 @@
         "Newly added — no engagement data yet"
       ]
     }
+  },
+  {
+    "id": "c1779880100932",
+    "name": "Export Review Demo Co",
+    "company_number": "",
+    "industry": "Technology",
+    "segment": "Mid-Market",
+    "turnover": 25000000,
+    "employee_count": 0,
+    "latest_annual_report_url": "",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
+  },
+  {
+    "id": "c1779881280866",
+    "name": "Export Review Demo Co",
+    "company_number": "",
+    "industry": "Technology",
+    "segment": "Mid-Market",
+    "turnover": 25000000,
+    "employee_count": 0,
+    "latest_annual_report_url": "",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
+  },
+  {
+    "id": "c1779882784066",
+    "name": "Live LLM Export Demo Co",
+    "company_number": "",
+    "industry": "Technology",
+    "segment": "Mid-Market",
+    "turnover": 42000000,
+    "employee_count": 0,
+    "latest_annual_report_url": "",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
+  },
+  {
+    "id": "c1779883118738",
+    "name": "Live Mode Export Demo Co",
+    "company_number": "",
+    "industry": "Technology",
+    "segment": "Mid-Market",
+    "turnover": 42000000,
+    "employee_count": 0,
+    "latest_annual_report_url": "",
+    "motions": [],
+    "product_fit": {},
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.5,
+      "warmth": "cool",
+      "signals": [
+        "Newly added — no engagement data yet"
+      ]
+    }
   }
 ]

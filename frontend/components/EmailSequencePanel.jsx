@@ -8,6 +8,11 @@ const STATUS_META = {
   replied: { label: "Replied", color: "#0a8754", bg: "#d1fae5" },
 };
 
+const REVIEW_META = {
+  pending: { label: "Review needed", color: "#7f1d1d", bg: "#fee2e2" },
+  reviewed: { label: "Reviewed", color: "#0a8754", bg: "#dcfce7" },
+};
+
 function CopyButton({ subject, body, footer }) {
   const [copied, setCopied] = React.useState(null);
 
@@ -74,7 +79,8 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
   const [editingStep, setEditingStep] = useState(null);
   const [form, setForm] = useState({ name: "", role: "", email: "", motion: "" });
   const [generating, setGenerating] = useState(false);
-  const [purgingLegacy, setPurgingLegacy] = useState(false);
+  const [generateError, setGenerateError] = useState(null);
+  const [purgingBroken, setPurgingBroken] = useState(false);
 
   useEffect(() => {
     fetch("/api/email/templates")
@@ -98,6 +104,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
     e.preventDefault();
     if (!form.name) return;
     setGenerating(true);
+    setGenerateError(null);
     try {
       const payload = {
         company_id: companyId,
@@ -112,12 +119,29 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        setForm({ name: "", role: "", email: "", motion: "" });
-        setShowGenerate(false);
-        loadSequences();
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 503 && data?.retry_needed) {
+          setGenerateError(data.error || "Live generation is temporarily unavailable. Please retry.");
+          return;
+        }
+
+        if (res.status === 409 && data?.suppressed) {
+          setGenerateError(data.error || "This company is suppressed from outreach sequencing.");
+          return;
+        }
+
+        setGenerateError(data?.error || "Failed to generate sequence.");
+        return;
       }
-    } catch { /* ignore */ }
+
+      setForm({ name: "", role: "", email: "", motion: "" });
+      setShowGenerate(false);
+      loadSequences();
+    } catch (err) {
+      setGenerateError(err?.message || "Failed to generate sequence.");
+    }
     finally { setGenerating(false); }
   }
 
@@ -126,6 +150,14 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
+    });
+    loadSequences();
+  }
+
+  async function handleMarkReviewed(seqId, stepNumber) {
+    await fetch(`/api/email/sequence/${seqId}/step/${stepNumber}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
     });
     loadSequences();
   }
@@ -146,29 +178,42 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
     loadSequences();
   }
 
-  async function handlePurgeLegacySequences() {
-    if (!companyId || purgingLegacy) return;
+  async function handlePurgeBrokenSequences() {
+    if (!companyId || purgingBroken) return;
     if (!confirm("Delete old drafts that still contain placeholder tokens like [Your Name] or [rounded figure]?")) return;
 
-    setPurgingLegacy(true);
+    setPurgingBroken(true);
     try {
-      const res = await fetch(`/api/email/sequences/${encodeURIComponent(companyId)}/purge-placeholders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dry_run: false }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to purge legacy sequences");
+      const [brokenRes, legacyRes] = await Promise.all([
+        fetch(`/api/email/sequences/${encodeURIComponent(companyId)}/purge-broken`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: false }),
+        }),
+        fetch(`/api/email/sequences/${encodeURIComponent(companyId)}/purge-placeholders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: false }),
+        }),
+      ]);
 
-      const deleted = Number(data.deleted_sequences || 0);
-      alert(deleted > 0
-        ? `Deleted ${deleted} legacy placeholder sequence${deleted === 1 ? "" : "s"}.`
-        : "No legacy placeholder sequences found.");
+      const broken = await brokenRes.json().catch(() => ({}));
+      const legacy = await legacyRes.json().catch(() => ({}));
+      if (!brokenRes.ok) throw new Error(broken.error || "Failed to purge broken sequences");
+      if (!legacyRes.ok) throw new Error(legacy.error || "Failed to purge legacy sequences");
+
+      const brokenDeleted = Number(broken.deleted_sequences || 0);
+      const legacyDeleted = Number(legacy.deleted_sequences || 0);
+      const totalDeleted = brokenDeleted + legacyDeleted;
+
+      alert(totalDeleted > 0
+        ? `Deleted ${totalDeleted} broken/legacy sequence${totalDeleted === 1 ? "" : "s"}.`
+        : "No broken or legacy sequences found.");
       loadSequences();
     } catch (err) {
-      alert(err.message || "Failed to purge legacy sequences");
+      alert(err.message || "Failed to purge broken sequences");
     } finally {
-      setPurgingLegacy(false);
+      setPurgingBroken(false);
     }
   }
 
@@ -186,14 +231,14 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
         <h3 style={{ fontSize: 16, margin: 0 }}>Email Sequences</h3>
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={handlePurgeLegacySequences}
-            disabled={purgingLegacy}
+            onClick={handlePurgeBrokenSequences}
+            disabled={purgingBroken}
             style={{
-              padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 12, fontWeight: 600, cursor: purgingLegacy ? "wait" : "pointer",
-              background: "#fff", color: "#374151", opacity: purgingLegacy ? 0.7 : 1,
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 12, fontWeight: 600, cursor: purgingBroken ? "wait" : "pointer",
+              background: "#fff", color: "#374151", opacity: purgingBroken ? 0.7 : 1,
             }}
           >
-            {purgingLegacy ? "Cleaning..." : "Clean Legacy Drafts"}
+            {purgingBroken ? "Cleaning..." : "Clean Broken Drafts"}
           </button>
           <button
             onClick={() => setShowGenerate(!showGenerate)}
@@ -294,6 +339,12 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
           }}>
             {generating ? "Generating…" : "Generate Email Sequence"}
           </button>
+
+          {generateError && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "#7f1d1d", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 10px" }}>
+              {generateError}
+            </div>
+          )}
         </form>
       )}
 
@@ -336,6 +387,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                   <div style={{ padding: "0 14px 14px", borderTop: "1px solid #f0f0f0" }}>
                     {seq.steps.map((step) => {
                       const sm = STATUS_META[step.status] || STATUS_META.pending;
+                      const rm = REVIEW_META[step.review_status] || REVIEW_META.pending;
                       const isEditing = editingStep === `${seq.id}-${step.step_number}`;
 
                       return (
@@ -348,6 +400,9 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                               </span>
                               <span style={{ fontSize: 11, fontWeight: 600, color: sm.color, background: sm.bg, padding: "1px 8px", borderRadius: 8 }}>
                                 {sm.label}
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: rm.color, background: rm.bg, padding: "1px 8px", borderRadius: 8 }}>
+                                {rm.label}
                               </span>
                               {step.status === "pending" && step.send_delay_days > 0 && (
                                 <span style={{ fontSize: 10, color: "#c27b00", fontStyle: "italic" }}>
@@ -377,6 +432,13 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                               }}>
                                 {isEditing ? "Cancel" : "Edit"}
                               </button>
+                              {step.review_status !== "reviewed" && (
+                                <button onClick={() => handleMarkReviewed(seq.id, step.step_number)} style={{
+                                  padding: "3px 10px", borderRadius: 4, border: "1px solid #0a8754", background: "#dcfce7", fontSize: 11, cursor: "pointer", color: "#0a8754", fontWeight: 600,
+                                }}>
+                                  Mark Reviewed
+                                </button>
+                              )}
                             </div>
                           </div>
 

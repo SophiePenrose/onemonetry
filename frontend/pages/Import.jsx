@@ -28,6 +28,27 @@ function StatusBadge({ status }) {
   return <Badge text={m.label} bg={m.bg} color="#fff" />;
 }
 
+function parseDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateTime(value) {
+  const d = parseDate(value);
+  if (!d) return "-";
+  return d.toLocaleString();
+}
+
+function source3ReasonBucket(detail) {
+  const text = String(detail || "").toLowerCase();
+  if (text.includes("non-trading") || text.includes("dormant")) return "nonTrading";
+  if (text.includes("holding") || text.includes("spv")) return "holdingSpv";
+  if (text.includes("no recent filing") || text.includes("stale")) return "stale";
+  if (text.includes("duplicate") || text.includes("already scored")) return "duplicate";
+  return "other";
+}
+
 export default function Import() {
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
@@ -44,18 +65,117 @@ export default function Import() {
   const [bulkSortDir, setBulkSortDir] = useState("desc");
   const [jobSortDir, setJobSortDir] = useState("desc");
   const [logSortDir, setLogSortDir] = useState("desc");
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [source3Breakdown, setSource3Breakdown] = useState(null);
+  const [source3Loading, setSource3Loading] = useState(false);
+  const [closedWonInput, setClosedWonInput] = useState("");
+  const [closedWonBusy, setClosedWonBusy] = useState(false);
+  const [closedWonResult, setClosedWonResult] = useState(null);
+  const [closedWonRegistry, setClosedWonRegistry] = useState({ total: 0, rows: [] });
   const fileRef = useRef(null);
+  const closedWonFileRef = useRef(null);
 
   useEffect(() => {
     fetch("/api/companies-house/status").then((r) => r.json()).then(setCHStatus).catch(() => {});
+    refreshDashboardStats();
     refreshJobs();
     refreshBulkFiles();
     refreshAutoPull();
     refreshBackfillStatus();
+    refreshClosedWonRegistry();
   }, []);
+
+  useEffect(() => {
+    refreshSource3Breakdown(jobs);
+  }, [jobs]);
 
   function refreshJobs() {
     fetch("/api/import/jobs").then((r) => r.json()).then((d) => setJobs(d.jobs || [])).catch(() => {});
+  }
+
+  function refreshDashboardStats() {
+    fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then(setDashboardStats)
+      .catch(() => setDashboardStats(null));
+  }
+
+  async function refreshSource3Breakdown(currentJobs = jobs) {
+    const csvJobs = (currentJobs || []).filter((job) => String(job.type || "").toLowerCase() === "csv");
+    if (csvJobs.length === 0) {
+      setSource3Breakdown({
+        csvJobCount: 0,
+        totalItems: 0,
+        processedItems: 0,
+        importedItems: 0,
+        skippedItems: 0,
+        errorItems: 0,
+        nonTrading: 0,
+        holdingSpv: 0,
+        stale: 0,
+        duplicate: 0,
+        otherSkipped: 0,
+        latestJobId: null,
+      });
+      return;
+    }
+
+    const sorted = [...csvJobs].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    const latest = sorted[0];
+
+    const aggregate = sorted.reduce((acc, job) => {
+      acc.totalItems += Number(job.total_items || 0);
+      acc.processedItems += Number(job.processed_items || 0);
+      acc.importedItems += Number(job.imported_items || 0);
+      acc.skippedItems += Number(job.skipped_items || 0);
+      acc.errorItems += Number(job.error_count || 0);
+      return acc;
+    }, { totalItems: 0, processedItems: 0, importedItems: 0, skippedItems: 0, errorItems: 0 });
+
+    setSource3Loading(true);
+    try {
+      const detailRes = await fetch(`/api/import/jobs/${latest.id}`);
+      const detail = detailRes.ok ? await detailRes.json() : { logs: [] };
+      const logs = Array.isArray(detail.logs) ? detail.logs : [];
+
+      const breakdown = {
+        nonTrading: 0,
+        holdingSpv: 0,
+        stale: 0,
+        duplicate: 0,
+        otherSkipped: 0,
+      };
+
+      logs.forEach((log) => {
+        if (String(log.action || "") !== "skipped") return;
+        const bucket = source3ReasonBucket(log.detail);
+        breakdown[bucket] += 1;
+      });
+
+      setSource3Breakdown({
+        csvJobCount: sorted.length,
+        latestJobId: latest.id,
+        latestStatus: latest.status,
+        latestCreatedAt: latest.created_at,
+        ...aggregate,
+        ...breakdown,
+      });
+    } catch {
+      setSource3Breakdown({
+        csvJobCount: sorted.length,
+        latestJobId: latest.id,
+        latestStatus: latest.status,
+        latestCreatedAt: latest.created_at,
+        ...aggregate,
+        nonTrading: 0,
+        holdingSpv: 0,
+        stale: 0,
+        duplicate: 0,
+        otherSkipped: aggregate.skippedItems,
+      });
+    } finally {
+      setSource3Loading(false);
+    }
   }
 
   function refreshBulkFiles() {
@@ -72,6 +192,13 @@ export default function Import() {
       .then((r) => r.json())
       .then(setBackfillStatus)
       .catch(() => {});
+  }
+
+  function refreshClosedWonRegistry() {
+    fetch("/api/closed-won/registry?limit=8")
+      .then((r) => r.json())
+      .then((data) => setClosedWonRegistry({ total: Number(data?.total || 0), rows: Array.isArray(data?.rows) ? data.rows : [] }))
+      .catch(() => setClosedWonRegistry({ total: 0, rows: [] }));
   }
 
   function loadJobDetail(jobId) {
@@ -162,6 +289,51 @@ export default function Import() {
     } catch { alert("Lookup failed"); }
   }
 
+  async function handleClosedWonImport() {
+    if (closedWonBusy) return;
+    setClosedWonBusy(true);
+    setClosedWonResult(null);
+
+    try {
+      let csvContent = String(closedWonInput || "").trim();
+      const file = closedWonFileRef.current?.files?.[0];
+
+      if (!csvContent && file) {
+        csvContent = String(await file.text()).trim();
+      }
+
+      if (!csvContent) {
+        throw new Error("Paste CSV content or choose a CSV file first.");
+      }
+
+      const res = await fetch("/api/closed-won/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          csv_content: csvContent,
+          source: "closed_won_ui_ingest",
+          dry_run: false,
+          mark_existing_closed_won: true,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Closed-won import failed.");
+
+      setClosedWonResult({ success: true, ...data });
+      setClosedWonInput("");
+      if (closedWonFileRef.current) closedWonFileRef.current.value = "";
+
+      refreshClosedWonRegistry();
+      refreshDashboardStats();
+      refreshJobs();
+    } catch (err) {
+      setClosedWonResult({ success: false, error: err?.message || "Closed-won import failed." });
+    } finally {
+      setClosedWonBusy(false);
+    }
+  }
+
   // --- Job Detail View ---
   if (selectedJob && jobDetail) {
     const { job, logs } = jobDetail;
@@ -174,7 +346,7 @@ export default function Import() {
     return (
       <div>
         <button onClick={() => { setSelectedJob(null); setJobDetail(null); refreshJobs(); refreshBulkFiles(); }} style={{ padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
-          ← Back to Import Dashboard
+          ← Back to Data Pipeline
         </button>
         <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -250,14 +422,185 @@ export default function Import() {
     return jobSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
   });
 
+  const processedMonthly = monthlyFiles.filter((f) => f.processed);
+  const processedDaily = dailyFiles.filter((f) => f.processed);
+  const latestMonthly = [...processedMonthly].sort((a, b) => String(b.period || "").localeCompare(String(a.period || "")))[0] || null;
+  const latestDaily = [...processedDaily].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
+
+  const source3ProgressPct = source3Breakdown?.totalItems
+    ? Math.round((source3Breakdown.processedItems / source3Breakdown.totalItems) * 100)
+    : 0;
+  const source3IsProcessing = source3Breakdown?.totalItems > 0 && source3Breakdown.processedItems < source3Breakdown.totalItems;
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Data Import</h2>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Data Pipeline</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleLookup} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>🔍 Lookup</button>
-          <button onClick={() => { refreshJobs(); refreshBulkFiles(); refreshAutoPull(); refreshBackfillStatus(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
+          <button onClick={() => { refreshDashboardStats(); refreshJobs(); refreshBulkFiles(); refreshAutoPull(); refreshBackfillStatus(); refreshClosedWonRegistry(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
         </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Overall Health</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, fontSize: 13 }}>
+          <div style={{ background: "#f8fafc", borderRadius: 8, padding: 10 }}>
+            <div style={{ color: "#64748b", fontSize: 12 }}>Total companies scored</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#0f172a" }}>{dashboardStats?.total_companies?.toLocaleString() || "-"}</div>
+          </div>
+          <div style={{ background: "#f8fafc", borderRadius: 8, padding: 10 }}>
+            <div style={{ color: "#64748b", fontSize: 12 }}>Filings processed</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#0f172a" }}>{dashboardStats?.total_filings?.toLocaleString() || "-"}</div>
+          </div>
+          <div style={{ background: "#f8fafc", borderRadius: 8, padding: 10 }}>
+            <div style={{ color: "#64748b", fontSize: 12 }}>Monitored companies</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#0f172a" }}>{dashboardStats?.total_monitored?.toLocaleString() || "-"}</div>
+          </div>
+          <div style={{ background: "#f8fafc", borderRadius: 8, padding: 10 }}>
+            <div style={{ color: "#64748b", fontSize: 12 }}>Queue failed items</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#0f172a" }}>{queueStatus?.counts?.failed?.toLocaleString() || 0}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <strong style={{ fontSize: 14 }}>Source 1a: Monthly bulk</strong>
+            <Badge text={processedMonthly.length > 0 ? "Complete" : "Pending"} bg={processedMonthly.length > 0 ? "#0a8754" : "#6b7280"} color="#fff" />
+          </div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Files processed: {processedMonthly.length}/{monthlyFiles.length || 0}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Last processed: {latestMonthly?.period || "-"}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Qualifying companies: {backfillStatus?.total_qualifying_companies || 0}</div>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <strong style={{ fontSize: 14 }}>Source 1b: Scheduled monthly</strong>
+            <Badge text={autoPull?.enabled ? "Up to date" : "Check config"} bg={autoPull?.enabled ? "#0a8754" : "#d97706"} color="#fff" />
+          </div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Latest monthly batch: {latestMonthly?.period || "-"}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Auto-pull: {autoPull?.enabled ? "enabled" : "disabled"}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Next run: {formatDateTime(autoPull?.next_run)}</div>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <strong style={{ fontSize: 14 }}>Source 2: Twice-weekly</strong>
+            <Badge text={processedDaily.length > 0 ? "Up to date" : "Pending"} bg={processedDaily.length > 0 ? "#0a8754" : "#d97706"} color="#fff" />
+          </div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Daily files processed: {processedDaily.length}/{dailyFiles.length || 0}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Latest batch: {latestDaily?.date || "-"}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Next expected run: {formatDateTime(autoPull?.next_run)}</div>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <strong style={{ fontSize: 14 }}>Source 3: Mid-market CSV</strong>
+            <Badge text={source3IsProcessing ? `Processing ${source3ProgressPct}%` : "Idle"} bg={source3IsProcessing ? "#2563eb" : "#6b7280"} color="#fff" />
+          </div>
+          <div style={{ fontSize: 12, color: "#475569", marginBottom: 6 }}>
+            Jobs: {source3Breakdown?.csvJobCount || 0} · Processed: {source3Breakdown?.processedItems || 0}/{source3Breakdown?.totalItems || 0}
+          </div>
+          <div style={{ fontSize: 12, color: "#475569", marginBottom: 8 }}>
+            Imported: {source3Breakdown?.importedItems || 0} · Skipped: {source3Breakdown?.skippedItems || 0} · Errors: {source3Breakdown?.errorItems || 0}
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 8 }}>
+            <thead>
+              <tr style={{ color: "#64748b", textAlign: "left" }}>
+                <th style={{ padding: "2px 0" }}>Outcome</th>
+                <th style={{ padding: "2px 0", textAlign: "right" }}>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td style={{ padding: "2px 0" }}>Non-trading</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.nonTrading || 0}</td></tr>
+              <tr><td style={{ padding: "2px 0" }}>Holding/SPV</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.holdingSpv || 0}</td></tr>
+              <tr><td style={{ padding: "2px 0" }}>No recent filing</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.stale || 0}</td></tr>
+              <tr><td style={{ padding: "2px 0" }}>Duplicate</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.duplicate || 0}</td></tr>
+              <tr><td style={{ padding: "2px 0" }}>Other skipped</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.otherSkipped || 0}</td></tr>
+            </tbody>
+          </table>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={() => handleRetryFailed()}
+              disabled={queueBusy || (queueStatus?.counts?.failed || 0) === 0}
+              style={{ padding: "5px 9px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 11, cursor: (queueBusy || (queueStatus?.counts?.failed || 0) === 0) ? "not-allowed" : "pointer" }}
+            >
+              Retry errors
+            </button>
+            <button
+              onClick={() => source3Breakdown?.latestJobId && loadJobDetail(source3Breakdown.latestJobId)}
+              disabled={!source3Breakdown?.latestJobId || source3Loading}
+              style={{ padding: "5px 9px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 11, cursor: (!source3Breakdown?.latestJobId || source3Loading) ? "not-allowed" : "pointer" }}
+            >
+              View latest job
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Closed-Won Registry Suppression</h3>
+        <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
+          Ingest your closed-won company list (name + Companies House registration number) to suppress them from analysis, shortlist, and outreach workflows.
+        </p>
+
+        <div style={{ fontSize: 12, color: "#475569", marginBottom: 10 }}>
+          Registry size: <strong>{closedWonRegistry.total.toLocaleString()}</strong>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 10 }}>
+          <textarea
+            value={closedWonInput}
+            onChange={(e) => setClosedWonInput(e.target.value)}
+            placeholder={"Paste CSV rows here. Example:\ncompany_name,company_number\nAcme Ltd,01234567"}
+            style={{ width: "100%", minHeight: 90, borderRadius: 6, border: "1px solid #d1d5db", padding: 10, fontSize: 12, fontFamily: "monospace", boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input ref={closedWonFileRef} type="file" accept=".csv" style={{ fontSize: 13 }} />
+            <button
+              onClick={handleClosedWonImport}
+              disabled={closedWonBusy}
+              style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: "#0a8754", color: "#fff", fontWeight: 600, fontSize: 13, cursor: closedWonBusy ? "wait" : "pointer", opacity: closedWonBusy ? 0.65 : 1 }}
+            >
+              {closedWonBusy ? "Importing…" : "Import Closed-Won List"}
+            </button>
+          </div>
+        </div>
+
+        {closedWonResult && (
+          <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 6, fontSize: 12, background: closedWonResult.success ? "#d1fae5" : "#fee2e2", color: closedWonResult.success ? "#065f46" : "#991b1b" }}>
+            {closedWonResult.success
+              ? `Stored ${closedWonResult.stored || 0} records, skipped ${closedWonResult.skipped_invalid || 0} invalid, marked ${closedWonResult.marked_closed_won_states || 0} existing companies as closed won.`
+              : `Error: ${closedWonResult.error}`}
+          </div>
+        )}
+
+        {closedWonRegistry.rows.length > 0 && (
+          <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc", color: "#475569" }}>
+                  <th style={{ padding: "6px 8px", textAlign: "left" }}>Company</th>
+                  <th style={{ padding: "6px 8px", textAlign: "left" }}>Number</th>
+                  <th style={{ padding: "6px 8px", textAlign: "left" }}>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closedWonRegistry.rows.map((row, idx) => (
+                  <tr key={`${row.company_number}-${idx}`} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "6px 8px" }}>{row.company_name || "—"}</td>
+                    <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>{row.company_number}</td>
+                    <td style={{ padding: "6px 8px", color: "#64748b" }}>{formatDateTime(row.updated_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* CH Status */}
@@ -269,10 +612,10 @@ export default function Import() {
         </div>
       )}
 
-      {/* Phase 1: CSV */}
+      {/* Source 3 */}
       <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Phase 1: CSV Import</h3>
-        <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Upload CSV with company numbers for £20M+ turnover entities.</p>
+        <h3 style={{ fontSize: 16, margin: "0 0 8px" }}>Source 3: Mid-Market CSV Lists</h3>
+        <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Upload monthly CSV lists of company numbers for staged lookup, deduplication, and scoring.</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input ref={fileRef} type="file" accept=".csv" style={{ fontSize: 13 }} />
           <button onClick={handleCSVUpload} disabled={uploading} style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff", fontWeight: 600, fontSize: 13, cursor: uploading ? "wait" : "pointer", opacity: uploading ? 0.6 : 1 }}>
@@ -286,10 +629,10 @@ export default function Import() {
         )}
       </div>
 
-      {/* Phase 2: Bulk ZIP */}
+      {/* Sources 1a/1b/2 */}
       <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <h3 style={{ fontSize: 16, margin: 0 }}>Phase 2: Bulk Accounts Data</h3>
+          <h3 style={{ fontSize: 16, margin: 0 }}>Sources 1a/1b/2: Companies House Filings</h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: "#888" }}>Auto-pull:</span>
             <button onClick={toggleAutoPull} style={{
@@ -309,8 +652,8 @@ export default function Import() {
         )}
 
         <p style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
-          Companies House publishes accounts as ZIP files. Monthly archives cover the last 24 months (historical backfill).
-          Daily files (Tue-Sat) contain the latest filings. Only £20M+ turnover companies are imported.
+          Monthly archives power historic backfill (Source 1a), monthly publication drops deliver fresh batches (Source 1b),
+          and daily files keep twice-weekly recency flowing (Source 2).
         </p>
 
         <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 6, padding: 10, marginBottom: 12 }}>

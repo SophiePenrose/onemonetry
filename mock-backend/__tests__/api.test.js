@@ -273,4 +273,67 @@ describe("API endpoints", () => {
       assert.equal(data.propensity_weight, 0.15);
     });
   });
+
+  describe("Email export safeguards", () => {
+    it("blocks export until steps are manually reviewed, then normalizes forbidden send-time minutes", async () => {
+      const createdCompany = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Export Review Test Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 18000000,
+        }),
+      });
+      assert.equal(createdCompany.status, 201);
+      const companyId = createdCompany.data.company?.id;
+      assert.ok(companyId);
+
+      const generated = await fetchJSON("/api/email/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_id: companyId,
+          stakeholder_name: "Alex Brown",
+          stakeholder_role: "Finance Director",
+          stakeholder_email: "alex.brown@example.com",
+          motion: "FX",
+        }),
+      });
+
+      assert.equal(generated.status, 201);
+      const sequenceId = generated.data.sequence_id;
+      assert.ok(sequenceId);
+
+      const blockedExport = await fetchJSON(`/api/email/export/json/${sequenceId}`);
+      assert.equal(blockedExport.status, 409);
+      assert.ok(Array.isArray(blockedExport.data.metadata?.pending_review_steps));
+      assert.ok(blockedExport.data.metadata.pending_review_steps.length > 0);
+
+      const sequence = await fetchJSON(`/api/email/sequence/${sequenceId}`);
+      assert.equal(sequence.status, 200);
+      assert.ok(Array.isArray(sequence.data.sequence?.steps));
+
+      for (const step of sequence.data.sequence.steps) {
+        const reviewed = await fetchJSON(`/api/email/sequence/${sequenceId}/step/${step.step_number}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(reviewed.status, 200);
+      }
+
+      const exported = await fetchJSON(`/api/email/export/json/${sequenceId}?send_time=08:30`);
+      assert.equal(exported.status, 200);
+      assert.ok(Array.isArray(exported.data.raw_rows));
+      assert.ok(exported.data.raw_rows.length > 0);
+
+      for (const row of exported.data.raw_rows) {
+        const parts = String(row.scheduled_time || "").split(":");
+        assert.equal(parts.length, 2);
+        const minute = Number.parseInt(parts[1], 10);
+        assert.ok(![0, 15, 30, 45].includes(minute));
+      }
+    });
+  });
 });

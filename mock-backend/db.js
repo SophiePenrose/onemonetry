@@ -47,6 +47,16 @@ db.exec(`
     excluded_company_ids TEXT NOT NULL DEFAULT '[]'
   );
 
+  CREATE TABLE IF NOT EXISTS closed_won_registry (
+    company_number TEXT PRIMARY KEY,
+    company_name TEXT,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_closed_won_source ON closed_won_registry(source);
+
   CREATE TABLE IF NOT EXISTS cadence_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id TEXT NOT NULL,
@@ -341,6 +351,103 @@ export function setExclusions(exclusions) {
     INSERT INTO exclusions (id, prohibited_industries, excluded_company_ids) VALUES (1, ?, ?)
     ON CONFLICT(id) DO UPDATE SET prohibited_industries = excluded.prohibited_industries, excluded_company_ids = excluded.excluded_company_ids
   `).run(JSON.stringify(exclusions.prohibited_industries), JSON.stringify(exclusions.excluded_company_ids));
+}
+
+function normalizeCompanyNumber(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+
+  const stripped = raw.replace(/^CH-/, "").replace(/\s+/g, "");
+  if (!stripped) return null;
+
+  if (/^\d{1,8}$/.test(stripped)) {
+    return stripped.padStart(8, "0");
+  }
+
+  if (/^[A-Z0-9]{2,12}$/.test(stripped)) {
+    return stripped;
+  }
+
+  return null;
+}
+
+export function upsertClosedWonCompanies(rows, source = "manual_ingest") {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return {
+      received: 0,
+      stored: 0,
+      skipped_invalid: 0,
+      source,
+      company_numbers: [],
+    };
+  }
+
+  const upsert = db.prepare(`
+    INSERT INTO closed_won_registry (company_number, company_name, source, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(company_number) DO UPDATE SET
+      company_name = COALESCE(excluded.company_name, closed_won_registry.company_name),
+      source = excluded.source,
+      updated_at = datetime('now')
+  `);
+
+  const tx = db.transaction((items) => {
+    let stored = 0;
+    let skippedInvalid = 0;
+    const numbers = [];
+
+    for (const item of items) {
+      const companyNumber = normalizeCompanyNumber(item?.company_number || item?.companyNumber || item?.number || item);
+      if (!companyNumber) {
+        skippedInvalid += 1;
+        continue;
+      }
+
+      const companyName = String(item?.company_name || item?.companyName || item?.name || "").trim() || null;
+      upsert.run(companyNumber, companyName, source || "manual_ingest");
+      stored += 1;
+      numbers.push(companyNumber);
+    }
+
+    return { stored, skippedInvalid, numbers };
+  });
+
+  const result = tx(rows);
+  return {
+    received: rows.length,
+    stored: result.stored,
+    skipped_invalid: result.skippedInvalid,
+    source,
+    company_numbers: result.numbers,
+  };
+}
+
+export function isClosedWonCompanyNumber(companyNumber) {
+  const normalized = normalizeCompanyNumber(companyNumber);
+  if (!normalized) return false;
+  const row = db.prepare("SELECT 1 FROM closed_won_registry WHERE company_number = ?").get(normalized);
+  return !!row;
+}
+
+export function getClosedWonCompany(companyNumber) {
+  const normalized = normalizeCompanyNumber(companyNumber);
+  if (!normalized) return null;
+  return db.prepare("SELECT * FROM closed_won_registry WHERE company_number = ?").get(normalized) || null;
+}
+
+export function getClosedWonRegistryCount() {
+  return db.prepare("SELECT COUNT(*) AS count FROM closed_won_registry").get().count;
+}
+
+export function listClosedWonCompanies(limit = 200, offset = 0) {
+  const safeLimit = Math.max(1, Math.min(Number.parseInt(String(limit), 10) || 200, 5000));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+  return db.prepare(`
+    SELECT *
+    FROM closed_won_registry
+    ORDER BY updated_at DESC
+    LIMIT ? OFFSET ?
+  `).all(safeLimit, safeOffset);
 }
 
 // --- Cadence Log ---

@@ -46,7 +46,135 @@ const COMPETITOR_INFERENCE = {
   Wise: "Useful for spot FX, but broader treasury, cards, and acquiring coverage can remain fragmented.",
   Ebury: "Can support FX, though platform breadth beyond FX may require additional tools.",
   Pleo: "Good spend UX but can create higher total cost if multi-currency usage is material.",
+  "High-Street Bank Treasury Stack": "Incumbent relationship banks can limit treasury agility, FX transparency, and workflow automation at scale.",
+  "Legacy Merchant Acquirer": "Legacy acquirers often introduce slower settlement and more complex card-pricing structures.",
+  "Legacy FX Provider": "Traditional FX providers can create spread leakage and fragmented treasury controls.",
+  "Legacy Spend Tooling": "Point spend tools can leave finance teams with fragmented controls and reconciliation overhead.",
 };
+
+const COMPETITOR_ALIAS_GROUPS = [
+  {
+    name: "HSBC",
+    product: "Banking / FX",
+    aliases: ["hsbc", "hsbc uk bank", "hongkong and shanghai banking"],
+    displacement_angle: "Incumbent bank and FX relationship noted in filing context.",
+  },
+  {
+    name: "Barclays",
+    product: "Banking / FX",
+    aliases: ["barclays", "barclays bank"],
+    displacement_angle: "Incumbent bank relationship noted in filing context.",
+  },
+  {
+    name: "NatWest",
+    product: "Banking / FX",
+    aliases: ["natwest", "nat west", "royal bank of scotland", "rbs"],
+    displacement_angle: "Incumbent UK bank relationship noted in filing context.",
+  },
+  {
+    name: "Lloyds",
+    product: "Banking / FX",
+    aliases: ["lloyds", "lloyds bank"],
+    displacement_angle: "Incumbent UK bank relationship noted in filing context.",
+  },
+  {
+    name: "Worldpay",
+    product: "Merchant Acquiring",
+    aliases: ["worldpay", "world pay"],
+    displacement_angle: "Incumbent acquirer context appears in filing text.",
+  },
+  {
+    name: "Stripe",
+    product: "Merchant Acquiring",
+    aliases: ["stripe", "stripe payments"],
+    displacement_angle: "Digital acquiring stack context appears in filing text.",
+  },
+  {
+    name: "Adyen",
+    product: "Merchant Acquiring",
+    aliases: ["adyen"],
+    displacement_angle: "Enterprise acquiring platform context appears in filing text.",
+  },
+  {
+    name: "PayPal",
+    product: "Payments",
+    aliases: ["paypal", "braintree"],
+    displacement_angle: "Payments provider context appears in filing text.",
+  },
+  {
+    name: "Wise",
+    product: "FX",
+    aliases: ["wise", "wise payments"],
+    displacement_angle: "FX provider context appears in filing text.",
+  },
+  {
+    name: "Ebury",
+    product: "FX",
+    aliases: ["ebury"],
+    displacement_angle: "FX provider context appears in filing text.",
+  },
+  {
+    name: "Pleo",
+    product: "Spend Management",
+    aliases: ["pleo"],
+    displacement_angle: "Spend tooling context appears in filing text.",
+  },
+  {
+    name: "American Express",
+    product: "Corporate Cards",
+    aliases: ["american express", "amex"],
+    displacement_angle: "Card programme context appears in filing text.",
+  },
+  {
+    name: "Elavon",
+    product: "Merchant Acquiring",
+    aliases: ["elavon"],
+    displacement_angle: "Acquirer context appears in filing text.",
+  },
+  {
+    name: "Global Payments",
+    product: "Merchant Acquiring",
+    aliases: ["global payments"],
+    displacement_angle: "Acquirer context appears in filing text.",
+  },
+  {
+    name: "Fiserv",
+    product: "Merchant Acquiring",
+    aliases: ["fiserv", "first data"],
+    displacement_angle: "Acquiring infrastructure context appears in filing text.",
+  },
+];
+
+const COMPETITOR_SIGNAL_RULES = [
+  {
+    name: "High-Street Bank Treasury Stack",
+    product: "Banking / FX",
+    category: "banking",
+    pattern: /\b(bank(?:ing)?\s+facilit(?:y|ies)|overdraft|credit\s+facility|loan\s+covenant|cash\s*flow|treasury|relationship\s+bank|working\s+capital\s+facility)\b/i,
+    displacement_angle: "Filing language suggests dependency on a legacy bank-led treasury stack.",
+  },
+  {
+    name: "Legacy Merchant Acquirer",
+    product: "Merchant Acquiring",
+    category: "acquiring",
+    pattern: /\b(merchant|acquir(?:er|ing)|card\s+accept|payment\s+gateway|checkout|chargeback|settlement|payment\s+processing|epos|pos\s+terminal)\b/i,
+    displacement_angle: "Filing language suggests merchant-acquiring complexity that may be served by incumbent acquirers.",
+  },
+  {
+    name: "Legacy FX Provider",
+    product: "FX",
+    category: "fx",
+    pattern: /\b(fx|foreign\s+exchange|multi\s*-?\s*currency|cross\s*-?\s*border|international\s+payments?|currency\s+risk|exchange\s+rate|hedg(?:e|ing)|forward\s+contract)\b/i,
+    displacement_angle: "Filing language indicates FX exposure likely managed through a traditional provider setup.",
+  },
+  {
+    name: "Legacy Spend Tooling",
+    product: "Spend Management",
+    category: "spend",
+    pattern: /\b(expense\s+management|employee\s+expenses?|corporate\s+cards?|purchase\s+cards?|approval\s+workflow|receipt\s+capture|spend\s+control)\b/i,
+    displacement_angle: "Filing language indicates spend-control needs often handled by fragmented tooling.",
+  },
+];
 
 const USE_CASE_LIBRARY = [
   {
@@ -138,6 +266,92 @@ function collectKeywordSnippets(rawText, keywords, max = 4) {
   }
 
   return snippets;
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function inferCompetitorsFromFilingText(filingText, max = 8) {
+  const text = String(filingText || "");
+  if (!text) return [];
+
+  const inferred = [];
+  const seen = new Set();
+
+  for (const group of COMPETITOR_ALIAS_GROUPS) {
+    let match = null;
+    for (const alias of group.aliases || []) {
+      const pattern = new RegExp(`\\b${escapeRegex(alias)}\\b`, "i");
+      match = pattern.exec(text);
+      if (match) break;
+    }
+
+    if (!match) continue;
+    const key = String(group.name || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+
+    const snippetStart = Math.max(0, match.index - 120);
+    const snippetEnd = Math.min(text.length, match.index + String(match[0] || "").length + 160);
+    inferred.push({
+      name: group.name,
+      product: group.product || "",
+      displacement_angle: group.displacement_angle || "Detected provider context in filing text.",
+      snippet: truncateSnippet(text.slice(snippetStart, snippetEnd)),
+      inferred_advantage: COMPETITOR_INFERENCE[group.name] || "Use filing context to position switching path with low implementation risk.",
+      source: "filing_alias_inference",
+    });
+
+    if (inferred.length >= max) break;
+  }
+
+  return inferred;
+}
+
+function competitorCategoryFromName(name, product) {
+  const text = `${String(name || "")} ${String(product || "")}`.toLowerCase();
+  if (/hsbc|barclays|natwest|lloyds|bank|treasury/.test(text)) return "banking";
+  if (/wise|ebury|foreign\s*exchange|\bfx\b/.test(text)) return "fx";
+  if (/worldpay|stripe|adyen|paypal|braintree|elavon|global payments|fiserv|merchant|acquir/.test(text)) return "acquiring";
+  if (/pleo|american express|amex|spend|expense|corporate\s+card/.test(text)) return "spend";
+  return "other";
+}
+
+function inferCompetitorsFromSignals(analysis = {}, filingText, existingCompetitors = [], max = 4) {
+  const sourceText = [
+    analysis?.summary || "",
+    ...(analysis?.themes || []).map((t) => `${t?.theme || ""} ${t?.evidence || ""}`),
+    ...(analysis?.pain_indicators || []).map((p) => `${p?.pain || ""} ${p?.evidence || ""}`),
+    ...(analysis?.opportunities || []).map((o) => `${o?.product || ""} ${o?.rationale || ""}`),
+    filingText || "",
+  ].join(" ");
+
+  const knownCategories = new Set(
+    (existingCompetitors || []).map((item) => competitorCategoryFromName(item?.name, item?.product)).filter(Boolean)
+  );
+
+  const inferred = [];
+  for (const rule of COMPETITOR_SIGNAL_RULES) {
+    if (knownCategories.has(rule.category)) continue;
+    const match = rule.pattern.exec(sourceText);
+    if (!match) continue;
+
+    const snippetStart = Math.max(0, match.index - 120);
+    const snippetEnd = Math.min(sourceText.length, match.index + String(match[0] || "").length + 180);
+    inferred.push({
+      name: rule.name,
+      product: rule.product,
+      displacement_angle: rule.displacement_angle,
+      snippet: truncateSnippet(sourceText.slice(snippetStart, snippetEnd)),
+      inferred_advantage: COMPETITOR_INFERENCE[rule.name] || "Use filing context to position switching path with low implementation risk.",
+      source: "signal_inference",
+    });
+
+    if (inferred.length >= max) break;
+  }
+
+  return inferred;
 }
 
 function buildOutreachNarrative(analysis = {}) {
@@ -499,6 +713,32 @@ function normalizeIncomingLevel5Shape(rawAnalysis = {}) {
 function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
   const safe = normalizeIncomingLevel5Shape(analysis || {});
 
+  const inferredCompetitors = inferCompetitorsFromFilingText(filingText, 8);
+  const signalInferredCompetitors = inferCompetitorsFromSignals(
+    safe,
+    filingText,
+    [...(safe.competitors_detected || []), ...inferredCompetitors],
+    4
+  );
+  const mergedCompetitors = [];
+  const seenCompetitors = new Set();
+  for (const item of [...(safe.competitors_detected || []), ...inferredCompetitors, ...signalInferredCompetitors]) {
+    const name = String(item?.name || "").trim();
+    if (!name) continue;
+    const product = String(item?.product || "").trim();
+    const key = `${name.toLowerCase()}::${product.toLowerCase()}`;
+    if (seenCompetitors.has(key)) continue;
+    seenCompetitors.add(key);
+    mergedCompetitors.push({
+      ...item,
+      name,
+      product,
+      displacement_angle: item?.displacement_angle || "Detected provider context in filing.",
+      snippet: item?.snippet || item?.quote || null,
+    });
+  }
+  safe.competitors_detected = mergedCompetitors;
+
   const painKeywords = (safe.pain_indicators || []).map((p) => p.pain || p).filter(Boolean);
   const suitabilityKeywords = [
     ...(safe.opportunities || []).map((o) => o.product || ""),
@@ -530,6 +770,9 @@ function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
 
   safe.competitors_detected = (safe.competitors_detected || []).map((c) => ({
     ...c,
+    product: c.product || "",
+    displacement_angle: c.displacement_angle || "Detected provider context in filing.",
+    snippet: c.snippet || c.quote || null,
     inferred_advantage: c.inferred_advantage || COMPETITOR_INFERENCE[c.name] || "Use filing context to position switching path with low implementation risk.",
   }));
 

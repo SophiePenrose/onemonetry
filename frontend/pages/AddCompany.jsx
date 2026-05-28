@@ -124,7 +124,7 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
       )}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
             <label style={labelStyle}>Company Name *</label>
             <input style={inputStyle} value={form.name} onChange={(e) => updateField("name", e.target.value)} placeholder="e.g. Acme Widgets Ltd" />
@@ -135,7 +135,7 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
             <label style={labelStyle}>Industry *</label>
             <input
@@ -157,7 +157,7 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
             <label style={labelStyle}>Turnover (£)</label>
             <input style={inputStyle} type="number" value={form.turnover} onChange={(e) => updateField("turnover", e.target.value)} placeholder="e.g. 5000000" />

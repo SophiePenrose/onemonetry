@@ -8,6 +8,56 @@ function formatTurnover(value) {
   return `£${value}`;
 }
 
+function parseDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function daysSince(value) {
+  const d = parseDate(value);
+  if (!d) return null;
+  const now = new Date();
+  return Math.max(0, Math.floor((now.getTime() - d.getTime()) / 86400000));
+}
+
+function filingAgeLabel(value) {
+  const days = daysSince(value);
+  if (days === null) return "Unknown";
+  if (days < 1) return "Today";
+  return `${days}d`;
+}
+
+function inferSourceBucket(source, latestFilingDate) {
+  const raw = String(source || "").toLowerCase();
+  const filingAge = daysSince(latestFilingDate);
+
+  if (raw.includes("csv")) return "3";
+  if (raw.startsWith("daily:")) return "2";
+  if (raw.startsWith("monthly:")) {
+    if (filingAge !== null && filingAge > 120) return "1a";
+    return "1b";
+  }
+  if (raw.includes("backfill") || raw.includes("bulk")) return "1a";
+  if (raw.includes("scheduled")) return "1b";
+
+  return "?";
+}
+
+function sourceBucketForCompany(company) {
+  const explicit = String(company?.source_type || "").trim();
+  if (explicit) return explicit;
+  return inferSourceBucket(company?.source, company?.latest_filing_date);
+}
+
+const SOURCE_META = {
+  "1a": { label: "1a", color: "#475569", title: "Monthly bulk backfill" },
+  "1b": { label: "1b", color: "#0f766e", title: "Monthly scheduled filings" },
+  "2": { label: "2", color: "#2563eb", title: "Twice-weekly filings" },
+  "3": { label: "3", color: "#9333ea", title: "Mid-market CSV pipeline" },
+  "?": { label: "?", color: "#6b7280", title: "Unknown source" },
+};
+
 function StatCard({ label, value, color, sub }) {
   return (
     <div style={{
@@ -30,6 +80,7 @@ export default function Home({ onNavigateToCompany }) {
   const [turnoverBand, setTurnoverBand] = useState("all");
   const [sortBy, setSortBy] = useState("turnover");
   const [sortDir, setSortDir] = useState("desc");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [companySearch, setCompanySearch] = useState("");
   const [landingCompanies, setLandingCompanies] = useState([]);
   const [landingLoading, setLandingLoading] = useState(false);
@@ -67,12 +118,16 @@ export default function Home({ onNavigateToCompany }) {
   if (!data) return <div style={{ color: "#c0392b", padding: 24 }}>Failed to load dashboard.</div>;
 
   const turnoverDist = data.turnover_distribution || {};
+  const sourceFilteredLandingCompanies = sourceFilter === "all"
+    ? landingCompanies
+    : landingCompanies.filter((c) => sourceBucketForCompany(c) === sourceFilter);
+
   const filteredLandingCompanies = companySearch.trim()
-    ? landingCompanies.filter((c) =>
+    ? sourceFilteredLandingCompanies.filter((c) =>
         String(c.name || "").toLowerCase().includes(companySearch.toLowerCase())
         || String(c.company_number || "").toLowerCase().includes(companySearch.toLowerCase())
       )
-    : landingCompanies;
+    : sourceFilteredLandingCompanies;
   const visibleLandingCompanies = filteredLandingCompanies.slice(0, 20);
 
   function handleColumnSort(field) {
@@ -102,7 +157,7 @@ export default function Home({ onNavigateToCompany }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Workspace</h2>
+        <h2 style={{ margin: 0, fontSize: 20 }}>All Companies</h2>
         <span style={{ color: "#888", fontSize: 14 }}>
           {data.total_companies?.toLocaleString()} mid-market companies · {data.total_filings?.toLocaleString()} filings
         </span>
@@ -115,7 +170,7 @@ export default function Home({ onNavigateToCompany }) {
         <StatCard label="Below Threshold" value={data.monitor_stats?.below_threshold || 0} color="#e67e22" sub="Previously £15M+, now lower" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
         <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
           <h4 style={{ margin: "0 0 14px", fontSize: 15 }}>Turnover Distribution</h4>
           {Object.entries(turnoverDist).map(([label, bucket]) => {
@@ -190,6 +245,17 @@ export default function Home({ onNavigateToCompany }) {
             >
               {sortBy} · {sortDir === "desc" ? "↓ Desc" : "↑ Asc"}
             </button>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, background: "#fff" }}
+            >
+              <option value="all">All sources</option>
+              <option value="1a">Source 1a</option>
+              <option value="1b">Source 1b</option>
+              <option value="2">Source 2</option>
+              <option value="3">Source 3</option>
+            </select>
           </div>
         </div>
         {landingLoading ? (
@@ -214,6 +280,8 @@ export default function Home({ onNavigateToCompany }) {
                     {renderSortLabel("turnover", "Turnover")}
                   </button>
                 </th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>Source</th>
+                <th style={{ padding: "10px 16px", textAlign: "center" }}>Filed</th>
                 <th style={{ padding: "10px 16px", textAlign: "center" }}>
                   <button type="button" onClick={() => handleColumnSort("filing_count")} style={headerButtonStyle}>
                     {renderSortLabel("filing_count", "Filings")}
@@ -245,6 +313,32 @@ export default function Home({ onNavigateToCompany }) {
                     }}>{c.segment === "Enterprise" ? "ENT" : c.segment === "Mid-Market" ? "MM" : "SMB"}</span>
                   </td>
                   <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700, fontSize: 14 }}>{formatTurnover(c.turnover)}</td>
+                  <td style={{ padding: "10px 16px", textAlign: "center" }}>
+                    {(() => {
+                      const sourceBucket = sourceBucketForCompany(c);
+                      const sourceMeta = SOURCE_META[sourceBucket] || SOURCE_META["?"];
+                      const sourceTitle = c.source_family ? String(c.source_family).replaceAll("_", " ") : sourceMeta.title;
+                      return (
+                        <span
+                          title={sourceTitle}
+                          style={{
+                            display: "inline-block",
+                            borderRadius: 999,
+                            padding: "2px 8px",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "#fff",
+                            background: sourceMeta.color,
+                          }}
+                        >
+                          {sourceMeta.label}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td style={{ padding: "10px 16px", textAlign: "center", fontSize: 13, color: "#555" }}>
+                    {filingAgeLabel(c.latest_filing_date)}
+                  </td>
                   <td style={{ padding: "10px 16px", textAlign: "center", fontSize: 13 }}>{c.filing_count}</td>
                 </tr>
               ))}
