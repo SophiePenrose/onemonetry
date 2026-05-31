@@ -914,6 +914,102 @@ function getCompanyState(companyId) {
 
 // --- Unified multi-motion scoring ---
 
+function normalizeNarrativeItems(items, limit = 3) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const item of items) {
+    if (out.length >= limit) break;
+    const text = String(item || "").trim();
+    if (!text) continue;
+    out.push(text);
+  }
+  return out;
+}
+
+function extractEvidenceHighlights(evidence, limit = 2) {
+  if (!Array.isArray(evidence)) return [];
+  const highlights = [];
+  for (const item of evidence) {
+    if (highlights.length >= limit) break;
+    let text = "";
+    if (typeof item === "string") {
+      text = item;
+    } else if (item && typeof item === "object") {
+      text = item.text || item.signal || item.reason || "";
+    }
+    text = String(text || "").trim();
+    if (text) highlights.push(text);
+  }
+  return highlights;
+}
+
+function humanizeGate(rawGate) {
+  const text = String(rawGate || "").trim();
+  if (!text) return "";
+  return text.replace(/_/g, " ");
+}
+
+function buildMotionScoreNarrative(score, motionData, fallbackExplanation = "") {
+  const motion = String(motionData?.motion || "Opportunity");
+  const baseExplanation = String(fallbackExplanation || `${motion} fit inferred from available signals.`).trim();
+  const evidenceHighlights = extractEvidenceHighlights(motionData?.evidence, 2);
+
+  const drivers = [
+    ...normalizeNarrativeItems(score?.score_explanation?.drivers, 2),
+    ...evidenceHighlights,
+  ];
+  if (drivers.length === 0) drivers.push(baseExplanation);
+
+  const risks = normalizeNarrativeItems(score?.score_explanation?.risks, 2);
+  if (motionData?.qualification_gate) {
+    risks.unshift(`Qualification gate applied: ${humanizeGate(motionData.qualification_gate)}.`);
+  }
+  if (String(score?.confidence_interval?.confidence_level || "").toLowerCase() === "low") {
+    risks.push("Evidence confidence is low; validate with fresher filings or connector sync.");
+  }
+
+  const confidenceLevel = String(score?.confidence_interval?.confidence_level || "").trim();
+  const velocityBand = String(score?.velocity?.band || "").trim();
+  const confidenceSnippet = confidenceLevel ? `${confidenceLevel} confidence` : "";
+  const velocitySnippet = velocityBand ? `${velocityBand} velocity` : "";
+
+  return {
+    headline: [baseExplanation, confidenceSnippet, velocitySnippet].filter(Boolean).join(" | "),
+    drivers: [...new Set(drivers)].slice(0, 3),
+    risks: [...new Set(risks)].slice(0, 3),
+    evidence: evidenceHighlights,
+  };
+}
+
+function buildLegacyMotionNarrative(motion, fit) {
+  const fitLevel = String(fit?.fit_level || "medium").trim();
+  const baseExplanation = String(
+    fit?.explanation || `${motion} relevance is based on manually captured profile signals.`
+  ).trim();
+  const layers = fit?.layers || {};
+  const layerEvidence = Object.values(layers)
+    .map((layer) => {
+      if (!layer) return "";
+      if (typeof layer.evidence === "string") return layer.evidence;
+      if (Array.isArray(layer.evidence)) {
+        const first = layer.evidence.find((item) => typeof item === "string" || item?.text);
+        if (typeof first === "string") return first;
+        return first?.text || "";
+      }
+      return "";
+    })
+    .map((text) => String(text || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  return {
+    headline: `${motion} fit is ${fitLevel}.`,
+    drivers: [baseExplanation, ...layerEvidence].filter(Boolean).slice(0, 3),
+    risks: [],
+    evidence: layerEvidence,
+  };
+}
+
 function computeCompanyProfile(company) {
   const segment = company.segment || "Mid-Market";
   const weights = getWeightsForSegment(segment);
@@ -939,6 +1035,7 @@ function computeCompanyProfile(company) {
       fit_level: fit.fit_level,
       explanation: fit.explanation,
       score_breakdown: buildScoreBreakdown(layers),
+      score_narrative: buildLegacyMotionNarrative(motion, fit),
     });
   }
   motionScores.sort((a, b) => b.score - a.score);
@@ -1638,19 +1735,23 @@ function buildMonitorMotionScores(score) {
       .filter((m) => m.score > 0)
       .sort((a, b) => (b.weighted || b.score) - (a.weighted || a.score));
 
-  return candidates.map((m) => ({
-    motion: m.motion,
-    score: Math.round((m.score || 0) * 100) / 100,
-    fit_level: m.fit_level || (m.score >= 0.5 ? "strong" : m.score >= 0.25 ? "medium" : "weak"),
-    explanation: m.evidence?.[0]?.text || `${m.motion} fit inferred from accounts filing signals.`,
-    score_breakdown: {
-      product_fit: { score: m.score || 0, evidence: m.evidence },
-      commercial_value: score.layers?.commercial_value,
-      pain_strength: score.layers?.pain_strength,
-      urgency: score.layers?.urgency,
-      competitor_context: score.layers?.competitor_context,
-    },
-  }));
+  return candidates.map((m) => {
+    const explanation = m.evidence?.[0]?.text || `${m.motion} fit inferred from accounts filing signals.`;
+    return {
+      motion: m.motion,
+      score: Math.round((m.score || 0) * 100) / 100,
+      fit_level: m.fit_level || (m.score >= 0.5 ? "strong" : m.score >= 0.25 ? "medium" : "weak"),
+      explanation,
+      score_narrative: buildMotionScoreNarrative(score, m, explanation),
+      score_breakdown: {
+        product_fit: { score: m.score || 0, evidence: m.evidence },
+        commercial_value: score.layers?.commercial_value,
+        pain_strength: score.layers?.pain_strength,
+        urgency: score.layers?.urgency,
+        competitor_context: score.layers?.competitor_context,
+      },
+    };
+  });
 }
 
 function buildStakeholderAssessment(companyId, company, analysis, score) {
