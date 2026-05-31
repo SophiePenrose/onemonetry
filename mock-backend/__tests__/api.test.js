@@ -279,6 +279,51 @@ describe("API endpoints", () => {
       });
       assert.equal(status, 400);
     });
+
+    it("returns structured score narrative fields in company profile motion scores", async () => {
+      const { status: createStatus, data: created } = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Narrative Contract Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 12000000,
+          motions: ["FX"],
+          product_fit: {
+            FX: {
+              eligible: true,
+              fit_level: "strong",
+              explanation: "Strong cross-border settlement footprint",
+              layers: {
+                product_fit: { score: 0.78, evidence: "Cross-border suppliers" },
+                commercial_value: { score: 0.64, evidence: "Turnover supports wallet adoption" },
+                pain_strength: { score: 0.61, evidence: "Manual treasury operations" },
+                urgency: { score: 0.58, evidence: "Finance leadership change" },
+                competitor_context: { score: 0.52, evidence: "Incumbent bank friction" },
+              },
+            },
+          },
+        }),
+      });
+
+      assert.equal(createStatus, 201);
+      const companyId = created.company?.id;
+      assert.ok(companyId);
+
+      const { status, data } = await fetchJSON(`/api/company/${companyId}`);
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(data.company?.all_motion_scores));
+      assert.ok(data.company.all_motion_scores.length > 0);
+
+      const motion = data.company.all_motion_scores[0];
+      assert.equal(typeof motion.score_narrative, "object");
+      assert.equal(typeof motion.score_narrative.headline, "string");
+      assert.ok(Array.isArray(motion.score_narrative.drivers));
+      assert.ok(Array.isArray(motion.score_narrative.evidence));
+      assert.ok(Array.isArray(motion.score_narrative.risks));
+      assert.ok(motion.score_narrative.drivers.length > 0);
+    });
   });
 
   describe("POST /api/email/validate", () => {
