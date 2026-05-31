@@ -232,8 +232,78 @@ function buildYammCsv(rows) {
   return lines.join("\n");
 }
 
-function triggerCsvDownload(fileName, csvText) {
-  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+function buildGoogleSheetsJson(rows) {
+  return rows.map((row) => ({
+    To: row.to || "⚠️ ADD EMAIL",
+    Subject: row.subject,
+    Body: row.body,
+    "Scheduled Date": row.scheduled_date,
+    "Scheduled Time": row.scheduled_time,
+    Step: row.step_number,
+    "Step Type": row.step_type,
+    "Send Condition": row.send_condition,
+    Stakeholder: row.stakeholder_name,
+    Status: row.status,
+    Flags: [
+      row.needs_email ? "NEEDS_EMAIL" : null,
+      row.needs_review ? "NEEDS_REVIEW" : null,
+    ].filter(Boolean).join(", "),
+  }));
+}
+
+function buildMissingEmailCsv(rows) {
+  const headers = [
+    "Company",
+    "Stakeholder",
+    "Sequence ID",
+    "Current Email",
+    "First Step #",
+    "First Step Type",
+    "Example Subject",
+    "Action Required",
+  ];
+
+  const escapeCsv = (value) => {
+    const str = String(value || "");
+    if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
+      return `\"${str.replace(/\"/g, "\"\"")}\"`;
+    }
+    return str;
+  };
+
+  const deduped = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const key = [
+      String(row.company_id || ""),
+      String(row.sequence_id || ""),
+      String(row.stakeholder_name || "").toLowerCase(),
+    ].join("::");
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  const lines = [headers.map(escapeCsv).join(",")];
+  for (const row of deduped) {
+    lines.push([
+      escapeCsv(row.company_name),
+      escapeCsv(row.stakeholder_name),
+      escapeCsv(row.sequence_id),
+      escapeCsv(row.current_email),
+      escapeCsv(row.step_number),
+      escapeCsv(row.step_type),
+      escapeCsv(row.subject),
+      escapeCsv("Add stakeholder email before send"),
+    ].join(","));
+  }
+
+  return lines.join("\n");
+}
+
+function triggerTextDownload(fileName, content, mimeType = "text/plain;charset=utf-8;") {
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -243,6 +313,14 @@ function triggerCsvDownload(fileName, csvText) {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+function triggerCsvDownload(fileName, csvText) {
+  triggerTextDownload(fileName, csvText, "text/csv;charset=utf-8;");
+}
+
+function triggerJsonDownload(fileName, payload) {
+  triggerTextDownload(fileName, JSON.stringify(payload, null, 2), "application/json;charset=utf-8;");
 }
 
 function scoreTier(company) {
@@ -692,6 +770,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     });
 
     const mergedRows = [];
+    const missingEmailRows = [];
     const blockedSequences = [];
     const companiesWithoutSequences = [];
     const exportFailures = [];
@@ -774,7 +853,19 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               rowsBeforeMissingFilter += 1;
 
               const needsEmail = Boolean(row.needs_email) || !String(row.to || "").trim();
-              if (needsEmail) rowsNeedingEmail += 1;
+              if (needsEmail) {
+                rowsNeedingEmail += 1;
+                missingEmailRows.push({
+                  company_id: company.id,
+                  company_name: company.name,
+                  sequence_id: sequence.id,
+                  stakeholder_name: row.stakeholder_name || sequence.stakeholder_name || "Unknown",
+                  current_email: row.to || "",
+                  step_number: row.step_number,
+                  step_type: row.step_type,
+                  subject: row.subject || "",
+                });
+              }
 
               if (needsEmail && exportMissingEmailMode === "skip") {
                 skippedForMissingEmail += 1;
@@ -839,8 +930,19 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
       }
 
       const csv = buildYammCsv(mergedRows);
+      const sheetsJson = buildGoogleSheetsJson(mergedRows);
+      const missingEmailCsv = buildMissingEmailCsv(missingEmailRows);
+      const missingEmailContacts = new Set(
+        missingEmailRows.map((row) => [
+          String(row.company_id || ""),
+          String(row.sequence_id || ""),
+          String(row.stakeholder_name || "").toLowerCase(),
+        ].join("::"))
+      ).size;
       const weekKey = weekStart.toISOString().slice(0, 10);
       const fileName = `this-week-${weekKey}-${preset.value}.csv`;
+      const sheetsFileName = `this-week-${weekKey}-${preset.value}-sheets.json`;
+      const missingEmailFileName = `this-week-${weekKey}-${preset.value}-missing-emails.csv`;
 
       setExportResult({
         generated_at: new Date().toISOString(),
@@ -849,6 +951,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         rows_before_missing_filter: rowsBeforeMissingFilter,
         rows_exportable: mergedRows.length,
         rows_needing_email: rowsNeedingEmail,
+        missing_email_contacts: missingEmailContacts,
         skipped_missing_email_rows: skippedForMissingEmail,
         blocked_sequences: blockedSequences,
         no_sequence_companies: companiesWithoutSequences,
@@ -860,6 +963,10 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         send_time: normalizedTime,
         csv,
         file_name: fileName,
+        sheets_json: sheetsJson,
+        sheets_file_name: sheetsFileName,
+        missing_email_csv: missingEmailCsv,
+        missing_email_file_name: missingEmailFileName,
       });
 
       if (transitionedCompanies.length > 0) {
@@ -875,6 +982,22 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   function handleDownloadPreparedCsv() {
     if (!exportResult?.csv) return;
     triggerCsvDownload(exportResult.file_name || "this-week-export.csv", exportResult.csv);
+  }
+
+  function handleDownloadPreparedSheetsJson() {
+    if (!exportResult?.sheets_json || exportResult.rows_exportable === 0) return;
+    triggerJsonDownload(
+      exportResult.sheets_file_name || "this-week-export-sheets.json",
+      exportResult.sheets_json
+    );
+  }
+
+  function handleDownloadMissingEmailCsv() {
+    if (!exportResult?.missing_email_csv || exportResult.rows_needing_email === 0) return;
+    triggerCsvDownload(
+      exportResult.missing_email_file_name || "this-week-missing-emails.csv",
+      exportResult.missing_email_csv
+    );
   }
 
   function toggleSelected(id) {
@@ -1600,6 +1723,38 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               >
                 Download YAMM CSV
               </button>
+              <button
+                type="button"
+                onClick={handleDownloadPreparedSheetsJson}
+                disabled={!exportResult || exportResult.rows_exportable === 0}
+                style={{
+                  padding: "7px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: (!exportResult || exportResult.rows_exportable === 0) ? "#f8fafc" : "#fff",
+                  color: (!exportResult || exportResult.rows_exportable === 0) ? "#94a3b8" : "#334155",
+                  fontWeight: 600,
+                  cursor: (!exportResult || exportResult.rows_exportable === 0) ? "not-allowed" : "pointer",
+                }}
+              >
+                Download Sheets JSON
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadMissingEmailCsv}
+                disabled={!exportResult || exportResult.rows_needing_email === 0}
+                style={{
+                  padding: "7px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: (!exportResult || exportResult.rows_needing_email === 0) ? "#f8fafc" : "#fff",
+                  color: (!exportResult || exportResult.rows_needing_email === 0) ? "#94a3b8" : "#334155",
+                  fontWeight: 600,
+                  cursor: (!exportResult || exportResult.rows_needing_email === 0) ? "not-allowed" : "pointer",
+                }}
+              >
+                Download Missing-Email CSV
+              </button>
             </div>
 
             {exportError && (
@@ -1614,7 +1769,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   Generated {exportResult.rows_exportable} rows from {exportResult.selected_companies} companies · scanned {exportResult.sequences_scanned} sequences · preset: {exportResult.step_preset.label}
                 </div>
                 <div style={{ fontSize: 12, color: "#334155", marginBottom: 8 }}>
-                  Needs email: {exportResult.rows_needing_email} · skipped missing-email rows: {exportResult.skipped_missing_email_rows} · blocked sequences: {exportResult.blocked_sequences.length}
+                  Needs email: {exportResult.rows_needing_email} · missing contacts: {exportResult.missing_email_contacts || 0} · skipped missing-email rows: {exportResult.skipped_missing_email_rows} · blocked sequences: {exportResult.blocked_sequences.length}
                 </div>
                 <div style={{ fontSize: 12, color: "#334155", marginBottom: 8 }}>
                   Start date: {exportResult.start_date} · send time: {exportResult.send_time}
