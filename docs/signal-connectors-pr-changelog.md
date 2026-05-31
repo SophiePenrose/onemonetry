@@ -2,7 +2,7 @@
 
 ## Summary
 
-This change set finalizes external signal connector ingestion for strategic intelligence (excluding Salesforce) by adding connector-native parsing, strict ownership semantics, and full fixture/API test coverage.
+This change set finalizes external signal connector ingestion for strategic intelligence by adding connector-native parsing, strict ownership semantics, and full fixture/API test coverage.
 
 ## Scope
 

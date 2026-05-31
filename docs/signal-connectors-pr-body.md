@@ -32,5 +32,4 @@ Result:
 
 ## Scope Notes
 
-- This PR excludes Salesforce integration by design.
 - Ownership merge precedence preserves stronger Companies House ownership signal while accumulating external sources.
