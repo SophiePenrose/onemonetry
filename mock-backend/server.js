@@ -4191,11 +4191,6 @@ app.post("/api/import/bulk/process", async (req, res) => {
       await processAnalysisQueueBatch({ batchSize: 3 });
     }
 
-    const queued = enqueueCompaniesForAnalysis(result.companies, `bulk_import:${filename}`);
-    if (queued.queued > 0) {
-      await processAnalysisQueueBatch({ batchSize: 3 });
-    }
-
     updateImportJob(jobId, {
       status: "completed",
       completed_at: new Date().toISOString(),
