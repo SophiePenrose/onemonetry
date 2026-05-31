@@ -1,0 +1,18 @@
+{
+  "Results": [
+    {
+      "Result": {
+        "Paths": [
+          {
+            "Domain": "example.co.uk",
+            "Technologies": [
+              { "Name": "Cloudflare" },
+              { "Name": "Stripe" },
+              { "Name": "Google Analytics" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

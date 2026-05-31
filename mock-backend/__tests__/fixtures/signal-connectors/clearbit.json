@@ -1,0 +1,9 @@
+{
+  "site": {
+    "tech": ["Stripe", "HubSpot", "Segment"],
+    "monthlyVisitors": 190000
+  },
+  "metrics": {
+    "open_positions": 9
+  }
+}
