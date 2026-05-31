@@ -13,11 +13,39 @@ import {
 } from "./db.js";
 import { analyseCompany } from "./llm.js";
 import { scoreCompany, integrateAnalysis } from "./scoring-engine.js";
+import { runCompanyTechEnrichment } from "./tech-enrichment.js";
+import { isCompaniesHouseConfigured, lookupCompanyOwnership } from "./companies-house.js";
+import { syncExternalSignals } from "./signal-connectors.js";
 
 function parseBoundedPositiveInt(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function parseOptionalBoundedPositiveInt(value, min, max) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function parseOptionalBoolean(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "boolean") return value;
+  const token = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(token)) return true;
+  if (["false", "0", "no", "n", "off"].includes(token)) return false;
+  return null;
+}
+
+function parseOptionalDeepScanMode(value) {
+  if (value === undefined || value === null) return null;
+  const token = String(value).trim().toLowerCase();
+  if (["off", "false", "0"].includes(token)) return "off";
+  if (["always", "on", "true", "1"].includes(token)) return "always";
+  if (token === "auto") return "auto";
+  return null;
 }
 
 const DEFAULT_INTERVAL_MS = parseBoundedPositiveInt(
@@ -32,11 +60,28 @@ const DEFAULT_BATCH_SIZE = parseBoundedPositiveInt(
   1,
   25
 );
+const DEFAULT_ENRICHMENT_DEEP_SCAN = parseOptionalBoolean(process.env.ANALYSIS_QUEUE_ENRICHMENT_DEEP_SCAN);
+const DEFAULT_ENRICHMENT_DEEP_SCAN_MODE = parseOptionalDeepScanMode(process.env.ANALYSIS_QUEUE_ENRICHMENT_DEEP_SCAN_MODE);
+const DEFAULT_ENRICHMENT_MAX_PAGES = parseOptionalBoundedPositiveInt(process.env.ANALYSIS_QUEUE_ENRICHMENT_MAX_PAGES, 1, 12);
+const DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS = parseOptionalBoundedPositiveInt(process.env.ANALYSIS_QUEUE_ENRICHMENT_REFRESH_DAYS, 1, 365);
+const DEFAULT_ENRICHMENT_TIMEOUT_MS = parseOptionalBoundedPositiveInt(process.env.ANALYSIS_QUEUE_ENRICHMENT_TIMEOUT_MS, 1000, 20000);
+const DEFAULT_EXTERNAL_SIGNAL_SYNC = parseOptionalBoolean(process.env.ANALYSIS_QUEUE_EXTERNAL_SIGNAL_SYNC) ?? false;
 
 let queueTimer = null;
 let processing = false;
 let lastRunAt = null;
 let lastError = null;
+
+function getEnrichmentWorkerConfig() {
+  return {
+    deep_scan_override: DEFAULT_ENRICHMENT_DEEP_SCAN,
+    deep_scan_mode: DEFAULT_ENRICHMENT_DEEP_SCAN_MODE,
+    max_pages: DEFAULT_ENRICHMENT_MAX_PAGES,
+    refresh_window_days: DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS,
+    timeout_ms: DEFAULT_ENRICHMENT_TIMEOUT_MS,
+    external_signal_sync: DEFAULT_EXTERNAL_SIGNAL_SYNC,
+  };
+}
 
 function normalizeCompanyNumber(value) {
   if (!value) return null;
@@ -101,6 +146,87 @@ async function processClaimedQueueItem(next) {
       || `Company ${companyNumber}`;
 
     const turnover = monitored?.latest_turnover || null;
+    let enrichmentResult = null;
+    let ownershipResult = null;
+    let externalSignalSyncResult = null;
+
+    try {
+      const enrichmentInput = {
+        companyNumber,
+        companyName,
+        turnover,
+      };
+
+      if (DEFAULT_ENRICHMENT_DEEP_SCAN !== null) {
+        enrichmentInput.deepScan = DEFAULT_ENRICHMENT_DEEP_SCAN;
+      }
+      if (DEFAULT_ENRICHMENT_DEEP_SCAN_MODE) {
+        enrichmentInput.deepScanMode = DEFAULT_ENRICHMENT_DEEP_SCAN_MODE;
+      }
+      if (DEFAULT_ENRICHMENT_MAX_PAGES !== null) {
+        enrichmentInput.maxPages = DEFAULT_ENRICHMENT_MAX_PAGES;
+      }
+      if (DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS !== null) {
+        enrichmentInput.refreshWindowDays = DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS;
+      }
+      if (DEFAULT_ENRICHMENT_TIMEOUT_MS !== null) {
+        enrichmentInput.timeoutMs = DEFAULT_ENRICHMENT_TIMEOUT_MS;
+      }
+
+      enrichmentResult = await runCompanyTechEnrichment(enrichmentInput);
+    } catch (err) {
+      enrichmentResult = {
+        status: "error",
+        updated: false,
+        error: err?.message || "enrichment_failed",
+      };
+    }
+
+    if (isCompaniesHouseConfigured()) {
+      try {
+        const ownershipLookup = await lookupCompanyOwnership(companyNumber);
+        if (!ownershipLookup?.error && ownershipLookup?.summary) {
+          setSetting(`ownership_${companyNumber}`, {
+            ...ownershipLookup.summary,
+            source: "companies_house_api",
+          });
+          ownershipResult = {
+            status: "updated",
+            non_uk_significant_corporate_controllers_count:
+              Number(ownershipLookup.summary.non_uk_significant_corporate_controllers_count || 0),
+            significant_corporate_controllers_count:
+              Number(ownershipLookup.summary.significant_corporate_controllers_count || 0),
+          };
+        } else {
+          ownershipResult = {
+            status: "error",
+            error: ownershipLookup?.message || "ownership_lookup_failed",
+          };
+        }
+      } catch (err) {
+        ownershipResult = {
+          status: "error",
+          error: err?.message || "ownership_lookup_failed",
+        };
+      }
+    }
+
+    if (DEFAULT_EXTERNAL_SIGNAL_SYNC) {
+      try {
+        externalSignalSyncResult = await syncExternalSignals({
+          companyNumber,
+          companyName,
+          companyDomain: knownAnalysis?.company_domain || monitored?.company_domain || null,
+        });
+      } catch (err) {
+        externalSignalSyncResult = {
+          status: "error",
+          updated: false,
+          error: err?.message || "external_signal_sync_failed",
+        };
+      }
+    }
+
     const analysis = await analyseCompany(companyNumber, companyName, turnover);
 
     setSetting(`analysis_${companyNumber}`, analysis);
@@ -111,7 +237,19 @@ async function processClaimedQueueItem(next) {
     }
 
     markAnalysisQueueItemReady(companyNumber, companyName);
-    return { company_number: companyNumber, status: "ready" };
+    return {
+      company_number: companyNumber,
+      status: "ready",
+      enrichment_status: enrichmentResult?.status || null,
+      enrichment_updated: enrichmentResult?.updated === true,
+      enrichment_scan_mode: enrichmentResult?.scan_mode || null,
+      enrichment_deep_scan_mode: enrichmentResult?.deep_scan_mode || null,
+      ownership_status: ownershipResult?.status || "skipped",
+      ownership_non_uk_significant_corporate_count:
+        ownershipResult?.non_uk_significant_corporate_controllers_count ?? null,
+      external_signal_sync_status: externalSignalSyncResult?.status || "skipped",
+      external_signal_sync_updated: externalSignalSyncResult?.updated === true,
+    };
   } catch (err) {
     markAnalysisQueueItemFailed(companyNumber, err.message);
     return { company_number: companyNumber, status: "failed", error: err.message };
@@ -229,6 +367,7 @@ export function startAnalysisQueueWorker(options = {}) {
     batch_size: batchSize,
     recovered_processing_items: recovered,
     counts: getAnalysisQueueCounts(),
+    enrichment: getEnrichmentWorkerConfig(),
   };
 }
 
@@ -251,5 +390,6 @@ export function getAnalysisQueueWorkerStatus() {
     last_run_at: lastRunAt,
     last_error: lastError,
     counts: getAnalysisQueueCounts(),
+    enrichment: getEnrichmentWorkerConfig(),
   };
 }

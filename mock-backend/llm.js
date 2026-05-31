@@ -1,4 +1,5 @@
 import { getFilingsForCompany } from "./db.js";
+import { getSupplementaryContext } from "./supplementary-context.js";
 
 function resolveConfiguredSecret(value) {
   const key = String(value || "").trim();
@@ -19,7 +20,7 @@ function resolveConfiguredSecret(value) {
 
 const OPENAI_API_KEY = resolveConfiguredSecret(process.env.OPENAI_API_KEY);
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 let openAiAuthDisabled = false;
 let openAiAuthLogged = false;
 
@@ -46,7 +47,135 @@ const COMPETITOR_INFERENCE = {
   Wise: "Useful for spot FX, but broader treasury, cards, and acquiring coverage can remain fragmented.",
   Ebury: "Can support FX, though platform breadth beyond FX may require additional tools.",
   Pleo: "Good spend UX but can create higher total cost if multi-currency usage is material.",
+  "High-Street Bank Treasury Stack": "Incumbent relationship banks can limit treasury agility, FX transparency, and workflow automation at scale.",
+  "Legacy Merchant Acquirer": "Legacy acquirers often introduce slower settlement and more complex card-pricing structures.",
+  "Legacy FX Provider": "Traditional FX providers can create spread leakage and fragmented treasury controls.",
+  "Legacy Spend Tooling": "Point spend tools can leave finance teams with fragmented controls and reconciliation overhead.",
 };
+
+const COMPETITOR_ALIAS_GROUPS = [
+  {
+    name: "HSBC",
+    product: "Banking / FX",
+    aliases: ["hsbc", "hsbc uk bank", "hongkong and shanghai banking"],
+    displacement_angle: "Incumbent bank and FX relationship noted in filing context.",
+  },
+  {
+    name: "Barclays",
+    product: "Banking / FX",
+    aliases: ["barclays", "barclays bank"],
+    displacement_angle: "Incumbent bank relationship noted in filing context.",
+  },
+  {
+    name: "NatWest",
+    product: "Banking / FX",
+    aliases: ["natwest", "nat west", "royal bank of scotland", "rbs"],
+    displacement_angle: "Incumbent UK bank relationship noted in filing context.",
+  },
+  {
+    name: "Lloyds",
+    product: "Banking / FX",
+    aliases: ["lloyds", "lloyds bank"],
+    displacement_angle: "Incumbent UK bank relationship noted in filing context.",
+  },
+  {
+    name: "Worldpay",
+    product: "Merchant Acquiring",
+    aliases: ["worldpay", "world pay"],
+    displacement_angle: "Incumbent acquirer context appears in filing text.",
+  },
+  {
+    name: "Stripe",
+    product: "Merchant Acquiring",
+    aliases: ["stripe", "stripe payments"],
+    displacement_angle: "Digital acquiring stack context appears in filing text.",
+  },
+  {
+    name: "Adyen",
+    product: "Merchant Acquiring",
+    aliases: ["adyen"],
+    displacement_angle: "Enterprise acquiring platform context appears in filing text.",
+  },
+  {
+    name: "PayPal",
+    product: "Payments",
+    aliases: ["paypal", "braintree"],
+    displacement_angle: "Payments provider context appears in filing text.",
+  },
+  {
+    name: "Wise",
+    product: "FX",
+    aliases: ["wise", "wise payments"],
+    displacement_angle: "FX provider context appears in filing text.",
+  },
+  {
+    name: "Ebury",
+    product: "FX",
+    aliases: ["ebury"],
+    displacement_angle: "FX provider context appears in filing text.",
+  },
+  {
+    name: "Pleo",
+    product: "Spend Management",
+    aliases: ["pleo"],
+    displacement_angle: "Spend tooling context appears in filing text.",
+  },
+  {
+    name: "American Express",
+    product: "Corporate Cards",
+    aliases: ["american express", "amex"],
+    displacement_angle: "Card programme context appears in filing text.",
+  },
+  {
+    name: "Elavon",
+    product: "Merchant Acquiring",
+    aliases: ["elavon"],
+    displacement_angle: "Acquirer context appears in filing text.",
+  },
+  {
+    name: "Global Payments",
+    product: "Merchant Acquiring",
+    aliases: ["global payments"],
+    displacement_angle: "Acquirer context appears in filing text.",
+  },
+  {
+    name: "Fiserv",
+    product: "Merchant Acquiring",
+    aliases: ["fiserv", "first data"],
+    displacement_angle: "Acquiring infrastructure context appears in filing text.",
+  },
+];
+
+const COMPETITOR_SIGNAL_RULES = [
+  {
+    name: "High-Street Bank Treasury Stack",
+    product: "Banking / FX",
+    category: "banking",
+    pattern: /\b(bank(?:ing)?\s+facilit(?:y|ies)|overdraft|credit\s+facility|loan\s+covenant|cash\s*flow|treasury|relationship\s+bank|working\s+capital\s+facility)\b/i,
+    displacement_angle: "Filing language suggests dependency on a legacy bank-led treasury stack.",
+  },
+  {
+    name: "Legacy Merchant Acquirer",
+    product: "Merchant Acquiring",
+    category: "acquiring",
+    pattern: /\b(merchant|acquir(?:er|ing)|card\s+accept|payment\s+gateway|checkout|chargeback|settlement|payment\s+processing|epos|pos\s+terminal)\b/i,
+    displacement_angle: "Filing language suggests merchant-acquiring complexity that may be served by incumbent acquirers.",
+  },
+  {
+    name: "Legacy FX Provider",
+    product: "FX",
+    category: "fx",
+    pattern: /\b(fx|foreign\s+exchange|multi\s*-?\s*currency|cross\s*-?\s*border|international\s+payments?|currency\s+risk|exchange\s+rate|hedg(?:e|ing)|forward\s+contract)\b/i,
+    displacement_angle: "Filing language indicates FX exposure likely managed through a traditional provider setup.",
+  },
+  {
+    name: "Legacy Spend Tooling",
+    product: "Spend Management",
+    category: "spend",
+    pattern: /\b(expense\s+management|employee\s+expenses?|corporate\s+cards?|purchase\s+cards?|approval\s+workflow|receipt\s+capture|spend\s+control)\b/i,
+    displacement_angle: "Filing language indicates spend-control needs often handled by fragmented tooling.",
+  },
+];
 
 const USE_CASE_LIBRARY = [
   {
@@ -140,6 +269,92 @@ function collectKeywordSnippets(rawText, keywords, max = 4) {
   return snippets;
 }
 
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function inferCompetitorsFromFilingText(filingText, max = 8) {
+  const text = String(filingText || "");
+  if (!text) return [];
+
+  const inferred = [];
+  const seen = new Set();
+
+  for (const group of COMPETITOR_ALIAS_GROUPS) {
+    let match = null;
+    for (const alias of group.aliases || []) {
+      const pattern = new RegExp(`\\b${escapeRegex(alias)}\\b`, "i");
+      match = pattern.exec(text);
+      if (match) break;
+    }
+
+    if (!match) continue;
+    const key = String(group.name || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+
+    const snippetStart = Math.max(0, match.index - 120);
+    const snippetEnd = Math.min(text.length, match.index + String(match[0] || "").length + 160);
+    inferred.push({
+      name: group.name,
+      product: group.product || "",
+      displacement_angle: group.displacement_angle || "Detected provider context in filing text.",
+      snippet: truncateSnippet(text.slice(snippetStart, snippetEnd)),
+      inferred_advantage: COMPETITOR_INFERENCE[group.name] || "Use filing context to position switching path with low implementation risk.",
+      source: "filing_alias_inference",
+    });
+
+    if (inferred.length >= max) break;
+  }
+
+  return inferred;
+}
+
+function competitorCategoryFromName(name, product) {
+  const text = `${String(name || "")} ${String(product || "")}`.toLowerCase();
+  if (/hsbc|barclays|natwest|lloyds|bank|treasury/.test(text)) return "banking";
+  if (/wise|ebury|foreign\s*exchange|\bfx\b/.test(text)) return "fx";
+  if (/worldpay|stripe|adyen|paypal|braintree|elavon|global payments|fiserv|merchant|acquir/.test(text)) return "acquiring";
+  if (/pleo|american express|amex|spend|expense|corporate\s+card/.test(text)) return "spend";
+  return "other";
+}
+
+function inferCompetitorsFromSignals(analysis = {}, filingText, existingCompetitors = [], max = 4) {
+  const sourceText = [
+    analysis?.summary || "",
+    ...(analysis?.themes || []).map((t) => `${t?.theme || ""} ${t?.evidence || ""}`),
+    ...(analysis?.pain_indicators || []).map((p) => `${p?.pain || ""} ${p?.evidence || ""}`),
+    ...(analysis?.opportunities || []).map((o) => `${o?.product || ""} ${o?.rationale || ""}`),
+    filingText || "",
+  ].join(" ");
+
+  const knownCategories = new Set(
+    (existingCompetitors || []).map((item) => competitorCategoryFromName(item?.name, item?.product)).filter(Boolean)
+  );
+
+  const inferred = [];
+  for (const rule of COMPETITOR_SIGNAL_RULES) {
+    if (knownCategories.has(rule.category)) continue;
+    const match = rule.pattern.exec(sourceText);
+    if (!match) continue;
+
+    const snippetStart = Math.max(0, match.index - 120);
+    const snippetEnd = Math.min(sourceText.length, match.index + String(match[0] || "").length + 180);
+    inferred.push({
+      name: rule.name,
+      product: rule.product,
+      displacement_angle: rule.displacement_angle,
+      snippet: truncateSnippet(sourceText.slice(snippetStart, snippetEnd)),
+      inferred_advantage: COMPETITOR_INFERENCE[rule.name] || "Use filing context to position switching path with low implementation risk.",
+      source: "signal_inference",
+    });
+
+    if (inferred.length >= max) break;
+  }
+
+  return inferred;
+}
+
 function buildOutreachNarrative(analysis = {}) {
   const pains = (analysis.pain_indicators || []).slice(0, 3).map((p) => p.pain || p);
   const competitors = (analysis.competitors_detected || []).slice(0, 3).map((c) => c.name || c);
@@ -192,6 +407,27 @@ function deriveSupplementaryContext(analysis = {}) {
     };
   });
 
+  const valueNuggets = [
+    ...newsSignals.slice(0, 3).map((s) => ({
+      type: "news",
+      nugget: s.signal,
+      source: "analysis_theme",
+      relevance: s.relevance,
+    })),
+    ...mnaSignals.slice(0, 2).map((s) => ({
+      type: "mna",
+      nugget: s.signal,
+      source: "analysis_theme",
+      relevance: s.evidence || "M&A/ownership signal",
+    })),
+    ...(analysis.opportunities || []).slice(0, 2).map((o) => ({
+      type: "opportunity",
+      nugget: `${o.product || "Motion"}: ${o.rationale || "Evidence-led fit"}`,
+      source: "analysis",
+      relevance: "Reusable follow-up value nugget",
+    })),
+  ].slice(0, 10);
+
   return {
     news_signals: newsSignals,
     mna_signals: mnaSignals,
@@ -201,7 +437,67 @@ function deriveSupplementaryContext(analysis = {}) {
       lusha: !!process.env.LUSHA_API_KEY,
       news_api: !!process.env.NEWS_API_KEY,
     },
+    value_nuggets: valueNuggets,
   };
+}
+
+async function enrichSupplementaryContext(analysis, companyName, filingText) {
+  if (!analysis || typeof analysis !== "object") return analysis;
+
+  try {
+    const context = await getSupplementaryContext({
+      companyName,
+      analysis,
+      filingText: filingText || "",
+    });
+
+    if (!context || typeof context !== "object") return analysis;
+
+    const existing = analysis.supplementary_context && typeof analysis.supplementary_context === "object"
+      ? analysis.supplementary_context
+      : {};
+
+    const newsSignals = Array.isArray(context.news_signals) && context.news_signals.length > 0
+      ? context.news_signals
+      : (existing.news_signals || []);
+    const mnaSignals = Array.isArray(context.mna_signals) && context.mna_signals.length > 0
+      ? context.mna_signals
+      : (existing.mna_signals || []);
+    const peopleResearch = Array.isArray(context.people_research) && context.people_research.length > 0
+      ? context.people_research
+      : (Array.isArray(context.people_targets) && context.people_targets.length > 0
+          ? context.people_targets
+          : (existing.people_research || []));
+    const valueNuggets = Array.isArray(context.value_nuggets) && context.value_nuggets.length > 0
+      ? context.value_nuggets
+      : (Array.isArray(existing.value_nuggets) ? existing.value_nuggets : []);
+
+    analysis.supplementary_context = {
+      ...existing,
+      ...context,
+      news_signals: newsSignals,
+      mna_signals: mnaSignals,
+      people_research: peopleResearch,
+      enrichment_status: context.enrichment_status || existing.enrichment_status || {
+        linkedin_search: true,
+        lusha: !!process.env.LUSHA_API_KEY,
+        news_api: !!process.env.NEWS_API_KEY,
+      },
+      value_nuggets: valueNuggets,
+    };
+
+    const trigger = newsSignals[0]?.signal || newsSignals[0]?.title || null;
+    if (trigger && analysis.level5_extraction?.sequence_inputs) {
+      const existingTrigger = String(analysis.level5_extraction.sequence_inputs.now_trigger || "");
+      if (!existingTrigger || /latest filing context/i.test(existingTrigger)) {
+        analysis.level5_extraction.sequence_inputs.now_trigger = trigger;
+      }
+    }
+  } catch {
+    // Keep analysis usable even if supplementary enrichment fails.
+  }
+
+  return analysis;
 }
 
 function inferSegment(turnover, employeeEstimate) {
@@ -499,6 +795,32 @@ function normalizeIncomingLevel5Shape(rawAnalysis = {}) {
 function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
   const safe = normalizeIncomingLevel5Shape(analysis || {});
 
+  const inferredCompetitors = inferCompetitorsFromFilingText(filingText, 8);
+  const signalInferredCompetitors = inferCompetitorsFromSignals(
+    safe,
+    filingText,
+    [...(safe.competitors_detected || []), ...inferredCompetitors],
+    4
+  );
+  const mergedCompetitors = [];
+  const seenCompetitors = new Set();
+  for (const item of [...(safe.competitors_detected || []), ...inferredCompetitors, ...signalInferredCompetitors]) {
+    const name = String(item?.name || "").trim();
+    if (!name) continue;
+    const product = String(item?.product || "").trim();
+    const key = `${name.toLowerCase()}::${product.toLowerCase()}`;
+    if (seenCompetitors.has(key)) continue;
+    seenCompetitors.add(key);
+    mergedCompetitors.push({
+      ...item,
+      name,
+      product,
+      displacement_angle: item?.displacement_angle || "Detected provider context in filing.",
+      snippet: item?.snippet || item?.quote || null,
+    });
+  }
+  safe.competitors_detected = mergedCompetitors;
+
   const painKeywords = (safe.pain_indicators || []).map((p) => p.pain || p).filter(Boolean);
   const suitabilityKeywords = [
     ...(safe.opportunities || []).map((o) => o.product || ""),
@@ -530,6 +852,9 @@ function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
 
   safe.competitors_detected = (safe.competitors_detected || []).map((c) => ({
     ...c,
+    product: c.product || "",
+    displacement_angle: c.displacement_angle || "Detected provider context in filing.",
+    snippet: c.snippet || c.quote || null,
     inferred_advantage: c.inferred_advantage || COMPETITOR_INFERENCE[c.name] || "Use filing context to position switching path with low implementation risk.",
   }));
 
@@ -576,6 +901,175 @@ function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
   return safe;
 }
 
+function stripJsonCodeFences(value) {
+  return String(value || "")
+    .replace(/^```(?:json)?\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "")
+    .trim();
+}
+
+function extractJsonFenceBody(value) {
+  const source = String(value || "");
+  const match = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match?.[1] ? String(match[1]).trim() : "";
+}
+
+function extractFirstJsonObject(value) {
+  const source = String(value || "");
+  const start = source.indexOf("{");
+  if (start === -1) return source.trim();
+
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, i + 1).trim();
+      }
+    }
+  }
+
+  return source.slice(start).trim();
+}
+
+function removeTrailingCommas(value) {
+  let current = String(value || "");
+  for (let i = 0; i < 6; i += 1) {
+    const next = current.replace(/,\s*([}\]])/g, "$1");
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+function repairTruncatedJson(value) {
+  const source = extractFirstJsonObject(value);
+  if (!source) return "";
+
+  const output = [];
+  const closerStack = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (!inString && source.slice(i, i + 3) === "```") {
+      break;
+    }
+
+    output.push(ch);
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      closerStack.push("}");
+      continue;
+    }
+
+    if (ch === "[") {
+      closerStack.push("]");
+      continue;
+    }
+
+    if ((ch === "}" || ch === "]") && closerStack.length > 0) {
+      const expected = closerStack[closerStack.length - 1];
+      if (expected === ch) closerStack.pop();
+    }
+  }
+
+  let repaired = output.join("").trim();
+
+  if (inString) {
+    const trailingBackslashes = repaired.match(/\\+$/);
+    if (trailingBackslashes && trailingBackslashes[0].length % 2 === 1) {
+      repaired += "\\";
+    }
+    repaired += "\"";
+  }
+
+  repaired = removeTrailingCommas(repaired);
+  if (closerStack.length > 0) {
+    repaired += closerStack.reverse().join("");
+  }
+  repaired = removeTrailingCommas(repaired);
+  return repaired;
+}
+
+export function parseLlmJsonContent(content) {
+  const raw = String(content || "").replace(/\u0000/g, "");
+  const cleaned = stripJsonCodeFences(raw).trim();
+  const fenced = extractJsonFenceBody(raw);
+  if (!cleaned && !fenced) throw new Error("Empty LLM response content");
+
+  const candidates = [
+    cleaned,
+    fenced,
+    extractFirstJsonObject(fenced),
+    extractFirstJsonObject(cleaned),
+    removeTrailingCommas(extractFirstJsonObject(fenced)),
+    removeTrailingCommas(extractFirstJsonObject(cleaned)),
+    repairTruncatedJson(fenced),
+    repairTruncatedJson(cleaned),
+  ];
+
+  const seen = new Set();
+  let lastError = null;
+
+  for (const candidateRaw of candidates) {
+    const candidate = String(candidateRaw || "").trim();
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Failed to parse LLM JSON content");
+}
+
 export function isLLMConfigured() {
   return canUseLLM();
 }
@@ -585,11 +1079,12 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
   const filingText = filings.find((f) => f.raw_data)?.raw_data || null;
 
   if (!canUseLLM()) {
-    return generateFallbackAnalysis(companyName, companyNumber, turnover, filingText);
+    const fallback = generateFallbackAnalysis(companyName, companyNumber, turnover, filingText);
+    return enrichSupplementaryContext(fallback, companyName, filingText);
   }
 
   if (!filingText) {
-    return ensureHolisticAnalysisShape({
+    const noData = ensureHolisticAnalysisShape({
       source: "no_filing_data",
       summary: "No filing text available for analysis. Process accounts data first.",
       turnover_trend: "unknown",
@@ -604,6 +1099,7 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
       outreach_narrative: buildOutreachNarrative({}),
       supplementary_context: deriveSupplementaryContext({}),
     }, filingText, { companyName, turnover });
+    return enrichSupplementaryContext(noData, companyName, filingText);
   }
 
   const prompt = buildAnalysisPrompt(companyName, companyNumber, turnover, filingText);
@@ -676,7 +1172,8 @@ Return ONLY raw valid JSON (no markdown code fences, no commentary) with these f
     news_signals: array of { signal: string, relevance: string },
     mna_signals: array of { signal: string, evidence: string },
     people_research: array of { name: string, role: string, linkedin_search_url: string|null, lusha_status: string },
-    enrichment_status: { linkedin_search: boolean, lusha: boolean, news_api: boolean }
+  enrichment_status: { linkedin_search: boolean, lusha: boolean, news_api: boolean },
+  value_nuggets: array of { type: string, nugget: string, source: string, relevance: string }
   }
 - level5_extraction: {
     company_snapshot: {
@@ -715,38 +1212,46 @@ Return ONLY raw valid JSON (no markdown code fences, no commentary) with these f
       inference_points: number,
       confidence: "high"|"medium"|"low"
     }
-  }`,
+  }
+
+Token budget guardrail:
+- Keep arrays concise (typically max 4 entries unless explicitly required above).
+- Keep each evidence/quote string <= 240 characters where possible.`,
           },
           { role: "user", content: prompt },
         ],
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 3200,
       }),
     });
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         disableLlmDueToAuth(response.status);
-        return { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: `API auth failed (${response.status})` };
+        const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: `API auth failed (${response.status})` };
+        return enrichSupplementaryContext(fallback, companyName, filingText);
       }
       const err = await response.text();
       console.error("LLM API error:", response.status, err);
-      return { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "API call failed" };
+      const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "API call failed" };
+      return enrichSupplementaryContext(fallback, companyName, filingText);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      return { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "Empty response" };
+      const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "Empty response" };
+      return enrichSupplementaryContext(fallback, companyName, filingText);
     }
 
-    const cleaned = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed = parseLlmJsonContent(content);
     const enriched = ensureHolisticAnalysisShape(parsed, filingText, { companyName, turnover });
-    return { ...enriched, source: "llm", model: OPENAI_MODEL, analysed_at: new Date().toISOString() };
+    const result = { ...enriched, source: "llm", model: OPENAI_MODEL, analysed_at: new Date().toISOString() };
+    return enrichSupplementaryContext(result, companyName, filingText);
   } catch (err) {
     console.error("LLM analysis error:", err.message);
-    return { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: err.message };
+    const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: err.message };
+    return enrichSupplementaryContext(fallback, companyName, filingText);
   }
 }
 

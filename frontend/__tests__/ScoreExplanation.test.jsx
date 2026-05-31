@@ -48,7 +48,7 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("Commercial Value")).toBeInTheDocument();
     expect(screen.getByText("Pain Strength")).toBeInTheDocument();
     expect(screen.getByText("Urgency")).toBeInTheDocument();
-    expect(screen.getByText("Competitor Context")).toBeInTheDocument();
+    expect(screen.getByText("Current Stack Context")).toBeInTheDocument();
   });
 
   it("renders evidence text for each layer", () => {
@@ -74,5 +74,30 @@ describe("ScoreExplanation", () => {
       />
     );
     expect(screen.getByText("Moderate FX need")).toBeInTheDocument();
+  });
+
+  it("renders structured narrative sections when provided", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore={0.87}
+        explanation="Strong FX fit"
+        scoreNarrative={{
+          headline: "8.7/10 with medium confidence",
+          drivers: ["Best motion: FX", "Fit 8.9/10", "Velocity high"],
+          evidence: ["Cross-border supplier payments mentioned in filings"],
+          risks: ["Low switching feasibility"],
+        }}
+      />
+    );
+
+    expect(screen.getByText("Why This Score")).toBeInTheDocument();
+    expect(screen.getByText("Drivers")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Highlights")).toBeInTheDocument();
+    expect(screen.getByText("Watchouts")).toBeInTheDocument();
+    expect(screen.getByText("Best motion: FX")).toBeInTheDocument();
+    expect(screen.getByText("Cross-border supplier payments mentioned in filings")).toBeInTheDocument();
+    expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
   });
 });

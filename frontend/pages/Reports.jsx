@@ -53,7 +53,7 @@ function ReportList({ reports, onSelectReport, onGenerate, generating }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Weekly Reports</h2>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Performance</h2>
         <button
           onClick={onGenerate}
           disabled={generating}

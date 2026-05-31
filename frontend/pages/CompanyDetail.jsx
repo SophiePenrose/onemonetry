@@ -42,11 +42,15 @@ export default function CompanyDetail({ companyId }) {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
+  function loadCompanyDetail(background = false) {
     if (!companyId) return;
-    setLoading(true);
-    setError(null);
-    setCompany(null);
+
+    if (!background) {
+      setLoading(true);
+      setError(null);
+      setCompany(null);
+    }
+
     fetch(`/api/company/${encodeURIComponent(companyId)}`)
       .then(async (res) => {
         if (!res.ok) {
@@ -57,12 +61,24 @@ export default function CompanyDetail({ companyId }) {
       })
       .then((data) => {
         setCompany(data.company);
-        setLoading(false);
+        if (!background) setLoading(false);
       })
       .catch((err) => {
-        setError(err.message);
-        setLoading(false);
+        if (!background) {
+          setError(err.message);
+          setLoading(false);
+        }
       });
+  }
+
+  useEffect(() => {
+    loadCompanyDetail(false);
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    const timer = setInterval(() => loadCompanyDetail(true), 20000);
+    return () => clearInterval(timer);
   }, [companyId]);
 
   function handleStateChange(data) {
@@ -74,16 +90,22 @@ export default function CompanyDetail({ companyId }) {
   }
 
   function refreshCompany() {
-    fetch(`/api/company/${encodeURIComponent(companyId)}`)
-      .then((res) => res.json())
-      .then((data) => setCompany(data.company))
-      .catch(() => {});
+    loadCompanyDetail(true);
   }
 
   if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <DetailSkeleton />;
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
   if (!company) return null;
+
+  const analysisStatus = company.analysis_status || (company.analysis ? "ready" : "none");
+  const analysisStatusLabel = analysisStatus === "queued"
+    ? "In progress"
+    : analysisStatus === "failed"
+      ? "Needs retry"
+      : analysisStatus === "ready"
+        ? "Ready"
+        : "Pending";
 
   return (
     <div>
@@ -125,6 +147,19 @@ export default function CompanyDetail({ companyId }) {
           <span style={{ fontWeight: 600 }}>{company.all_motion_scores?.length || 0}</span>
           <span style={{ color: "#888", marginLeft: 8 }}>
             {company.all_motion_scores?.map((m) => m.motion).join(", ")}
+          </span>
+        </Field>
+        <Field label="Analysis Status">
+          <span style={{
+            display: "inline-block",
+            padding: "2px 10px",
+            borderRadius: 10,
+            fontSize: 12,
+            fontWeight: 600,
+            color: analysisStatus === "ready" ? "#0a8754" : analysisStatus === "failed" ? "#7f1d1d" : "#92400e",
+            background: analysisStatus === "ready" ? "#d1fae5" : analysisStatus === "failed" ? "#fee2e2" : "#fef3c7",
+          }}>
+            {analysisStatusLabel}
           </span>
         </Field>
         {company.stakeholder_priority && (
@@ -190,13 +225,14 @@ export default function CompanyDetail({ companyId }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-        <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} />
+      <div className="detail-two-column">
+        <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} analysisStatus={analysisStatus} />
         <StakeholderPanel
           stakeholders={company.stakeholders}
           stakeholderAssessment={company.stakeholder_assessment}
           companyId={companyId}
           onUpdated={refreshCompany}
+          analysisStatus={analysisStatus}
         />
       </div>
 
@@ -209,6 +245,7 @@ export default function CompanyDetail({ companyId }) {
 
       <EvidencePanel
         companyId={companyId}
+        initialAnalysis={company.analysis}
         motions={company.all_motion_scores || []}
       />
 

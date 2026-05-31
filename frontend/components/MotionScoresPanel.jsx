@@ -51,6 +51,7 @@ function MotionCard({ motionScore, isExpanded, onToggle }) {
             scoreBreakdown={motionScore.score_breakdown}
             finalScore={motionScore.score}
             explanation={motionScore.explanation}
+            scoreNarrative={motionScore.score_narrative}
           />
         </div>
       )}

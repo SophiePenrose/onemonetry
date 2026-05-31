@@ -1,0 +1,1054 @@
+# FINAL EMAIL GENERATION SPECIFICATION v7
+## Information-Rich Sequence Design (First-Use Focus)
+
+---
+
+## OVERVIEW
+
+This specification defines the email generation system for the Revolut Business mid-market prospecting tool. It is designed for **first-use** — producing the highest-quality, most personalised, voice-authentic outreach possible from day one, leveraging the comprehensive Research Dossier that the scoring engine produces for every prospect.
+
+The system is built around one core paradigm shift: traditional cold outreach cadences are designed for **information scarcity** (multiple emails testing different angles because the SDR doesn't know what will land). This system is designed for **information abundance** — the dossier already identifies the right angle, so the sequence builds conviction on that angle rather than testing alternatives.
+
+---
+
+## PART 1: SOPHIE'S PROSPECTING TONE PROFILE
+
+Calibrated from actual sent emails (Maples Group, Shire Leasing, Momenta Finance — Feb 2026).
+
+```
+═══════════════════════════════════════════════════════════════════
+SOPHIE PENROSE — PROSPECTING TONE PROFILE
+═══════════════════════════════════════════════════════════════════
+
+OVERALL VOICE:
+Professional, measured, and observational. The voice of someone 
+who has done genuine research and is making a considered 
+observation — not pitching. Written to be respected, not liked.
+
+CORE PATTERNS:
+
+1. RESEARCH-FORWARD OPENING
+   Open by referencing something specific and recent. Interpret 
+   the achievement strategically.
+   Pattern: "[Company]'s recent [event] marks/highlights/signals 
+   [strategic interpretation]..."
+
+2. "USUALLY, WHEN..." TRANSITION (signature move)
+   Bridge from the specific to the generalised pattern.
+   "Usually, when a company reaches this stage..."
+
+3. PAIN AS CONSEQUENCE OF SUCCESS
+   Frame challenges as natural shifts that follow growth.
+   "The challenge shifts from [old focus] to managing the 
+   [new complexity]."
+
+4. ABSTRACTED PAIN VOCABULARY
+   - "treasury friction"
+   - "operational friction"
+   - "financial complexity"
+   - "FX friction"
+   - "operational treasury complexity"
+
+5. REVOLUT AS UNIFIED PLATFORM
+   - "a unified platform to bridge that gap"
+   - "acts as a unified platform"
+   - "supports this kind of strategic evolution"
+
+6. SOFT, OPEN CTA (Sophie's standard variants)
+   - "Would it be worth a call to discuss..."
+   - "Would it make sense to discuss..."
+   - "Would you be open to a call for us to discuss..."
+
+7. SIGN-OFF
+   "Best," or "Kind regards," + "Sophie Louise Penrose" (full name)
+
+VOCABULARY YOU USE:
+"continuing to scale", "scaling phase", "level of volume", 
+"sophisticated", "definitive shift", "strategic evolution", 
+"critical operational pillar", "critical priority", "high-volume", 
+"cross-border", "intercompany", "aligns perfectly with", "marks 
+a definitive shift", "remains a critical", "similar clients", 
+"clients in the space"
+
+VOCABULARY TO AVOID:
+Casual: "I noticed", "I came across", "quick question", "just 
+wanted to", "Hey"
+
+AI tells: "delve", "navigate", "robust", "seamless", "tapestry", 
+"in today's", "in the realm of", "stands as a testament", 
+"speaks volumes", "it's worth noting that"
+
+Buzzwords: "leverage" (verb), "synergy", "circle back", 
+"deep dive", "low-hanging fruit"
+
+Apologetic: "sorry to bother", "hope this finds you well", 
+"hope you're having a great week"
+
+Pressure: "limited time", "act now", "last chance"
+
+Excessive: "exciting", "thrilled", "amazing"
+
+Sentence fragments, "And"/"But" sentence openers, em-dashes as 
+filler, exclamation marks.
+
+PUNCTUATION:
+- Standard British English (with occasional American 
+  inconsistencies preserved — don't force consistency)
+- No exclamation marks
+- Em-dashes used sparingly for genuine asides only
+- Commas for natural clause separation
+
+EMOTIONAL REGISTER:
+- Confident but not arrogant
+- Respectful of their time and intelligence
+- Observational, not prescriptive
+- Sophisticated, not casual
+- Direct, never aggressive
+```
+
+---
+
+## PART 2: THE SEQUENCE ARCHITECTURE
+
+### 4 Substantive Emails + 2 Brief Nudges Over 14 Days
+
+```
+═══════════════════════════════════════════════════════════════════
+THE INFORMATION-RICH SEQUENCE
+═══════════════════════════════════════════════════════════════════
+
+DAY 0  — EMAIL 1: THE PROOF EMAIL
+DAY 3  — BRIEF NUDGE 1 (if Email 1 opened, no reply)
+DAY 6  — EMAIL 2: THE DEPTH EMAIL
+DAY 9  — BRIEF NUDGE 2 (if Email 2 opened, no reply)
+DAY 11 — EMAIL 3: THE PROVOCATION EMAIL
+DAY 14 — EMAIL 4: THE GRACIOUS CLOSE
+
+TOTAL: 4 substantive emails + up to 2 nudges over 14 days
+MAX TOUCHES: 6 over 14 days
+QC COMPLIANCE: Well within 10-per-7-days limit
+═══════════════════════════════════════════════════════════════════
+```
+
+### Email Role Summary
+
+| Position | Type | Word Count | Day | Send Condition |
+|----------|------|-----------|-----|----------------|
+| Email 1 | Proof | 120-200 | 0 | Always |
+| Nudge 1 | Check-in | 8-20 | 3 | Email 1 opened, no reply |
+| Email 2 | Depth | 130-200 | 6 | No reply yet |
+| Nudge 2 | Check-in | 8-20 | 9 | Email 2 opened, no reply |
+| Email 3 | Provocation | 80-130 | 11 | No reply yet |
+| Email 4 | Close | 40-70 | 14 | No reply yet |
+
+### Research Density Requirement
+
+**4 specific facts per 100 words minimum** on all substantive emails. This is the quality gate — emails below this threshold are regenerated, not sent.
+
+Length is **earned by specificity**. An email is only "too long" if it's padded — never too long if it's dense with verifiable facts from the dossier.
+
+---
+
+## PART 3: EMAIL 1 — THE PROOF EMAIL
+
+### Purpose
+Demonstrate uniquely deep research. The prospect's reaction should be: "How did they know all that?"
+
+### Length
+120-200 words. Longer than conventional "keep it short" wisdom because specificity earns length. Every additional sentence must contain at least one verifiable fact from the dossier.
+
+### Must Include
+- Observation that goes beyond surface metrics (acknowledge what's obvious, pivot to what's specific underneath)
+- Synthesis of 3-4 specific facts into ONE coherent insight
+- Quantification with required disclaimer (front-loaded, not saved for Email 2)
+- Reference to directors' own language with source attribution
+- Peer-level question demonstrating industry understanding
+- Soft, open CTA in Sophie's standard style
+
+### Must Not Include
+- Self-introduction (signature handles it)
+- Generic platform pitch
+- Multiple value propositions (one is enough when it's right)
+- Generic flattery
+- Industry-standard "personalisation" that any SDR could write
+
+### Structural Options (Flexible by Dossier)
+
+**Option A — Lead with surprise insight:**
+"Reading through [Company]'s [filing], what stood out wasn't the [obvious metric] — it was [the structural insight underneath]."
+
+**Option B — Lead with directors' language:**
+"Your board flagged [exact phrase] as a [risk/priority] in this year's strategic report. Reading through the rest of the filing, the structural cause looks like [synthesised insight]."
+
+**Option C — Lead with trigger event:**
+"With [Company]'s [recent event] alongside [related event from filing], the financial picture for the [period ahead] looks materially different from the year prior. Specifically: [synthesised insight from dossier]."
+
+### Worked Example — Propeller Fuels
+
+```
+Subject: Propeller's USD/GBP/EUR exposure
+
+Hi [Name],
+
+Reading through Propeller's FY2025 filing, what stood out wasn't 
+the £320M turnover — it was the structural mismatch underneath 
+it. Trading in USD with overheads in GBP and a EUR debtor book 
+across UK, Greek, Dubai and Singapore entities creates a 
+three-way FX exposure that doesn't sit cleanly on any single 
+hedging strategy.
+
+Most fuel groups your size manage this by routing execution 
+through their primary credit bank, which keeps the relationship 
+simple but typically costs 1-3% above interbank on USD/GBP 
+flow. On approximately £160M of annual exposure, that gap is 
+in the region of £1.9M annually, though the actual figure 
+depends on current provider rates.
+
+Your board flagged currency fluctuations as a material risk in 
+this year's strategic report — which suggests this isn't 
+invisible to the team. The interesting question is whether 
+forwards have been considered at scale, or whether the 
+operational complexity of running them alongside the existing 
+banking relationship has been the blocker.
+
+Would it be worth a call to share what we're seeing across 
+similar fuel groups?
+
+Best,
+Sophie Louise Penrose
+
+* This estimate is illustrative of savings that could be 
+  achieved, but is not guaranteed.
+```
+
+**Why this works:** 180 words, 6+ specific facts, opens with surprise pivot, front-loads quantification, mirrors directors' language with attribution, ends with peer-level question. Citation density: 0.78. Research density: 4.2 facts per 100 words.
+
+---
+
+## PART 4: EMAIL 2 — THE DEPTH EMAIL
+
+### Purpose
+Reveal a SECOND layer of insight that Email 1 didn't cover. The prospect's reaction should be: "Okay, this person really isn't going to send generic emails."
+
+### Length
+130-200 words.
+
+### Must Include
+- Brief reference to Email 1 (one line — no apology, no "bumping")
+- A NEW dimension of insight from the dossier
+- Reply bait CTA (invites opinion, not commitment)
+
+### New Dimension Options
+
+The new dimension must reveal something Email 1 didn't cover. Choose based on which dossier element is strongest:
+
+**Multi-entity inference:**
+"What I didn't get into in the previous note: with operations split across four jurisdictions, the FX cost isn't uniform — your Singapore and Dubai entities likely face different rate structures than the UK desk, and the consolidation tends to obscure where the leakage actually is."
+
+**Competitor-specific displacement:**
+"What I didn't get into in the previous note: the credit facility visible on the charges register almost certainly covers more than execution — fuel trading is capital-intensive and the relationship likely matters. That's not something we'd ask you to move. The opportunity is splitting credit (keep with the incumbent) from FX execution (move to interbank pricing). On £160M of flow, that single change typically recovers 1.5-2.5%."
+
+**Stakeholder-aware angle:**
+"What I didn't get into in the previous note: most fuel CFOs we speak to inherited their FX setup from a predecessor who built it for a different market environment. The current rate volatility makes structures that worked five years ago materially expensive today — which is often why this becomes a priority in the first 12 months of a new CFO tenure."
+
+**Industry timing context:**
+"Worth adding context I didn't include before: with winter fuel procurement booking 3-5 months ahead, the next 6 weeks is the window where rates get locked in for a meaningful portion of Q4-Q1 supply. If forwards aren't currently in active use, this is the period where the cost of not having them compounds most visibly."
+
+**Specific subsidiary observation:**
+"What I didn't get into in the previous note: the [Specific Subsidiary] entity registered in [Year] suggests a deliberate structural choice around [tax/regulatory/operational reason]. The FX implication of that structure is [specific consequence] — which is the kind of thing that's invisible at the transaction level but compounds across consolidated operations."
+
+### Reply Bait CTA Variants
+
+- "Does this match what you're seeing internally, or is the picture different?"
+- "Curious whether this aligns with the team's current approach, or whether something else is in play."
+- "Worth knowing if this read is accurate, or if I've missed something material from the filing."
+
+---
+
+## PART 5: EMAIL 3 — THE PROVOCATION EMAIL
+
+### Purpose
+Force engagement through a specific, informed claim. The prospect either has to confirm ("yes, that's roughly right") or correct ("actually no, here's what we do"). Silence becomes uncomfortable because the claim stands unchallenged.
+
+### Length
+80-130 words.
+
+### Why This Works With This Tool
+A specific claim about a prospect's situation is risky without strong evidence — being wrong destroys credibility. With the comprehensive Research Dossier, the system can make confident specific claims supported by:
+- Charges register data
+- Filing financial instruments notes
+- Industry conversion priors
+- Quantified exposure estimates
+
+If the claim is right, expertise is demonstrated. If wrong, the prospect is invited to correct — which also opens dialogue. Both outcomes win.
+
+### Structural Options
+
+**Option A — Multiple specific observations:**
+"Three observations from the FY2025 filing that suggest forwards aren't currently in active use at scale: (1) no derivative instruments disclosed in the financial instruments note, (2) the FX gain/loss line shows volatility consistent with spot execution, (3) treasury policy in the strategic report doesn't reference hedging strategy. If that read is wrong, I'd be genuinely interested to understand what's in place instead — fuel groups at this scale rarely manage FX risk through spot alone."
+
+**Option B — Mutually exclusive scenarios:**
+"Most companies in [Company]'s structure manage USD exposure one of three ways: (a) hedge through the primary credit bank at a 1-2% premium, (b) self-insure through pricing buffers in customer contracts, or (c) absorb FX volatility into trading margin. Curious which describes the current approach at [Company] — there's an interesting case for a fourth option at your scale that few in the sector are using."
+
+**Option C — Direct quantified claim:**
+"Based on £160M of estimated multi-currency flow and what we typically see on similar structures, current FX cost above interbank is likely £1.5-2.5M annually. If that's materially off, I'd want to understand why — most fuel groups in this size band fall within that range, and the variance is usually explained by whether forwards are in active use or not."
+
+### Critical Voice Calibration
+
+The provocation must be **bold but not aggressive**. It demonstrates expertise (the specific claim could only come from someone who's analysed the filing) while inviting the prospect into a peer conversation rather than positioning them as a target.
+
+If the system isn't confident in the underlying claim (data quality flags raised), Email 3 should default to a peer-benchmark format rather than a provocation. See Part 9.
+
+---
+
+## PART 6: EMAIL 4 — THE GRACIOUS CLOSE
+
+### Purpose
+Professional close that preserves the relationship for future re-engagement.
+
+### Length
+40-70 words. Brevity signals confidence.
+
+### Structure
+- Acknowledge silence without guilt (no "I never heard back")
+- One-line reminder of the specific opportunity (not generic platform pitch)
+- Door open for future re-engagement
+- Warm professional close
+
+### Worked Example
+
+```
+Hi [Name],
+
+I'll leave it there for now. If the FX execution question 
+becomes a priority — particularly heading into Q4 procurement 
+planning — my line is open. Either way, wishing the Propeller 
+team a strong end to the year.
+
+Best,
+Sophie Louise Penrose
+```
+
+### Never Use
+- "I never heard back from you"
+- "Final attempt"
+- "Last chance" / "Closing your file"
+- "Per my previous email"
+- Any guilt language
+
+---
+
+## PART 7: BRIEF NUDGES
+
+### Purpose
+Test whether the prospect simply forgot to reply versus genuinely not interested. A surprisingly high proportion of non-replies are "meant to reply, didn't get around to it" — the nudge captures these.
+
+### Length
+8-20 words. Strictly enforced.
+
+### Why They Work
+- **Brevity signals confidence** — a long follow-up reads as needing the meeting; a 12-word follow-up reads as "I'm not chasing, just confirming whether you saw this"
+- **No apology, no re-pitch** — the previous email stands on its own merit
+- **The contrast** with the substantive emails reinforces specificity
+
+### Nudge 1 Variants (after Email 1)
+- "Hi [Name], Any thoughts on the below? Best,"
+- "Hi [Name], Worth a quick exchange on this? Best,"
+- "Hi [Name], Did the below land? Best,"
+- "Hi [Name], Curious if this resonated. Best,"
+
+### Nudge 2 Variants (after Email 2 — must differ from Nudge 1)
+- "Hi [Name], Any thoughts on the above? Best,"
+- "Hi [Name], Worth picking this back up? Best,"
+- "Hi [Name], Anything I can clarify on the above? Best,"
+- "Hi [Name], Keen to hear your take. Best,"
+
+### Critical Rules
+- 8-20 words ONLY — do not allow expansion under any circumstance
+- No apology, no re-pitch, no "just bumping this"
+- No additional pleasantries beyond "Hi [Name]," and "Best,"
+- Phrasing must vary between Nudge 1 and Nudge 2 to avoid feeling templated
+- Sign-off: "Best," with first name (or per AE preference)
+
+### Send Conditions
+```
+Send nudge IF:
+- Previous substantive email was opened ≥1 time
+- No reply received
+- AE has not manually paused the sequence
+
+Do NOT send nudge IF:
+- Previous email never opened (different problem — subject line 
+  or deliverability — a nudge won't help)
+- Prospect already replied
+- AE manually paused
+- Out-of-office reply received (delay by OOO duration)
+```
+
+---
+
+## PART 8: SEND TIMING
+
+### Persona-Optimised Schedule
+
+| Email | CFO/CEO | Finance Director | Head of Treasury | Founder (small co.) |
+|-------|---------|------------------|------------------|---------------------|
+| Email 1 (Day 0) | Tuesday 07:00-08:00 | Wednesday 09:30-10:30 | Tuesday 10:00-11:00 | Sunday 19:00-21:00 |
+| Nudge 1 (Day 3) | Friday 10:00 | Friday 11:00 | Friday 10:30 | Wednesday 09:00 |
+| Email 2 (Day 6) | Monday 09:00-10:00 | Tuesday 14:00-15:00 | Thursday 10:00-11:00 | Saturday 08:00-09:00 |
+| Nudge 2 (Day 9) | Thursday 10:00 | Thursday 11:00 | Thursday 10:30 | Tuesday 09:00 |
+| Email 3 (Day 11) | Friday 09:30-10:30 | Friday 09:30-10:30 | Friday 10:00-11:00 | Friday 09:00-10:00 |
+| Email 4 (Day 14) | Monday 08:00-09:00 | Monday 08:00-09:00 | Tuesday 08:00-09:00 | Monday 08:00-09:00 |
+
+### Rationale
+- **Email 1**: Quiet opening slot when inbox is least crowded
+- **Email 2**: Different cognitive state for second engagement
+- **Email 3 (Provocation)**: End-of-week strategic thinking time — provocative observations land better when recipient has space to engage thoughtfully
+- **Email 4**: Start of week, gracious tone, professional close
+
+All times in recipient's local timezone. Default to Europe/London for UK prospects.
+
+---
+
+## PART 9: DOSSIER QUALITY TIERS
+
+The tool must handle varying data quality gracefully. Not every prospect has rich filings.
+
+```
+═══════════════════════════════════════════════════════════════════
+DOSSIER QUALITY-DRIVEN SEQUENCE ADAPTATION
+═══════════════════════════════════════════════════════════════════
+
+TIER A — RICH DOSSIER
+Conditions met:
+- Full strategic report available
+- Quantifications calculable with confidence
+- Named stakeholder identified with confidence ≥70
+- Clear primary motion identified (score ≥7.5)
+- Industry classification confident (≥0.8)
+
+Sequence behaviour:
+- Full 4-email sequence at maximum specificity
+- Provocation email ENABLED (Email 3)
+- Industry-specific inference patterns applied
+- Maximum word counts allowed
+- Reply rate target: ≥15%
+
+TIER B — MODERATE DOSSIER
+Conditions met:
+- Basic filing data available (turnover, currencies)
+- Inferred motion with moderate confidence (score 5-7.5)
+- Likely stakeholder identified (confidence 50-70)
+- Industry classification moderate (0.5-0.8)
+
+Sequence behaviour:
+- 4-email sequence with reduced specificity
+- Provocation email DISABLED — too risky without strong evidence
+- Replace with peer-benchmark format (industry context, not 
+  company-specific claim)
+- Reduced word counts (Email 1: 100-150)
+- Reply rate target: ≥8%
+
+TIER C — THIN DOSSIER
+Conditions met:
+- Minimal filing data (abbreviated accounts)
+- Uncertain motion identification
+- Stakeholder identified but low confidence (<50)
+- Industry classification weak (<0.5)
+
+Sequence behaviour:
+- 3-email sequence (skip Depth email)
+- Industry-pattern-based content only — no company-specific 
+  quantifications
+- All emails flagged for AE manual review before send
+- Reduced word counts throughout
+- Reply rate target: ≥4%
+
+TIER D — INSUFFICIENT DATA
+Conditions met:
+- No filing data or filing too thin to extract useful insight
+- No stakeholder identified
+- Industry classification failed
+
+Sequence behaviour:
+- Do NOT generate sequence automatically
+- Surface to AE with "needs enrichment" flag
+- Suggest data sources to manually add: LinkedIn lookup, news 
+  search, website review
+- AE can manually upgrade tier by adding data points
+
+═══════════════════════════════════════════════════════════════════
+```
+
+This prevents the tool from confidently sending weak emails based on thin data, which is the fastest way to destroy credibility and adoption.
+
+---
+
+## PART 10: MULTI-STAKEHOLDER COORDINATION
+
+When 2+ stakeholders are identified at the same company, multi-threading rules apply.
+
+```
+═══════════════════════════════════════════════════════════════════
+MULTI-STAKEHOLDER SEQUENCE COORDINATION
+═══════════════════════════════════════════════════════════════════
+
+CONDITIONS FOR MULTI-THREADING:
+- 2+ stakeholders identified at the same company with 
+  confidence ≥60
+- Stakeholders span different roles (e.g., Champion + Decision 
+  Maker, not two Champions)
+- Company size justifies multi-thread (typically 100+ employees)
+
+STAGGERED SCHEDULE (2 stakeholders):
+
+Day 0:  Email 1 → Champion (highest confidence, mid-level)
+Day 2:  Email 1 → Decision Maker (different angle, more strategic)
+Day 3:  Brief Nudge → Champion (if opened, no reply)
+Day 6:  Email 2 → Champion (depth)
+Day 8:  Email 2 → Decision Maker (different depth angle)
+Day 11: Email 3 → Champion (provocation)
+Day 14: Email 4 → both (gracious close)
+
+HARD RULES:
+
+1. Never email 2+ people at same company on the same day
+   (feels coordinated/automated)
+
+2. If any one stakeholder replies positively, PAUSE all others 
+   immediately — let the AE coordinate
+
+3. Each stakeholder gets DIFFERENT hook from the same dossier — 
+   never identical content
+
+4. If a stakeholder forwards to a colleague (visible in reply 
+   chain), the other stakeholders' sequences pause
+
+5. If Champion replies "talk to [Decision Maker]", warm-intro 
+   rather than continuing parallel cold sequence
+
+6. Reference the parallel outreach if it comes up: "I also 
+   reached out to [colleague] — happy to coordinate if useful"
+
+═══════════════════════════════════════════════════════════════════
+```
+
+---
+
+## PART 11: REPLY-HANDLING LOGIC
+
+Every reply pauses the sequence and triggers classification. The tool pre-drafts a contextual response for AE review.
+
+```
+═══════════════════════════════════════════════════════════════════
+REPLY CLASSIFICATION AND AUTO-RESPONSE
+═══════════════════════════════════════════════════════════════════
+
+REPLY TYPE: POSITIVE ENGAGEMENT
+Examples: "Interesting", "tell me more", "yes worth a chat"
+Sequence: PAUSE
+Pre-drafted response: 
+  "Happy to share more — based on the FY2025 filing and what 
+   we typically see for fuel groups at this scale, the three 
+   things most worth exploring are: [pulled from dossier]. 
+   Would [specific day/time options] work for a 20-minute call?"
+AE action: Review and send
+
+REPLY TYPE: MEETING REQUEST
+Examples: "Send me a calendar link", "what times work?"
+Sequence: PAUSE
+Pre-drafted response:
+  "Great — here's my calendar: [link]. Ahead of the call, 
+   I'll send a short brief covering [3 specific things from 
+   dossier] so we can use the time productively."
+AE action: Review and send + generate pre-meeting brief
+
+REPLY TYPE: NOT THE RIGHT PERSON
+Examples: "You want [Name]", "this isn't my area"
+Sequence: PAUSE
+Pre-drafted response:
+  "Appreciated — would it be worth my reaching out to [suggested 
+   contact] directly, or would an intro from yourself land 
+   better? Happy either way."
+AE action: Review and send + update stakeholder routing
+
+REPLY TYPE: NOT RIGHT TIME
+Examples: "Revisit in 6 months", "not a priority right now"
+Sequence: PAUSE
+Pre-drafted response:
+  "Understood — I'll come back in [specified timeframe]. In 
+   the meantime, if [specific trigger from dossier] becomes 
+   relevant, my line is open."
+AE action: Review, send, and schedule re-engagement
+
+REPLY TYPE: HARD NO
+Examples: "Not interested", "remove me", "stop emailing"
+Sequence: PAUSE + DNC FLAG APPLIED
+Pre-drafted response:
+  "Understood — I've updated our records accordingly. 
+   Apologies for any inconvenience. Best, Sophie"
+AE action: Review and send (must send — DNC acknowledgment 
+  required for compliance)
+
+REPLY TYPE: QUESTION/OBJECTION
+Examples: "What about X?", "How does this compare to Y?"
+Sequence: PAUSE
+Pre-drafted response: Specific answer drawing from dossier and 
+  approved claims library
+AE action: Review carefully, edit if needed, send
+
+REPLY TYPE: OUT OF OFFICE
+Examples: Auto-reply with return date
+Sequence: DELAY next send by OOO duration
+Pre-drafted response: None
+AE action: None — automatic
+
+REPLY TYPE: HOSTILE/COMPLAINT
+Examples: "How did you get my details?", "this is harassment"
+Sequence: PAUSE + ESCALATE TO AE + FLAG FOR COMPLIANCE
+Pre-drafted response: None — requires human handling
+AE action: Immediate response per Revolut's complaint handling 
+  procedures + Compliance notification
+
+═══════════════════════════════════════════════════════════════════
+```
+
+---
+
+## PART 12: VALIDATION LAYERS
+
+Every email passes through three validation gates before being sent.
+
+### Gate 1: Citation Density Audit
+
+```
+CITATION DENSITY CALCULATION:
+
+Citations counted by type and weighted:
+- Synthesised inference from dossier patterns: +3.0
+- Quantification with specific number: +2.5
+- Directors' own language mirrored: +2.0
+- Specific verified fact: +1.5
+- Why-now anchor (recency signal): +1.5
+- Industry insider vocabulary used correctly: +1.0
+- Persona-calibrated language: +0.5
+
+THRESHOLDS:
+- Citation density (citations / sentences): ≥0.5
+- Specificity score (total weighted points / sentences): ≥1.5
+- Research density (specific facts per 100 words): ≥4.0
+
+If ANY threshold fails: regenerate email.
+```
+
+### Gate 2: Voice Authenticity Check
+
+```
+VOICE AUTHENTICITY VALIDATION:
+
+Linguistic checks:
+□ Sentence length variance present (not uniform)
+□ British English used (with natural inconsistencies preserved)
+□ "Usually, when..." transition present if structure allows
+□ "Challenge shifts from X to Y" framing present where 
+   appropriate
+□ Sophie's vocabulary frequency matches profile
+
+AI-detection checks:
+□ Zero forbidden AI-tell vocabulary
+□ No three-item lists for rhythm
+□ No excessive parallelism
+□ Em-dash usage ≤1 per email (≤2 in Email 1 only)
+□ No "And"/"But" sentence openers
+□ No exclamation marks
+□ No closing summary statement
+
+Pleasantry checks:
+□ No "I hope this finds you well"
+□ No "I noticed", "I came across", "I wanted to reach out"
+□ No "Quick question", "just wanted to"
+□ Sign-off is "Best," or "Kind regards,"
+□ Full name "Sophie Louise Penrose" present in substantive 
+   emails (not nudges)
+
+If ANY check fails: regenerate or flag for AE review.
+```
+
+### Gate 3: QC Compliance Check
+
+```
+QC COMPLIANCE VALIDATION:
+
+Forbidden phrases (auto-reject if found):
+□ "Always free" + any product
+□ "Unlimited" without qualification
+□ Superlatives without evidence: "best", "cheapest", "fastest"
+□ Absolutes: "always", "never", "guaranteed", "100%"
+□ Pressure: "limited time", "act now", "last chance"
+□ Calling Revolut a "bank" outside UK context
+□ Title misuse: "Account Manager", "Financial Advisor"
+
+Claims validation:
+□ Every % or £ figure traces to dossier or approved claims 
+   library
+□ Required disclaimers present for all claims requiring them
+□ No fabricated statistics
+
+Mandatory elements:
+□ Email 1: self-intro OR RB explanation present
+□ All emails: revolut.com/business link in signature
+□ All emails: opt-out mechanism in footer
+□ Email 1: privacy notice link present
+
+Cadence compliance:
+□ Maximum 5 follow-ups in 24-hour window
+□ Maximum 10 follow-ups in 7-day rolling window
+
+If ANY check fails: email cannot be sent.
+```
+
+---
+
+## PART 13: APPROVED CLAIMS LIBRARY
+
+```
+═══════════════════════════════════════════════════════════════════
+APPROVED CLAIMS LIBRARY
+═══════════════════════════════════════════════════════════════════
+
+HEADLINE STATS (no disclaimer needed):
+- "70M total customers"
+- "20,000+ new businesses join us every month"
+- "£3.1B revenue in 2024, up 74% YoY"
+- "99.99%+ payment processing platform uptime"
+
+FX (disclaimer ² required):
+- "Exchange at the interbank rate" ²
+- "0% markup on FX within plan allowance" ²
+
+ACQUIRING:
+- "24-hour settlement (vs. 3-7 days from traditional acquirers)"
+- "Like-for-like settlement in 34 currencies"
+- "9-second checkout with Revolut Pay"
+
+CARDS:
+- "Issue physical and virtual cards in minutes"
+- "Auto-enforced spend controls — limits, categories, merchants"
+- "Up to 200 virtual cards" (plan-dependent)
+- DO NOT say "unlimited cards" — Major QC violation
+
+FORWARDS:
+- "Forward contracts up to £15M per trade"
+- "0.8% markup on GBP/EUR/USD"
+- "Lock in rates for up to 24 months"
+
+SPEND MANAGEMENT (disclaimer ¹ required):
+- "6% saved by our customers on spend" ¹
+- "Manage expenses 88% faster with automated tools"
+- "Save up to 86% of time processing expenses"
+
+INTEGRATIONS:
+- "Integrates with Xero, QuickBooks, NetSuite, HiBob"
+- "Setup in minutes, not weeks"
+
+DISCLAIMERS:
+¹ "This percentage is illustrative of savings that could be 
+   achieved, but is not guaranteed."
+² "During market hours within plan allowance."
+
+COMPANY-SPECIFIC SAVINGS FORMAT (always required):
+"Based on your filed accounts, we estimate the gap between 
+typical bank FX pricing and interbank rates on your volume is 
+in the region of £[rounded figure] annually — though the actual 
+figure depends on your current provider's rates." ¹
+
+═══════════════════════════════════════════════════════════════════
+```
+
+---
+
+## PART 14: MANDATORY EMAIL FOOTER
+
+Append to every email:
+
+```
+---
+
+Sophie Louise Penrose
+[Title] | Revolut Business
+revolut.com/business
+
+As part of our sales process, we collect, use, and process your 
+personal data in line with relevant laws and regulations. Sales 
+calls may be recorded for quality and training purposes. For 
+more details, please refer to our privacy notice (UK/EEA | US).
+
+To manage your sales outreach preferences or opt out, reply to 
+this email with your preference.
+
+Any information provided is not intended to be and does not 
+constitute financial advice, investment advice, trading advice 
+or any other advice or recommendation of any sort.
+```
+
+---
+
+## PART 15: AUDIT TRAIL REQUIREMENTS
+
+Every email sent must store a complete audit record for compliance:
+
+```json
+{
+  "email_id": "uuid",
+  "timestamp": "2026-05-27T10:30:00Z",
+  "company_id": "uuid",
+  "company_name": "Propeller Fuels Limited",
+  "contact_id": "uuid",
+  "contact_name": "[Name]",
+  "ae_owner": "sophie.penrose@revolut.com",
+  "sequence_position": 1,
+  "email_type": "proof",
+  
+  "facts_cited": [
+    {
+      "fact": "£320M turnover",
+      "dossier_source": "verified_facts.financial[0]",
+      "source_of_truth": "Companies House filing FY2025",
+      "source_url": "https://find-and-update.company-information.service.gov.uk/...",
+      "verified_date": "2026-05-26"
+    }
+  ],
+  
+  "claims_made": [
+    {
+      "claim": "Forward contracts up to £15M per trade",
+      "approved_claims_library_id": "FWD_001",
+      "disclaimer_applied": null,
+      "policy_version": "v2.3"
+    },
+    {
+      "claim": "£1.9M estimated annual FX cost gap",
+      "approved_claims_library_id": "COMPANY_SPECIFIC_SAVINGS",
+      "disclaimer_applied": "¹",
+      "calculation_basis": "1.2% average bank markup × £160M estimated FX volume",
+      "policy_version": "v2.3"
+    }
+  ],
+  
+  "validation_results": {
+    "citation_density": 0.78,
+    "specificity_score": 2.6,
+    "research_density_per_100_words": 4.2,
+    "voice_authenticity_passed": true,
+    "qc_compliance_score": 100,
+    "ai_detection_risk": "low"
+  },
+  
+  "consent_status": {
+    "marketability_flag": "approved",
+    "consent_source": "legitimate_interest_b2b",
+    "dnc_check_timestamp": "2026-05-27T10:29:55Z",
+    "dnc_status": "clear"
+  },
+  
+  "delivery": {
+    "sent_via": "RevOutreach",
+    "sender_email": "sophie.penrose@revolut.com",
+    "send_timestamp": "2026-05-27T07:30:00Z",
+    "delivery_status": "delivered"
+  }
+}
+```
+
+**Retention**: 7 years (matches Revolut's financial services retention policy).
+
+**Purpose**: If Compliance, Legal, or a regulator asks "why did you tell this customer X?", every word traces to its authorised source.
+
+---
+
+## PART 16: PILOT STRATEGY
+
+```
+═══════════════════════════════════════════════════════════════════
+RECOMMENDED ROLLOUT PHASES
+═══════════════════════════════════════════════════════════════════
+
+PHASE 1 (Weeks 1-2): SOPHIE-ONLY PILOT
+- Sophie runs the tool on 20 prospects personally
+- Every generated email reviewed before send
+- Track: edit rate per email, reply rate, voice authenticity, 
+  citation density distribution
+- Refine prompts based on real edits required
+
+Success criteria for Phase 1:
+- Edit rate ≤30% (less than 1/3 of generated emails need 
+  meaningful edits)
+- Reply rate ≥8% (above current 3%)
+- Sophie's confidence: "yes, I'd send these unedited"
+
+PHASE 2 (Weeks 3-4): SOPHIE + 1 TRUSTED AE
+- One additional AE joins, generates their own voice profile
+- Validates the tool works for multiple voices, not just Sophie's
+- Track: voice authenticity per AE, edit rates by AE
+
+Success criteria for Phase 2:
+- Voice authenticity equivalent across both AEs
+- Edit rate for second AE ≤40% in first week, ≤30% by week 2
+
+PHASE 3 (Weeks 5-8): MID-MARKET TEAM SUBSET (5 AEs)
+- Pilot team uses tool for all mid-market outreach
+- Control group (non-pilot team) continues with standard 
+  cadences
+- Track: pilot vs control reply rate, meeting booked rate, 
+  opportunity created rate
+
+Success criteria for Phase 3:
+- Pilot team reply rate ≥2x control group
+- Pilot team meetings booked ≥1.5x control group
+- AE satisfaction (NPS-style survey) ≥7/10
+
+PHASE 4 (Weeks 9-12): FULL MID-MARKET TEAM
+- If Phase 3 shows clear lift, roll out to full team
+- Maintain control group methodology for ongoing comparison
+- Begin documenting which patterns work best by segment
+
+PHASE 5 (Quarter 2+): ADJACENT EXPANSION
+- Consider expansion to SMB or other segments
+- Each segment requires its own tone calibration and 
+  inference patterns
+
+═══════════════════════════════════════════════════════════════════
+```
+
+---
+
+## PART 17: BUILD INSTRUCTION FOR CURSOR
+
+Save as `/docs/email-generation-architecture-v7.md`:
+
+```markdown
+# Email Generation Architecture v7
+## Information-Rich Sequence Design (First-Use Focus)
+
+## Core Paradigm
+This system is designed for INFORMATION ABUNDANCE, not information 
+scarcity. Traditional cold cadences guess at relevance across 
+multiple angles. Our Research Dossier identifies the right angle 
+upfront — so the sequence builds CONVICTION on that angle rather 
+than testing alternatives.
+
+## Sequence Configuration
+- 4 substantive emails + 2 brief nudges over 14 days
+- Maximum 6 touches over 14 days
+- Within QC compliance limits
+
+## Email Roles
+| Position | Type | Word Count | Day | Send Condition |
+|----------|------|-----------|-----|----------------|
+| Email 1  | Proof       | 120-200 | 0  | Always |
+| Nudge 1  | Check-in    | 8-20    | 3  | Email 1 opened, no reply |
+| Email 2  | Depth       | 130-200 | 6  | No reply yet |
+| Nudge 2  | Check-in    | 8-20    | 9  | Email 2 opened, no reply |
+| Email 3  | Provocation | 80-130  | 11 | No reply yet |
+| Email 4  | Close       | 40-70   | 14 | No reply yet |
+
+## Critical Voice Calibration
+Calibrated from Sophie Penrose's actual sent emails. Email 
+generator must produce emails in her PROSPECTING voice 
+(measured, professional, observational), not chat voice.
+
+## Architecture
+1. Scoring Engine → composite, fit, propensity scores
+2. Research Dossier Builder → comprehensive personalisation 
+   inventory
+3. Email Generator (v7 system prompt) → conviction-building 
+   sequence
+4. Citation Density Auditor → research density validation 
+   (≥4 facts per 100 words)
+5. Voice Authenticity Checker → AI detection prevention + 
+   Sophie voice match
+6. QC Compliance Engine → forbidden phrases, claims library, 
+   disclaimers
+7. Reply Classification System → 8 categories with pre-drafted 
+   responses
+8. Multi-Stakeholder Coordinator → parallel sequence management
+9. AE Review UI → email + dossier facts + voice analysis
+10. Audit Trail Logger → 7-year retention per compliance
+
+## Dossier Quality Tiers
+- Tier A (rich): Full 4-email sequence, provocation enabled
+- Tier B (moderate): 4-email sequence, provocation replaced 
+  with peer benchmark
+- Tier C (thin): 3-email sequence, AE review required, no 
+  company-specific quantifications
+- Tier D (insufficient): Don't generate, flag for manual 
+  enrichment
+
+## Reply Handling
+8 classification categories with pre-drafted contextual responses:
+positive engagement, meeting request, wrong person, not right 
+time, hard no (auto-DNC), question/objection, out of office, 
+hostile/complaint (escalate).
+
+## Multi-Stakeholder Coordination
+When 2+ stakeholders identified with confidence ≥60:
+- Staggered sends (never 2 same-day at same company)
+- Different hooks per stakeholder from same dossier
+- Auto-pause others when any positive reply received
+
+## Send Timing
+Persona-optimised per email role and per stakeholder type.
+All times in recipient's local timezone (default Europe/London).
+
+## Success Metrics (First Usage)
+- Reply rate: ≥10% on Tier A dossiers (vs current 3%)
+- AI detection rate: <5% flagged by GPTZero/similar
+- Citation density: ≥0.5 on 95% of sent emails
+- Research density: ≥4 facts per 100 words on 100% of sent 
+  emails
+- Voice authenticity: ≥90% AE agreement that emails sound 
+  like Sophie wrote them
+- QC pass rate: ≥95%
+- Edit rate (Phase 1 pilot): ≤30%
+
+## Audit Trail
+Every email stores complete record: facts cited (with sources), 
+claims made (with library references and disclaimers), 
+validation results, consent status, delivery details. 7-year 
+retention.
+
+## Pilot Strategy
+5 phases over Q1-Q2:
+- Phase 1: Sophie-only (Weeks 1-2)
+- Phase 2: Sophie + 1 AE (Weeks 3-4)
+- Phase 3: Mid-market subset of 5 AEs (Weeks 5-8)
+- Phase 4: Full mid-market team (Weeks 9-12)
+- Phase 5: Adjacent expansion (Quarter 2+)
+
+## Files in This Spec
+- `/docs/dossier-schema.json` — Research Dossier structure
+- `/docs/email-output-schema.json` — Email generation output
+- `/docs/voice-profile-sophie.md` — Sophie's voice specification
+- `/docs/approved-claims-library.md` — All approved claims
+- `/docs/qc-rules.md` — Forbidden phrases and compliance
+- `/docs/reply-classification.md` — Reply handling categories
+- `/prompts/email-generation-v7.txt` — Complete LLM system prompt
+- `/docs/audit-trail-schema.json` — Compliance audit record
+- `/docs/pilot-strategy.md` — Rollout phases and success criteria
+```
+
+---
+
+## SUMMARY OF DESIGN DECISIONS
+
+This specification represents a deliberate departure from industry-standard cadence design, justified by the tool's information richness:
+
+| Design choice | Industry standard | This spec | Reasoning |
+|---|---|---|---|
+| Sequence length | 5-7 emails over 19-21 days | 4 substantive + 2 nudges over 14 days | Information abundance allows fewer, denser emails |
+| Email 1 word count | 50-100 words | 120-200 words | Length earned by specificity from dossier |
+| Email 3 type | Peer benchmark / social proof | Provocation (informed claim) | Only possible with rich dossier evidence |
+| Email 4 type | Insight gift / value-add | Gracious close | Value already delivered across Emails 1-3 |
+| Quantification placement | Email 2 or later | Email 1 | No reason to save what dossier already provides |
+| Brief nudges | Optional after each email | Strategic placement on day 3 and 9 | Validated by Sophie's actual practice |
+| Voice calibration | Generic professional | Sophie's exact pr

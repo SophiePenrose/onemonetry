@@ -25,6 +25,7 @@ import {
   isCompaniesHouseConfigured,
   lookupCompany,
   lookupCompanyCharges,
+  lookupCompanyOwnership,
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
 } from "./companies-house.js";
@@ -46,7 +47,7 @@ import {
 } from "./analysis-queue.js";
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
-import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany } from "./email-sequences.js";
+import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences } from "./email-sequences.js";
 import { generateFullSequence } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
@@ -69,6 +70,7 @@ import {
   isStaleMonitorRunning,
   getStaleMonitorProgress,
 } from "./company-monitor.js";
+import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 import {
   getMonitorStats,
   getMonitoredCompanies as dbGetMonitoredCompanies,
@@ -88,8 +90,19 @@ import {
   getAnalysisQueueCounts,
   reconcileAnalysisQueueWithStoredAnalyses,
   listFailedAnalysisQueueItems,
+  upsertClosedWonCompanies,
+  isClosedWonCompanyNumber,
+  getClosedWonCompany,
+  getClosedWonRegistryCount,
+  listClosedWonCompanies,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
+import {
+  runCompanyTechEnrichment,
+  getCompanyEnrichmentSnapshot,
+  getTechEnrichmentRuntimeConfig,
+} from "./tech-enrichment.js";
+import { syncExternalSignals } from "./signal-connectors.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,6 +117,21 @@ app.use(express.json({ limit: "10mb" }));
 app.use(authMiddleware);
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
+const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(
+  String(process.env.IGNORE_RUNTIME_SIGTERM || "").trim().toLowerCase()
+);
+const LIGHTWEIGHT_RUNTIME = ["1", "true", "yes", "on"].includes(
+  String(process.env.LIGHTWEIGHT_RUNTIME || "").trim().toLowerCase()
+);
+const DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC = ["1", "true", "yes", "on"].includes(
+  String(process.env.DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC || "false").trim().toLowerCase()
+);
+
+if (IGNORE_RUNTIME_SIGTERM) {
+  process.on("SIGTERM", () => {
+    console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
+  });
+}
 
 const bulkRemainingState = {
   running: false,
@@ -205,6 +233,24 @@ const ALLOWED_TRANSITIONS = {
 
 const SUPPRESSED_STATES = ["closed_won", "closed_lost", "held_for_review", "revisit_later"];
 
+function normalizeCompanyNumber(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+
+  const stripped = raw.replace(/^CH-/, "").replace(/\s+/g, "");
+  if (!stripped) return null;
+
+  if (/^\d{1,8}$/.test(stripped)) {
+    return stripped.padStart(8, "0");
+  }
+
+  if (/^[A-Z0-9]{2,12}$/.test(stripped)) {
+    return stripped;
+  }
+
+  return null;
+}
+
 function isExcluded(company) {
   const exclusions = dbGetExclusions();
   if (exclusions.excluded_company_ids.includes(company.id)) return { excluded: true, reason: "Manually excluded" };
@@ -214,12 +260,23 @@ function isExcluded(company) {
   return { excluded: false };
 }
 
-function isSuppressed(companyId) {
+function isSuppressed(companyId, companyNumberHint = null) {
   const ws = getCompanyState(companyId);
   if (SUPPRESSED_STATES.includes(ws.state)) {
     const label = WORKFLOW_STATES.find((s) => s.id === ws.state)?.label || ws.state;
     return { suppressed: true, reason: `Status: ${label}` };
   }
+
+  const resolvedCompanyNumber = normalizeCompanyNumber(
+    companyNumberHint || companyNumberFromId(canonicalCompanyId(companyId))
+  );
+  if (resolvedCompanyNumber) {
+    const closedWon = getClosedWonCompany(resolvedCompanyNumber);
+    if (closedWon) {
+      return { suppressed: true, reason: "Status: Closed Won (registry)", source: "closed_won_registry" };
+    }
+  }
+
   return { suppressed: false };
 }
 
@@ -271,6 +328,15 @@ const SHORTLIST_BACKGROUND_SEED_LIMIT = Number.parseInt(process.env.SHORTLIST_BA
 const SHORTLIST_BACKGROUND_SEED_MAX_ENQUEUE = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_MAX_ENQUEUE || "80", 10);
 const SHORTLIST_BACKGROUND_SEED_QUEUE_SOFT_CAP = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_QUEUE_SOFT_CAP || "180", 10);
 const SHORTLIST_BACKGROUND_SEED_QUEUE_HARD_CAP = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_QUEUE_HARD_CAP || "320", 10);
+const TECH_ENRICHMENT_RUNTIME = getTechEnrichmentRuntimeConfig();
+const TECH_ENRICHMENT_SEED_ENABLED = String(process.env.TECH_ENRICHMENT_SEED_ENABLED || "true").toLowerCase() !== "false";
+const TECH_ENRICHMENT_SEED_INTERVAL_MS = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
+const TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS || "45000", 10);
+const TECH_ENRICHMENT_SEED_LIMIT = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_LIMIT || "1200", 10);
+const TECH_ENRICHMENT_SEED_MAX_REFRESH = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_MAX_REFRESH || "60", 10);
+const TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE = String(process.env.TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE || "off").trim().toLowerCase();
+const EMAIL_STYLE_PROFILE_SETTING_KEY = "email_style_profile_v1";
+const EMAIL_STYLE_PROFILE_VERSION = "1.0";
 const BACKFILL_AUTORUN_ENABLED = String(process.env.BACKFILL_AUTORUN || "true").toLowerCase() !== "false";
 const BACKFILL_AUTORUN_INTERVAL_MS = Number.parseInt(process.env.BACKFILL_AUTORUN_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
 const BACKFILL_AUTORUN_MAX_FILES = Number.parseInt(process.env.BACKFILL_AUTORUN_MAX_FILES || "1", 10);
@@ -279,6 +345,21 @@ const BACKFILL_AUTORUN_BACKLOG_THRESHOLD = Number.parseInt(process.env.BACKFILL_
 const BACKFILL_AUTORUN_CATCHUP_MAX_FILES = Number.parseInt(process.env.BACKFILL_AUTORUN_CATCHUP_MAX_FILES || "3", 10);
 let lastShortlistAutoQueueRunAt = 0;
 let shortlistBackgroundSeedTimer = null;
+let techEnrichmentSeedTimer = null;
+const techEnrichmentSeedStatus = {
+  enabled: false,
+  timer_active: false,
+  running: false,
+  interval_ms: Math.max(60000, Number.isFinite(TECH_ENRICHMENT_SEED_INTERVAL_MS) ? TECH_ENRICHMENT_SEED_INTERVAL_MS : 6 * 60 * 60 * 1000),
+  initial_delay_ms: Math.max(5000, Number.isFinite(TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS) ? TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS : 45000),
+  limit: Math.max(50, Number.isFinite(TECH_ENRICHMENT_SEED_LIMIT) ? TECH_ENRICHMENT_SEED_LIMIT : 1200),
+  max_refresh: Math.max(1, Number.isFinite(TECH_ENRICHMENT_SEED_MAX_REFRESH) ? TECH_ENRICHMENT_SEED_MAX_REFRESH : 60),
+  deep_scan_mode: "off",
+  last_started_at: null,
+  last_completed_at: null,
+  last_result: null,
+  last_error: null,
+};
 let backfillAutoTimer = null;
 
 const backfillAutoStatus = {
@@ -528,6 +609,7 @@ function seedMissingShortlistAnalyses(options = {}) {
 
   const toQueue = [];
   for (const company of companies) {
+    if (isClosedWonCompanyNumber(company.company_number)) continue;
     const queue = queueRows[company.company_number];
     if (queue?.status === "queued" || queue?.status === "processing") continue;
     const storedAnalysis = getSetting(`analysis_${company.company_number}`, null);
@@ -612,6 +694,212 @@ function startShortlistBackgroundSeeder() {
   };
 }
 
+function getTechEnrichmentSeedStatus() {
+  return {
+    ...techEnrichmentSeedStatus,
+    timer_active: !!techEnrichmentSeedTimer,
+  };
+}
+
+async function seedMissingTechEnrichment(options = {}) {
+  const configuredLimit = Number.parseInt(String(options.limit || TECH_ENRICHMENT_SEED_LIMIT), 10) || TECH_ENRICHMENT_SEED_LIMIT;
+  const configuredMaxRefresh = Number.parseInt(String(options.maxRefresh || TECH_ENRICHMENT_SEED_MAX_REFRESH), 10) || TECH_ENRICHMENT_SEED_MAX_REFRESH;
+  const configuredRefreshWindow = Number.parseInt(
+    String(options.refreshWindowDays || TECH_ENRICHMENT_RUNTIME.refresh_window_days),
+    10
+  ) || TECH_ENRICHMENT_RUNTIME.refresh_window_days;
+
+  const limit = Math.max(100, Math.min(configuredLimit, 5000));
+  const maxRefresh = Math.max(1, Math.min(configuredMaxRefresh, 300));
+  const refreshWindowDays = Math.max(1, Math.min(configuredRefreshWindow, 365));
+  const source = toOptionalString(options.source) || "background_tech_enrichment_seed";
+  const deepScanMode =
+    parseDeepScanModeInput(options.deepScanMode)
+    || parseDeepScanModeInput(TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE)
+    || "off";
+
+  const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+  if (shortlist.length === 0) {
+    return {
+      source,
+      scanned: 0,
+      candidates: 0,
+      processed: 0,
+      refreshed: 0,
+      skipped: 0,
+      failed: 0,
+      deep_scan_mode: deepScanMode,
+      refresh_window_days: refreshWindowDays,
+    };
+  }
+
+  const candidates = [];
+  for (const company of shortlist) {
+    if (isClosedWonCompanyNumber(company.company_number)) continue;
+
+    const snapshot = getCompanyEnrichmentSnapshot(company.company_number, { includeData: false });
+    const techNeedsRefresh = !snapshot.tech_stack.available || snapshot.tech_stack.stale;
+    const websiteNeedsRefresh = !snapshot.website_intelligence.available || snapshot.website_intelligence.stale;
+    const marketingNeedsRefresh = !snapshot.marketing_intelligence.available || snapshot.marketing_intelligence.stale;
+
+    if (!techNeedsRefresh && !websiteNeedsRefresh && !marketingNeedsRefresh) continue;
+
+    candidates.push(company);
+    if (candidates.length >= maxRefresh) break;
+  }
+
+  let refreshed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const runs = [];
+
+  for (const company of candidates) {
+    const context = resolveCompanyContextForEnrichment(company.company_number, company);
+    if (!context) {
+      skipped += 1;
+      runs.push({
+        company_number: company.company_number,
+        company_name: company.company_name,
+        status: "unresolved_company",
+        updated: false,
+      });
+      continue;
+    }
+
+    try {
+      const run = await runCompanyTechEnrichment({
+        companyNumber: context.company_number,
+        companyName: context.company_name || company.company_name,
+        companyWebsite: context.company_website,
+        companyDomain: context.company_domain,
+        turnover: context.turnover,
+        force: false,
+        deepScanMode,
+        refreshWindowDays,
+      });
+
+      if (run.updated) {
+        refreshed += 1;
+      } else {
+        skipped += 1;
+      }
+
+      runs.push({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        status: run.status,
+        updated: run.updated === true,
+        scan_mode: run.scan_mode || null,
+      });
+    } catch (err) {
+      failed += 1;
+      runs.push({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        status: "error",
+        updated: false,
+        error: err.message,
+      });
+    }
+  }
+
+  return {
+    source,
+    scanned: shortlist.length,
+    candidates: candidates.length,
+    processed: runs.length,
+    refreshed,
+    skipped,
+    failed,
+    deep_scan_mode: deepScanMode,
+    refresh_window_days: refreshWindowDays,
+    sample: runs.slice(0, 25),
+  };
+}
+
+async function runTechEnrichmentSeedCycle(source = "background_tech_enrichment_seed") {
+  if (techEnrichmentSeedStatus.running) {
+    return {
+      skipped: true,
+      reason: "already_running",
+    };
+  }
+
+  techEnrichmentSeedStatus.running = true;
+  techEnrichmentSeedStatus.last_started_at = new Date().toISOString();
+
+  try {
+    const result = await seedMissingTechEnrichment({
+      limit: techEnrichmentSeedStatus.limit,
+      maxRefresh: techEnrichmentSeedStatus.max_refresh,
+      deepScanMode: techEnrichmentSeedStatus.deep_scan_mode,
+      source,
+    });
+    techEnrichmentSeedStatus.last_result = result;
+    techEnrichmentSeedStatus.last_error = null;
+    return result;
+  } catch (err) {
+    techEnrichmentSeedStatus.last_error = err.message;
+    return {
+      status: "error",
+      error: err.message,
+    };
+  } finally {
+    techEnrichmentSeedStatus.running = false;
+    techEnrichmentSeedStatus.last_completed_at = new Date().toISOString();
+  }
+}
+
+function startTechEnrichmentSeeder() {
+  if (techEnrichmentSeedTimer) {
+    clearInterval(techEnrichmentSeedTimer);
+    techEnrichmentSeedTimer = null;
+  }
+
+  techEnrichmentSeedStatus.enabled = TECH_ENRICHMENT_SEED_ENABLED;
+  techEnrichmentSeedStatus.interval_ms = Math.max(
+    60000,
+    Number.isFinite(TECH_ENRICHMENT_SEED_INTERVAL_MS) ? TECH_ENRICHMENT_SEED_INTERVAL_MS : 6 * 60 * 60 * 1000
+  );
+  techEnrichmentSeedStatus.initial_delay_ms = Math.max(
+    5000,
+    Number.isFinite(TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS) ? TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS : 45000
+  );
+  techEnrichmentSeedStatus.limit = Math.max(
+    100,
+    Math.min(Number.isFinite(TECH_ENRICHMENT_SEED_LIMIT) ? TECH_ENRICHMENT_SEED_LIMIT : 1200, 5000)
+  );
+  techEnrichmentSeedStatus.max_refresh = Math.max(
+    1,
+    Math.min(Number.isFinite(TECH_ENRICHMENT_SEED_MAX_REFRESH) ? TECH_ENRICHMENT_SEED_MAX_REFRESH : 60, 300)
+  );
+  techEnrichmentSeedStatus.deep_scan_mode =
+    parseDeepScanModeInput(TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE)
+    || parseDeepScanModeInput(TECH_ENRICHMENT_RUNTIME.deep_scan_mode)
+    || "off";
+  techEnrichmentSeedStatus.last_error = null;
+
+  if (!TECH_ENRICHMENT_SEED_ENABLED) {
+    techEnrichmentSeedStatus.timer_active = false;
+    return getTechEnrichmentSeedStatus();
+  }
+
+  techEnrichmentSeedTimer = setInterval(() => {
+    runTechEnrichmentSeedCycle("background_tech_enrichment_seed").catch((err) => {
+      techEnrichmentSeedStatus.last_error = err.message;
+    });
+  }, techEnrichmentSeedStatus.interval_ms);
+
+  setTimeout(() => {
+    runTechEnrichmentSeedCycle("background_tech_enrichment_seed_initial").catch((err) => {
+      techEnrichmentSeedStatus.last_error = err.message;
+    });
+  }, techEnrichmentSeedStatus.initial_delay_ms);
+
+  techEnrichmentSeedStatus.timer_active = true;
+  return getTechEnrichmentSeedStatus();
+}
+
 // --- State persistence (SQLite) ---
 
 function getCompanyState(companyId) {
@@ -625,6 +913,102 @@ function getCompanyState(companyId) {
 }
 
 // --- Unified multi-motion scoring ---
+
+function normalizeNarrativeItems(items, limit = 3) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const item of items) {
+    if (out.length >= limit) break;
+    const text = String(item || "").trim();
+    if (!text) continue;
+    out.push(text);
+  }
+  return out;
+}
+
+function extractEvidenceHighlights(evidence, limit = 2) {
+  if (!Array.isArray(evidence)) return [];
+  const highlights = [];
+  for (const item of evidence) {
+    if (highlights.length >= limit) break;
+    let text = "";
+    if (typeof item === "string") {
+      text = item;
+    } else if (item && typeof item === "object") {
+      text = item.text || item.signal || item.reason || "";
+    }
+    text = String(text || "").trim();
+    if (text) highlights.push(text);
+  }
+  return highlights;
+}
+
+function humanizeGate(rawGate) {
+  const text = String(rawGate || "").trim();
+  if (!text) return "";
+  return text.replace(/_/g, " ");
+}
+
+function buildMotionScoreNarrative(score, motionData, fallbackExplanation = "") {
+  const motion = String(motionData?.motion || "Opportunity");
+  const baseExplanation = String(fallbackExplanation || `${motion} fit inferred from available signals.`).trim();
+  const evidenceHighlights = extractEvidenceHighlights(motionData?.evidence, 2);
+
+  const drivers = [
+    ...normalizeNarrativeItems(score?.score_explanation?.drivers, 2),
+    ...evidenceHighlights,
+  ];
+  if (drivers.length === 0) drivers.push(baseExplanation);
+
+  const risks = normalizeNarrativeItems(score?.score_explanation?.risks, 2);
+  if (motionData?.qualification_gate) {
+    risks.unshift(`Qualification gate applied: ${humanizeGate(motionData.qualification_gate)}.`);
+  }
+  if (String(score?.confidence_interval?.confidence_level || "").toLowerCase() === "low") {
+    risks.push("Evidence confidence is low; validate with fresher filings or connector sync.");
+  }
+
+  const confidenceLevel = String(score?.confidence_interval?.confidence_level || "").trim();
+  const velocityBand = String(score?.velocity?.band || "").trim();
+  const confidenceSnippet = confidenceLevel ? `${confidenceLevel} confidence` : "";
+  const velocitySnippet = velocityBand ? `${velocityBand} velocity` : "";
+
+  return {
+    headline: [baseExplanation, confidenceSnippet, velocitySnippet].filter(Boolean).join(" | "),
+    drivers: [...new Set(drivers)].slice(0, 3),
+    risks: [...new Set(risks)].slice(0, 3),
+    evidence: evidenceHighlights,
+  };
+}
+
+function buildLegacyMotionNarrative(motion, fit) {
+  const fitLevel = String(fit?.fit_level || "medium").trim();
+  const baseExplanation = String(
+    fit?.explanation || `${motion} relevance is based on manually captured profile signals.`
+  ).trim();
+  const layers = fit?.layers || {};
+  const layerEvidence = Object.values(layers)
+    .map((layer) => {
+      if (!layer) return "";
+      if (typeof layer.evidence === "string") return layer.evidence;
+      if (Array.isArray(layer.evidence)) {
+        const first = layer.evidence.find((item) => typeof item === "string" || item?.text);
+        if (typeof first === "string") return first;
+        return first?.text || "";
+      }
+      return "";
+    })
+    .map((text) => String(text || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  return {
+    headline: `${motion} fit is ${fitLevel}.`,
+    drivers: [baseExplanation, ...layerEvidence].filter(Boolean).slice(0, 3),
+    risks: [],
+    evidence: layerEvidence,
+  };
+}
 
 function computeCompanyProfile(company) {
   const segment = company.segment || "Mid-Market";
@@ -651,6 +1035,7 @@ function computeCompanyProfile(company) {
       fit_level: fit.fit_level,
       explanation: fit.explanation,
       score_breakdown: buildScoreBreakdown(layers),
+      score_narrative: buildLegacyMotionNarrative(motion, fit),
     });
   }
   motionScores.sort((a, b) => b.score - a.score);
@@ -694,14 +1079,339 @@ function saveCompanies(companies) {
 }
 
 function canonicalCompanyId(id) {
-  if (!id) return id;
-  if (id.startsWith("ch-")) return id;
-  if (/^\d{6,8}$/.test(id)) return `ch-${id.padStart(8, "0")}`;
-  return id;
+  if (id === undefined || id === null) return id;
+  const normalized = String(id).trim();
+  if (!normalized) return normalized;
+  if (normalized.startsWith("ch-")) return normalized;
+  if (/^\d{6,8}$/.test(normalized)) return `ch-${normalized.padStart(8, "0")}`;
+  return normalized;
 }
 
 function companyNumberFromId(id) {
-  return id?.startsWith("ch-") ? id.replace("ch-", "") : id;
+  if (id === undefined || id === null) return id;
+  const normalized = String(id).trim();
+  return normalized.startsWith("ch-") ? normalized.replace("ch-", "") : normalized;
+}
+
+function parseBooleanInput(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  const token = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(token)) return true;
+  if (["false", "0", "no", "n", "off"].includes(token)) return false;
+  return fallback;
+}
+
+function parseDeepScanModeInput(value) {
+  if (value === undefined || value === null) return null;
+  const token = String(value).trim().toLowerCase();
+  if (!token) return null;
+  if (["off", "false", "0"].includes(token)) return "off";
+  if (["always", "true", "1", "on"].includes(token)) return "always";
+  if (token === "auto") return "auto";
+  return null;
+}
+
+function resolveEnrichmentDeepScanOptions(payload = {}, fallbackMode = null) {
+  const explicitMode = parseDeepScanModeInput(payload.deep_scan_mode);
+  if (explicitMode) {
+    return { deepScanMode: explicitMode };
+  }
+
+  const modeFromLegacyFlag = parseDeepScanModeInput(payload.deep_scan);
+  if (modeFromLegacyFlag) {
+    return { deepScanMode: modeFromLegacyFlag };
+  }
+
+  if (payload.deep_scan !== undefined && payload.deep_scan !== null) {
+    return { deepScan: parseBooleanInput(payload.deep_scan, true) };
+  }
+
+  const normalizedFallback = parseDeepScanModeInput(fallbackMode);
+  if (normalizedFallback) {
+    return { deepScanMode: normalizedFallback };
+  }
+
+  return {};
+}
+
+function toOptionalString(value) {
+  if (value === undefined || value === null) return null;
+  const next = String(value).trim();
+  return next || null;
+}
+
+function toOptionalNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTextList(value, options = {}) {
+  const maxItems = Math.max(1, Math.min(Number.parseInt(String(options.maxItems || 10), 10) || 10, 20));
+  const maxLength = Math.max(20, Math.min(Number.parseInt(String(options.maxLength || 180), 10) || 180, 500));
+  const rawItems = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(/\r?\n|;/) : []);
+
+  const seen = new Set();
+  const output = [];
+  for (const rawItem of rawItems) {
+    const token = toOptionalString(rawItem);
+    if (!token) continue;
+    const normalized = token.slice(0, maxLength);
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+    if (output.length >= maxItems) break;
+  }
+
+  return output;
+}
+
+function normalizeStyleExamples(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const output = [];
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    const item = raw[idx];
+    const label = toOptionalString(item?.label || `Example ${idx + 1}`) || `Example ${idx + 1}`;
+    const bodyRaw = typeof item === "string"
+      ? item
+      : (item?.text || item?.body || item?.content || "");
+    const text = toOptionalString(bodyRaw);
+    if (!text) continue;
+    output.push({
+      label: label.slice(0, 80),
+      text: text.slice(0, 1000),
+    });
+    if (output.length >= 4) break;
+  }
+  return output;
+}
+
+function normalizeEmailStyleProfilePayload(rawProfile, options = {}) {
+  if (!rawProfile || typeof rawProfile !== "object") return null;
+
+  const enabled = rawProfile.enabled !== false;
+  const name = toOptionalString(rawProfile.name || rawProfile.title);
+  const description = toOptionalString(rawProfile.description);
+  const stylePrompt = toOptionalString(rawProfile.style_prompt || rawProfile.stylePrompt);
+  const voiceTraits = normalizeTextList(rawProfile.voice_traits || rawProfile.voiceTraits, { maxItems: 10, maxLength: 120 });
+  const preferredPatterns = normalizeTextList(
+    rawProfile.preferred_patterns || rawProfile.preferredPatterns || rawProfile.do,
+    { maxItems: 12, maxLength: 220 }
+  );
+  const avoidPatterns = normalizeTextList(
+    rawProfile.avoid_patterns || rawProfile.avoidPatterns || rawProfile.dont,
+    { maxItems: 12, maxLength: 220 }
+  );
+  const examples = normalizeStyleExamples(rawProfile.examples);
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      name: name ? name.slice(0, 120) : null,
+      description: description ? description.slice(0, 600) : null,
+      style_prompt: stylePrompt ? stylePrompt.slice(0, 2600) : null,
+      voice_traits: voiceTraits,
+      preferred_patterns: preferredPatterns,
+      avoid_patterns: avoidPatterns,
+      examples,
+      version: EMAIL_STYLE_PROFILE_VERSION,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const hasContent = !!stylePrompt
+    || voiceTraits.length > 0
+    || preferredPatterns.length > 0
+    || avoidPatterns.length > 0
+    || examples.length > 0;
+
+  if (!hasContent && options.allowEmpty !== true) {
+    return null;
+  }
+
+  return {
+    enabled: true,
+    name: name ? name.slice(0, 120) : null,
+    description: description ? description.slice(0, 600) : null,
+    style_prompt: stylePrompt ? stylePrompt.slice(0, 2600) : null,
+    voice_traits: voiceTraits,
+    preferred_patterns: preferredPatterns,
+    avoid_patterns: avoidPatterns,
+    examples,
+    version: EMAIL_STYLE_PROFILE_VERSION,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function getStoredEmailStyleProfile() {
+  const raw = getSetting(EMAIL_STYLE_PROFILE_SETTING_KEY, null);
+  return normalizeEmailStyleProfilePayload(raw, { allowEmpty: false });
+}
+
+function resolveEmailStyleProfileForRequest(payload = {}, options = {}) {
+  const inlineProfile = normalizeEmailStyleProfilePayload(payload.style_profile || payload.styleProfile, { allowEmpty: false });
+  if (inlineProfile && inlineProfile.enabled) return inlineProfile;
+
+  const forceStored = options.forceStored === true;
+  const useStored = forceStored || parseBooleanInput(payload.use_style_profile, false);
+  if (!useStored) return null;
+
+  const stored = getStoredEmailStyleProfile();
+  if (!stored || stored.enabled !== true) return null;
+  return stored;
+}
+
+function buildShadowPreviewCadence(rawPreviewSteps, rawTier) {
+  const requested = Number.parseInt(String(rawPreviewSteps || "3"), 10);
+  const steps = Math.max(3, Math.min(Number.isFinite(requested) ? requested : 3, 6));
+  const tier = String(rawTier || "B").trim().toUpperCase();
+  const safeTier = ["A", "B", "C"].includes(tier) ? tier : "B";
+  const delays = [0, 3, 6, 9, 11, 14].slice(0, steps);
+  const stepTypes = ["proof", "depth", "close", "peer_benchmark", "nudge_2", "close"].slice(0, steps);
+  const sendConditions = Array.from({ length: steps }, () => "always");
+
+  return {
+    steps,
+    delays,
+    step_types: stepTypes,
+    send_conditions: sendConditions,
+    dossier_tier: safeTier,
+    strategy: "shadow_preview",
+  };
+}
+
+function compactPreviewText(value, maxLength = 150) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  return normalized.slice(0, maxLength);
+}
+
+function summarizeGeneratedSequence(sequence) {
+  const steps = Array.isArray(sequence?.steps) ? sequence.steps : [];
+  const qcScores = steps
+    .map((step) => Number(step?.qc_score))
+    .filter((value) => Number.isFinite(value));
+  const voiceScores = steps
+    .map((step) => Number(step?.voice_percent))
+    .filter((value) => Number.isFinite(value));
+  const passCount = steps.filter((step) => step?.qc_pass === true).length;
+  const llmCount = steps.filter((step) => String(step?.source || "").startsWith("llm")).length;
+  const fallbackCount = steps.filter((step) => String(step?.source || "") === "fallback").length;
+
+  return {
+    steps: steps.length,
+    avg_qc_score: qcScores.length > 0
+      ? Math.round((qcScores.reduce((sum, value) => sum + value, 0) / qcScores.length) * 100) / 100
+      : null,
+    avg_voice_percent: voiceScores.length > 0
+      ? Math.round((voiceScores.reduce((sum, value) => sum + value, 0) / voiceScores.length) * 100) / 100
+      : null,
+    pass_count: passCount,
+    fail_count: Math.max(0, steps.length - passCount),
+    llm_steps: llmCount,
+    fallback_steps: fallbackCount,
+  };
+}
+
+function buildShadowSequenceComparison(baseline, styled) {
+  const baselineSummary = summarizeGeneratedSequence(baseline);
+  const styledSummary = summarizeGeneratedSequence(styled);
+  const baselineSteps = Array.isArray(baseline?.steps) ? baseline.steps : [];
+  const styledSteps = Array.isArray(styled?.steps) ? styled.steps : [];
+  const stepCount = Math.max(baselineSteps.length, styledSteps.length);
+
+  const stepDeltas = [];
+  for (let idx = 0; idx < stepCount; idx += 1) {
+    const baseStep = baselineSteps[idx] || null;
+    const styledStep = styledSteps[idx] || null;
+    const baseQc = Number(baseStep?.qc_score);
+    const styledQc = Number(styledStep?.qc_score);
+    const qcDelta = Number.isFinite(baseQc) && Number.isFinite(styledQc)
+      ? Math.round((styledQc - baseQc) * 100) / 100
+      : null;
+
+    stepDeltas.push({
+      step_number: idx + 1,
+      step_type: styledStep?.step_type || baseStep?.step_type || null,
+      baseline_qc_score: Number.isFinite(baseQc) ? baseQc : null,
+      styled_qc_score: Number.isFinite(styledQc) ? styledQc : null,
+      qc_delta: qcDelta,
+      baseline_preview: compactPreviewText(baseStep?.body),
+      styled_preview: compactPreviewText(styledStep?.body),
+    });
+  }
+
+  const avgQcDelta = baselineSummary.avg_qc_score !== null && styledSummary.avg_qc_score !== null
+    ? Math.round((styledSummary.avg_qc_score - baselineSummary.avg_qc_score) * 100) / 100
+    : null;
+  const avgVoiceDelta = baselineSummary.avg_voice_percent !== null && styledSummary.avg_voice_percent !== null
+    ? Math.round((styledSummary.avg_voice_percent - baselineSummary.avg_voice_percent) * 100) / 100
+    : null;
+
+  return {
+    baseline: baselineSummary,
+    styled: styledSummary,
+    deltas: {
+      avg_qc_score: avgQcDelta,
+      avg_voice_percent: avgVoiceDelta,
+      pass_count: styledSummary.pass_count - baselineSummary.pass_count,
+      fail_count: styledSummary.fail_count - baselineSummary.fail_count,
+    },
+    step_deltas: stepDeltas,
+  };
+}
+
+function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const companyNumber = companyNumberFromId(canonicalId);
+  const companies = loadCompanies();
+  const company = companies.find((c) => c.id === companyId || c.id === canonicalId || c.company_number === companyNumber);
+  const monitored = company ? null : getMonitoredCompany(companyNumber);
+
+  if (!company && !monitored) return null;
+
+  const companyName =
+    toOptionalString(overrides.company_name)
+    || toOptionalString(overrides.companyName)
+    || toOptionalString(company?.name)
+    || toOptionalString(monitored?.company_name)
+    || pendingCompanyName();
+
+  const companyWebsite =
+    toOptionalString(overrides.company_website)
+    || toOptionalString(overrides.website)
+    || toOptionalString(overrides.website_url)
+    || toOptionalString(company?.website)
+    || toOptionalString(company?.website_url)
+    || null;
+
+  const companyDomain =
+    toOptionalString(overrides.company_domain)
+    || toOptionalString(overrides.domain)
+    || toOptionalString(overrides.domain_hint)
+    || toOptionalString(company?.domain)
+    || toOptionalString(company?.company_domain)
+    || null;
+
+  const turnover =
+    toOptionalNumber(overrides.turnover)
+    ?? toOptionalNumber(company?.turnover)
+    ?? toOptionalNumber(monitored?.latest_turnover)
+    ?? null;
+
+  return {
+    canonical_id: canonicalId,
+    company_number: companyNumber,
+    company_name: companyName,
+    company_website: companyWebsite,
+    company_domain: companyDomain,
+    turnover,
+    company,
+    monitored,
+  };
 }
 
 function isFallbackCompanyName(name, companyNumber) {
@@ -722,6 +1432,41 @@ function getManualList(kind, companyId) {
 
 function setManualList(kind, companyId, items) {
   setSetting(`${kind}_${canonicalCompanyId(companyId)}`, items);
+}
+
+async function refreshOwnershipEnvelope(companyNumber) {
+  if (!isCompaniesHouseConfigured()) {
+    return {
+      status: "skipped",
+      reason: "companies_house_not_configured",
+    };
+  }
+
+  try {
+    const ownership = await lookupCompanyOwnership(companyNumber);
+    if (ownership?.error || !ownership?.summary) {
+      return {
+        status: "error",
+        error: ownership?.message || "ownership_lookup_failed",
+      };
+    }
+
+    setSetting(`ownership_${companyNumber}`, {
+      ...ownership.summary,
+      source: "companies_house_api",
+    });
+
+    return {
+      status: "updated",
+      significant_corporate_controllers_count: Number(ownership.summary.significant_corporate_controllers_count || 0),
+      non_uk_significant_corporate_controllers_count: Number(ownership.summary.non_uk_significant_corporate_controllers_count || 0),
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      error: err?.message || "ownership_lookup_failed",
+    };
+  }
 }
 
 async function resolveMonitorName(companyNumber, storedName) {
@@ -746,6 +1491,241 @@ function titleCase(value) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function parseCsvRow(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseClosedWonRowsFromCsv(csvContent) {
+  const text = String(csvContent || "").replace(/\r/g, "").trim();
+  if (!text) return [];
+
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const header = parseCsvRow(lines[0]).map((h) => String(h || "").toLowerCase());
+  const hasHeader = header.some((h) =>
+    h.includes("company")
+    || h.includes("reg")
+    || h.includes("number")
+    || h.includes("entity")
+  );
+
+  const numberIdx = hasHeader
+    ? header.findIndex((h) =>
+      h.includes("company_number")
+      || h.includes("company number")
+      || h.includes("registration")
+      || h.includes("reg number")
+      || h.includes("reg_number")
+      || h.includes("company no")
+      || h.includes("entity number")
+    )
+    : -1;
+
+  const nameIdx = hasHeader
+    ? header.findIndex((h) =>
+      h.includes("company_name")
+      || h.includes("company name")
+      || h === "name"
+      || h.includes("entity name")
+      || h.includes("legal name")
+    )
+    : -1;
+
+  const startIdx = hasHeader ? 1 : 0;
+  const rows = [];
+
+  for (let i = startIdx; i < lines.length; i += 1) {
+    const cells = parseCsvRow(lines[i]);
+    if (cells.length === 0) continue;
+
+    let candidateNumber = numberIdx >= 0 ? cells[numberIdx] : null;
+    if (!candidateNumber) {
+      candidateNumber = cells.find((cell) => !!normalizeCompanyNumber(cell)) || null;
+    }
+
+    const normalizedNumber = normalizeCompanyNumber(candidateNumber);
+    if (!normalizedNumber) continue;
+
+    const candidateName = nameIdx >= 0
+      ? cells[nameIdx]
+      : cells.find((cell, idx) => idx !== numberIdx && idx !== -1 && cell && !normalizeCompanyNumber(cell));
+
+    rows.push({
+      company_number: normalizedNumber,
+      company_name: String(candidateName || "").trim() || null,
+    });
+  }
+
+  return rows;
+}
+
+function markCompanyClosedWon(companyNumber, note = null) {
+  const normalized = normalizeCompanyNumber(companyNumber);
+  if (!normalized) return false;
+
+  const companyId = canonicalCompanyId(`ch-${normalized}`);
+  const current = getCompanyState(companyId);
+  if (current.state === "closed_won") return false;
+
+  setCompanyWorkflowState(
+    companyId,
+    current.state,
+    "closed_won",
+    note || "Suppressed via closed-won registry"
+  );
+
+  return true;
+}
+
+const COMPETITOR_NAME_HINTS = [
+  "HSBC",
+  "Barclays",
+  "NatWest",
+  "Lloyds",
+  "Worldpay",
+  "Stripe",
+  "Adyen",
+  "Wise",
+  "Ebury",
+  "Pleo",
+  "Concur",
+  "Amex",
+  "PayPal",
+  "Square",
+  "Sage",
+  "SAP",
+];
+
+function inferCompetitorNamesFromText(text) {
+  const source = String(text || "");
+  if (!source) return [];
+
+  const names = [];
+  for (const hint of COMPETITOR_NAME_HINTS) {
+    const pattern = new RegExp(`\\b${hint.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "i");
+    if (pattern.test(source)) {
+      names.push(hint === "Concur" ? "SAP Concur" : hint);
+    }
+  }
+  return Array.from(new Set(names));
+}
+
+function enrichAnalysisWithCompetitorSignals(analysis, score) {
+  const base = analysis && typeof analysis === "object" ? { ...analysis } : {};
+  const merged = [];
+  const seen = new Set();
+
+  const pushSignal = (signal) => {
+    const name = String(signal?.name || "").trim();
+    if (!name) return;
+
+    const product = String(signal?.product || "").trim();
+    const key = `${name.toLowerCase()}::${product.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    merged.push({
+      name,
+      product,
+      displacement_angle: signal?.displacement_angle || signal?.notes || "Detected in filing",
+      evidence: signal?.evidence || signal?.notes || null,
+      snippet: signal?.snippet || null,
+      inferred_advantage: signal?.inferred_advantage || null,
+      source: signal?.source || "analysis",
+    });
+  };
+
+  for (const item of (base?.competitors_detected || [])) {
+    pushSignal({
+      name: item?.name,
+      product: item?.product,
+      displacement_angle: item?.displacement_angle,
+      evidence: item?.evidence,
+      snippet: item?.snippet || item?.quote,
+      inferred_advantage: item?.inferred_advantage,
+      source: item?.source || "analysis",
+    });
+  }
+
+  for (const item of (score?.competitors || [])) {
+    const weakness = String(item?.weakness || "").replace(/_/g, " ");
+    pushSignal({
+      name: item?.name,
+      product: Array.isArray(item?.products) ? item.products.join(", ") : (item?.product || ""),
+      displacement_angle: weakness ? `Detected in filing: ${weakness}` : "Detected in filing",
+      snippet: item?.snippet || null,
+      inferred_advantage: item?.inferred_advantage || null,
+      source: "scoring",
+    });
+  }
+
+  const competitorSnippets = Array.isArray(base?.evidence_snippets?.competitors)
+    ? base.evidence_snippets.competitors
+    : [];
+  for (const snippet of competitorSnippets) {
+    const quote = String(snippet?.quote || "");
+    const insight = String(snippet?.insight || "");
+    const names = inferCompetitorNamesFromText(`${quote} ${insight}`);
+    for (const name of names) {
+      pushSignal({
+        name,
+        product: "",
+        displacement_angle: insight || "Competitor stack evidence detected",
+        evidence: insight || null,
+        snippet: quote || null,
+        source: "evidence_snippet",
+      });
+    }
+  }
+
+  if (merged.length === 0) {
+    const names = inferCompetitorNamesFromText(`${base?.summary || ""} ${(base?.themes || []).map((t) => t?.evidence || "").join(" ")}`);
+    for (const name of names) {
+      pushSignal({
+        name,
+        product: "",
+        displacement_angle: "Competitor signal inferred from filing narrative",
+        source: "analysis_inference",
+      });
+    }
+  }
+
+  if (merged.length > 0) {
+    base.competitors_detected = merged;
+  }
+
+  return base;
+}
+
 function buildMonitorMotionScores(score) {
   if (!score) return [];
   const candidates = score.eligible_motions?.length
@@ -755,19 +1735,23 @@ function buildMonitorMotionScores(score) {
       .filter((m) => m.score > 0)
       .sort((a, b) => (b.weighted || b.score) - (a.weighted || a.score));
 
-  return candidates.map((m) => ({
-    motion: m.motion,
-    score: Math.round((m.score || 0) * 100) / 100,
-    fit_level: m.fit_level || (m.score >= 0.5 ? "strong" : m.score >= 0.25 ? "medium" : "weak"),
-    explanation: m.evidence?.[0]?.text || `${m.motion} fit inferred from accounts filing signals.`,
-    score_breakdown: {
-      product_fit: { score: m.score || 0, evidence: m.evidence },
-      commercial_value: score.layers?.commercial_value,
-      pain_strength: score.layers?.pain_strength,
-      urgency: score.layers?.urgency,
-      competitor_context: score.layers?.competitor_context,
-    },
-  }));
+  return candidates.map((m) => {
+    const explanation = m.evidence?.[0]?.text || `${m.motion} fit inferred from accounts filing signals.`;
+    return {
+      motion: m.motion,
+      score: Math.round((m.score || 0) * 100) / 100,
+      fit_level: m.fit_level || (m.score >= 0.5 ? "strong" : m.score >= 0.25 ? "medium" : "weak"),
+      explanation,
+      score_narrative: buildMotionScoreNarrative(score, m, explanation),
+      score_breakdown: {
+        product_fit: { score: m.score || 0, evidence: m.evidence },
+        commercial_value: score.layers?.commercial_value,
+        pain_strength: score.layers?.pain_strength,
+        urgency: score.layers?.urgency,
+        competitor_context: score.layers?.competitor_context,
+      },
+    };
+  });
 }
 
 function buildStakeholderAssessment(companyId, company, analysis, score) {
@@ -879,7 +1863,20 @@ function getProfileCompetitors(companyId, analysis, score) {
     inferred_advantage: c.inferred_advantage || null,
     source: "analysis",
   }));
-  return [...manual, ...scored, ...analysed];
+
+  const merged = [];
+  const seen = new Set();
+  for (const item of [...manual, ...scored, ...analysed]) {
+    const name = String(item?.name || "").trim();
+    if (!name) continue;
+    const product = String(item?.product || "").trim();
+    const key = `${name.toLowerCase()}::${product.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return merged;
 }
 
 // --- Routes ---
@@ -956,6 +1953,71 @@ app.put("/api/exclusions", (req, res) => {
   res.json({ exclusions: updated });
 });
 
+app.get("/api/closed-won/registry", (req, res) => {
+  const limit = Number.parseInt(String(req.query.limit || "200"), 10);
+  const offset = Number.parseInt(String(req.query.offset || "0"), 10);
+  const rows = listClosedWonCompanies(limit, offset);
+  const total = getClosedWonRegistryCount();
+
+  res.json({
+    total,
+    limit: Math.max(1, Math.min(limit || 200, 5000)),
+    offset: Math.max(0, offset || 0),
+    rows,
+  });
+});
+
+app.post("/api/closed-won/import", (req, res) => {
+  const source = String(req.body?.source || "closed_won_bulk_ingest").trim() || "closed_won_bulk_ingest";
+  const dryRun = req.body?.dry_run === true;
+  const markExisting = req.body?.mark_existing_closed_won !== false;
+  const rowsInput = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  const csvContent = typeof req.body?.csv_content === "string" ? req.body.csv_content : "";
+
+  const parsedRows = rowsInput && rowsInput.length > 0
+    ? rowsInput
+    : parseClosedWonRowsFromCsv(csvContent);
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    return res.status(400).json({
+      error: "Provide either rows[] or csv_content with company registration numbers.",
+    });
+  }
+
+  const upsertResult = dryRun
+    ? {
+      received: parsedRows.length,
+      stored: parsedRows.filter((row) => !!normalizeCompanyNumber(row?.company_number || row?.companyNumber || row?.number || row)).length,
+      skipped_invalid: parsedRows.filter((row) => !normalizeCompanyNumber(row?.company_number || row?.companyNumber || row?.number || row)).length,
+      source,
+      company_numbers: parsedRows
+        .map((row) => normalizeCompanyNumber(row?.company_number || row?.companyNumber || row?.number || row))
+        .filter(Boolean),
+    }
+    : upsertClosedWonCompanies(parsedRows, source);
+
+  let markedClosedWon = 0;
+  if (markExisting) {
+    for (const companyNumber of upsertResult.company_numbers || []) {
+      if (markCompanyClosedWon(companyNumber, "Closed-won registry import")) {
+        markedClosedWon += 1;
+      }
+    }
+  }
+
+  res.json({
+    dry_run: dryRun,
+    source,
+    received: upsertResult.received,
+    stored: upsertResult.stored,
+    skipped_invalid: upsertResult.skipped_invalid,
+    marked_closed_won_states: dryRun ? 0 : markedClosedWon,
+    total_registry_count: dryRun
+      ? getClosedWonRegistryCount()
+      : getClosedWonRegistryCount(),
+  });
+});
+
 app.get("/api/dashboard", (_req, res) => {
   const stats = getMonitorStats();
   const totalCompanies = getShortlistCount(getTurnoverThreshold());
@@ -974,7 +2036,8 @@ app.get("/api/dashboard", (_req, res) => {
     "£15M-£25M": { min: 15_000_000, max: 25_000_000, count: 0 },
   };
 
-  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 });
+  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 })
+    .filter((c) => !isSuppressed(`ch-${c.company_number}`, c.company_number).suppressed);
   const motionSummary = Object.fromEntries(VALID_MOTIONS.map((motion) => [motion, { count: 0, top_score: 0 }]));
 
   for (const c of topCompanies) {
@@ -1107,6 +2170,59 @@ function parseShortlistSortDir(rawSortDir) {
   return String(rawSortDir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
 }
 
+function parseShortlistDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function daysSinceShortlistDate(value) {
+  const parsed = parseShortlistDate(value);
+  if (!parsed) return null;
+  const delta = Date.now() - parsed.getTime();
+  return Math.max(0, Math.floor(delta / 86400000));
+}
+
+function deriveShortlistSourceType(source, latestFilingDate) {
+  const raw = String(source || "").trim().toLowerCase();
+  const filingAgeDays = daysSinceShortlistDate(latestFilingDate);
+
+  if (raw.includes("csv")) return "3";
+  if (raw.startsWith("daily:")) return "2";
+
+  if (raw.startsWith("monthly:")) {
+    if (filingAgeDays !== null && filingAgeDays > 120) return "1a";
+    return "1b";
+  }
+
+  if (raw.includes("backfill") || raw.includes("bulk")) return "1a";
+  if (raw.includes("scheduled")) return "1b";
+
+  return "unknown";
+}
+
+function deriveShortlistSourceFamily(sourceType) {
+  if (sourceType === "1a") return "monthly_bulk_backfill";
+  if (sourceType === "1b") return "monthly_scheduled";
+  if (sourceType === "2") return "twice_weekly_daily";
+  if (sourceType === "3") return "mid_market_csv";
+  return "unknown";
+}
+
+function deriveShortlistFilterReason(companyRow, suppression, analysisStatus, sourceType) {
+  if (suppression?.suppressed) return "suppressed_state";
+  if (companyRow?.below_threshold === 1) return "below_turnover_threshold";
+  if (analysisStatus === "failed") return "analysis_failed";
+  if (analysisStatus === "queued") return "analysis_queued";
+
+  if (sourceType === "3") return "source_3_csv";
+  if (sourceType === "2") return "source_2_twice_weekly";
+  if (sourceType === "1b") return "source_1b_monthly_scheduled";
+  if (sourceType === "1a") return "source_1a_bulk_backfill";
+
+  return "eligible";
+}
+
 function compareShortlistEntries(a, b, sortBy, sortDir) {
   const direction = sortDir === "asc" ? 1 : -1;
 
@@ -1206,11 +2322,14 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
     .map((c) => {
       const ws = getCompanyState(`ch-${c.company_number}`);
       const stored = getOrBuildMonitorScore(c.company_number);
-      const supp = isSuppressed(`ch-${c.company_number}`);
+      const supp = isSuppressed(`ch-${c.company_number}`, c.company_number);
       const queue = queueRows[c.company_number] || null;
       const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
       const analysis_status = deriveAnalysisStatus(queue, storedAnalysis);
       const priority = computePriorityBreakdown(c, stored, analysis_status);
+      const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
+      const sourceFamily = deriveShortlistSourceFamily(sourceType);
+      const filterReason = deriveShortlistFilterReason(c, supp, analysis_status, sourceType);
 
       return {
         company_number: c.company_number,
@@ -1226,6 +2345,9 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
         filing_count: c.filing_count || 0,
         latest_filing_date: c.latest_filing_date,
         analysis_status,
+        source_type: sourceType,
+        source_family: sourceFamily,
+        filter_reason: filterReason,
         suppressed: supp.suppressed,
       };
     })
@@ -1240,6 +2362,8 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
   const confidenceDistribution = countByBucket(entries, (entry) => normalizeDistributionKey(entry.confidence_level));
   const volatilityDistribution = countByBucket(entries, (entry) => normalizeDistributionKey(entry.volatility_band));
   const velocityDistribution = countByBucket(entries, (entry) => velocityBandFromScore(entry.velocity_score));
+  const sourceDistribution = countByBucket(entries, (entry) => normalizeDistributionKey(entry.source_type));
+  const filterReasonDistribution = countByBucket(entries, (entry) => normalizeDistributionKey(entry.filter_reason));
 
   const topWindow = entries.slice(0, topN);
   const topDoubleWindow = entries.slice(0, topN * 2);
@@ -1252,6 +2376,8 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
       confidence_distribution: confidenceDistribution,
       volatility_distribution: volatilityDistribution,
       velocity_distribution: velocityDistribution,
+      source_distribution: sourceDistribution,
+      filter_reason_distribution: filterReasonDistribution,
       top: summarizeTopWindow(topWindow, `top_${topN}`),
       top_double: summarizeTopWindow(topDoubleWindow, `top_${topN * 2}`),
       averages: {
@@ -1292,6 +2418,7 @@ app.get("/api/unified-shortlist", (req, res) => {
 
   const toQueue = [];
   for (const c of companies.slice(0, 250)) {
+    if (isClosedWonCompanyNumber(c.company_number)) continue;
     const queue = queueRows[c.company_number];
     if (queue?.status === "queued" || queue?.status === "processing") continue;
     const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
@@ -1314,12 +2441,15 @@ app.get("/api/unified-shortlist", (req, res) => {
       const ws = getCompanyState(`ch-${c.company_number}`);
       const segment = guessTurnoverSegment(c.latest_turnover);
       const stored = getOrBuildMonitorScore(c.company_number);
-      const supp = isSuppressed(`ch-${c.company_number}`);
+      const supp = isSuppressed(`ch-${c.company_number}`, c.company_number);
       const queue = queueRows[c.company_number] || null;
       const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
 
       const analysis_status = deriveAnalysisStatus(queue, storedAnalysis);
       const priority = computePriorityBreakdown(c, stored, analysis_status);
+      const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
+      const sourceFamily = deriveShortlistSourceFamily(sourceType);
+      const filterReason = deriveShortlistFilterReason(c, supp, analysis_status, sourceType);
 
       return {
         id: `ch-${c.company_number}`,
@@ -1340,6 +2470,9 @@ app.get("/api/unified-shortlist", (req, res) => {
         below_threshold: c.below_threshold === 1,
         scored: !!stored,
         source: c.source,
+        source_type: sourceType,
+        source_family: sourceFamily,
+        filter_reason: filterReason,
         suppressed: supp.suppressed,
         suppression_reason: supp.reason || null,
         analysis_status,
@@ -1414,7 +2547,7 @@ app.get("/api/shortlist", (req, res) => {
   for (const c of motionEligible) {
     const excl = isExcluded(c);
     if (excl.excluded) { excludedCount++; continue; }
-    const supp = isSuppressed(c.id);
+    const supp = isSuppressed(c.id, c.company_number);
     if (supp.suppressed) { suppressedCount++; if (show_suppressed !== "true") continue; }
     active.push(c);
   }
@@ -1430,7 +2563,7 @@ app.get("/api/shortlist", (req, res) => {
       const layers = fit.layers || {};
       const compositeScore = computeCompositeScore(layers);
       const ws = getCompanyState(c.id);
-      const supp = isSuppressed(c.id);
+      const supp = isSuppressed(c.id, c.company_number);
       return {
         id: c.id,
         name: c.name,
@@ -1481,10 +2614,11 @@ app.get("/api/company/:id", async (req, res) => {
       const segment = guessTurnoverSegment(monitored.latest_turnover);
       const chLink = `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`;
       const score = getStoredScore(companyNumber) || (allFilings.some((f) => f.raw_data) ? scoreCompany(companyNumber) : null);
-      const analysis = getSetting(`analysis_${companyNumber}`, null);
+      const rawAnalysis = getSetting(`analysis_${companyNumber}`, null);
+      const analysis = enrichAnalysisWithCompetitorSignals(rawAnalysis, score);
       const detailQueueRows = getAnalysisQueueItemsByCompanyNumbers([companyNumber]);
       const detailQueue = detailQueueRows[companyNumber] || null;
-      const analysisStatus = deriveAnalysisStatus(detailQueue, analysis);
+      const analysisStatus = deriveAnalysisStatus(detailQueue, rawAnalysis);
       let chargeSummary = getCompanyChargeSummary(companyNumber, null);
       if (!chargeSummary && isCompaniesHouseConfigured()) {
         const charges = await lookupCompanyCharges(companyNumber);
@@ -1493,7 +2627,7 @@ app.get("/api/company/:id", async (req, res) => {
           upsertCompanyChargeSummary(companyNumber, chargeSummary, "companies_house_api");
         }
       }
-      if (!analysis) {
+      if (!rawAnalysis && !isClosedWonCompanyNumber(companyNumber)) {
         enqueueCompanyForAnalysis({ company_number: companyNumber, company_name: monitored.company_name }, "detail_view_auto_seed");
         maybeKickShortlistAutoAnalysis(2);
       }
@@ -1569,6 +2703,11 @@ app.get("/api/company/:id", async (req, res) => {
 
   const ws = getCompanyState(id);
   const profile = computeCompanyProfile(company);
+  const rawAnalysis = getSetting(`analysis_${company.company_number}`, null);
+  const storedScore = getStoredScore(company.company_number) || scoreCompany(company.company_number);
+  const analysis = enrichAnalysisWithCompetitorSignals(rawAnalysis, storedScore);
+  const competitors = getProfileCompetitors(company.id, analysis, storedScore);
+  const analysisStatus = analysis ? "ready" : "none";
 
   if (product_motion && VALID_MOTIONS.includes(product_motion)) {
     const fit = company.product_fit[product_motion];
@@ -1592,11 +2731,12 @@ app.get("/api/company/:id", async (req, res) => {
         explanation: fit.explanation,
         workflow_state: ws.state,
         workflow_history: ws.history || [],
-        competitors: company.competitors || [],
+        competitors,
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
-        analysis_status: "ready",
+        analysis,
+        analysis_status: analysisStatus,
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -1626,11 +2766,12 @@ app.get("/api/company/:id", async (req, res) => {
         all_motion_scores: profile.motion_scores,
         workflow_state: ws.state,
         workflow_history: ws.history || [],
-        competitors: company.competitors || [],
+        competitors,
         stakeholders: company.stakeholders || [],
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
-        analysis_status: "ready",
+        analysis,
+        analysis_status: analysisStatus,
       },
     });
   }
@@ -1696,6 +2837,7 @@ async function buildMonitorReportEntries(topN = 20) {
   for (const company of monitoredCompanies) {
     const companyId = `ch-${company.company_number}`;
     const ws = getCompanyState(companyId);
+    if (isClosedWonCompanyNumber(company.company_number)) continue;
     if (["closed_won", "closed_lost"].includes(ws.state)) continue;
 
     const analysis = getSetting(`analysis_${company.company_number}`, null) || await analyseCompany(company.company_number, formatMonitorName(company.company_name, company.company_number), company.latest_turnover);
@@ -1730,6 +2872,7 @@ async function buildMonitorReportEntries(topN = 20) {
 function generateLegacyReportSnapshot(COMPANIES) {
   const entries = [];
   for (const company of COMPANIES) {
+    if (isClosedWonCompanyNumber(company.company_number)) continue;
     const ws = getCompanyState(company.id);
     if (["closed_won", "closed_lost"].includes(ws.state)) continue;
 
@@ -1782,6 +2925,7 @@ app.get("/api/reports/schedule", (_req, res) => {
   const nextRun = getNextSaturdayEvening();
   res.json({
     schedule: "Saturday evenings at 18:00",
+    timezone: UK_TIMEZONE,
     next_generation: nextRun.toISOString(),
     note: "Report will be ready for Sunday review before Monday outreach.",
   });
@@ -1951,10 +3095,20 @@ app.get("/api/companies-house/lookup/:number", async (req, res) => {
   const { number } = req.params;
   try {
     const includeCharges = String(req.query.include_charges || "true").toLowerCase() !== "false";
-    const data = await lookupCompany(number, { include_charges: includeCharges });
+    const includeOwnership = String(req.query.include_ownership || "true").toLowerCase() !== "false";
+    const data = await lookupCompany(number, {
+      include_charges: includeCharges,
+      include_ownership: includeOwnership,
+    });
     if (data.error) return res.status(data.status || 500).json(data);
     if (data?.charge_summary) {
       upsertCompanyChargeSummary(data.company_number, data.charge_summary, "companies_house_api");
+    }
+    if (data?.ownership_summary) {
+      setSetting(`ownership_${data.company_number}`, {
+        ...data.ownership_summary,
+        source: "companies_house_api",
+      });
     }
     res.json({ company: data });
   } catch (err) {
@@ -1984,13 +3138,408 @@ app.post("/api/import/csv", (req, res) => {
   });
 });
 
+const SOURCE3_HARD_NON_TRADING_STATUS_PATTERNS = [
+  /dissolved/i,
+  /liquidation/i,
+  /administration/i,
+  /receivership/i,
+  /struck\s*off/i,
+  /insolven/i,
+];
+
+const SOURCE3_SOFT_NON_TRADING_STATUS_PATTERNS = [
+  /dormant/i,
+  /non[-\s]?trading/i,
+  /inactive/i,
+];
+
+const SOURCE3_HOLDING_NAME_PATTERNS = [
+  /\bholdings?\b/i,
+  /\binvestments?\b/i,
+  /\bnominees?\b/i,
+  /\btrustees?\b/i,
+  /\bspv\b/i,
+  /special\s+purpose/i,
+  /\btreasury\b/i,
+];
+
+const SOURCE3_HOLDING_SIC_CODES = new Set([
+  "64201",
+  "64202",
+  "64203",
+  "64204",
+  "64205",
+  "64209",
+  "64301",
+  "64303",
+  "64304",
+  "64305",
+  "64306",
+]);
+
+const SOURCE3_STALE_MONTHS_THRESHOLD = 24;
+
+function parseDateSafe(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function monthsSinceDate(dateValue) {
+  const parsed = parseDateSafe(dateValue);
+  if (!parsed) return null;
+  const now = new Date();
+  const monthDelta = (now.getFullYear() - parsed.getFullYear()) * 12 + (now.getMonth() - parsed.getMonth());
+  return Math.max(0, monthDelta);
+}
+
+function parseSource3NumericHint(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getSource3LatestAccountsDate(chData) {
+  const fromAccounts = parseDateSafe(chData?.accounts?.last_accounts_made_up_to);
+  if (fromAccounts) return fromAccounts;
+
+  const recentFilings = Array.isArray(chData?.recent_filings) ? chData.recent_filings : [];
+  for (const filing of recentFilings) {
+    const parsed = parseDateSafe(filing?.date);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function normalizeSource3Assessment(assessment, overrides = {}) {
+  const merged = {
+    category: "operating",
+    confidence_tier: "low",
+    confidence_score: 0.2,
+    decision: "include",
+    reasons: [],
+    ...assessment,
+    ...overrides,
+  };
+
+  return {
+    ...merged,
+    confidence_score: Math.max(0, Math.min(Number(merged.confidence_score || 0), 0.99)),
+    reasons: Array.isArray(merged.reasons) ? merged.reasons.filter(Boolean) : [],
+  };
+}
+
+function classifySource3Entity(chData = {}) {
+  const status = String(chData?.status || "").toLowerCase();
+  const companyType = String(chData?.type || "").toLowerCase();
+  const name = String(chData?.name || "");
+  const lowerName = name.toLowerCase();
+  const sicCodes = Array.isArray(chData?.sic_codes)
+    ? chData.sic_codes.map((code) => String(code || "").trim())
+    : [];
+  const recentFilings = Array.isArray(chData?.recent_filings) ? chData.recent_filings : [];
+  const recentFilingText = recentFilings
+    .map((filing) => String(filing?.description || ""))
+    .join(" ")
+    .toLowerCase();
+  const turnoverHint = parseSource3NumericHint(chData?.turnover_hint);
+  const employeeHint = parseSource3NumericHint(chData?.employee_hint);
+  const hasZeroTurnover = turnoverHint !== null && turnoverHint <= 0;
+  const hasZeroEmployees = employeeHint !== null && employeeHint <= 0;
+  const hasDormantFilingSignal = /dormant|non[-\s]?trading/.test(recentFilingText);
+  const hasStrategicReportSignal = /strategic\s+report|accounts-with-accounts-type-full|group-accounts/.test(recentFilingText);
+
+  if (SOURCE3_HARD_NON_TRADING_STATUS_PATTERNS.some((pattern) => pattern.test(status))) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.95,
+      decision: "auto_filter",
+      reasons: [`Status indicates non-trading state (${status || "unknown"})`],
+    });
+  }
+
+  if (SOURCE3_SOFT_NON_TRADING_STATUS_PATTERNS.some((pattern) => pattern.test(status))) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.9,
+      decision: "auto_filter",
+      reasons: [`Status indicates likely non-trading state (${status || "unknown"})`],
+    });
+  }
+
+  if (hasDormantFilingSignal) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.92,
+      decision: "auto_filter",
+      reasons: ["Recent filing descriptions indicate dormant/non-trading accounts"],
+    });
+  }
+
+  const holdingNameMatches = SOURCE3_HOLDING_NAME_PATTERNS.filter((pattern) => pattern.test(lowerName));
+  const hasHoldingSic = sicCodes.some((code) => SOURCE3_HOLDING_SIC_CODES.has(code));
+
+  let holdingSignal = 0;
+  const holdingReasons = [];
+
+  if (hasHoldingSic) {
+    holdingSignal += 0.72;
+    holdingReasons.push("SIC profile maps to holding/investment activity");
+  }
+
+  if (holdingNameMatches.length > 0) {
+    holdingSignal += Math.min(0.5, holdingNameMatches.length * 0.22);
+    holdingReasons.push("Company name contains holding/SPV markers");
+  }
+
+  if (/\bholding\b|\bspv\b/.test(companyType)) {
+    holdingSignal += 0.2;
+    holdingReasons.push("Company type suggests a holding/SPV structure");
+  }
+
+  if (hasZeroTurnover && hasZeroEmployees) {
+    holdingSignal += 0.22;
+    holdingReasons.push("Source record shows zero turnover and zero employees");
+  }
+
+  if (hasStrategicReportSignal) {
+    holdingSignal -= 0.12;
+    holdingReasons.push("Recent filing profile includes strategic/full accounts signals");
+  }
+
+  const latestAccountsDate = getSource3LatestAccountsDate(chData);
+  const monthsSinceAccounts = latestAccountsDate ? monthsSinceDate(latestAccountsDate) : null;
+  const highConfidenceHoldingBundle = hasHoldingSic
+    && holdingNameMatches.length > 0
+    && hasZeroTurnover
+    && hasZeroEmployees
+    && !hasStrategicReportSignal;
+
+  if (highConfidenceHoldingBundle) {
+    return normalizeSource3Assessment({
+      category: "holding_spv",
+      confidence_tier: "high",
+      confidence_score: Math.max(holdingSignal, 0.9),
+      decision: "auto_filter",
+      reasons: holdingReasons,
+    });
+  }
+
+  if (holdingSignal >= 0.45) {
+    return normalizeSource3Assessment({
+      category: "holding_spv",
+      confidence_tier: "medium",
+      confidence_score: holdingSignal,
+      decision: "include_warn",
+      reasons: holdingReasons,
+    });
+  }
+
+  if (monthsSinceAccounts !== null && monthsSinceAccounts >= SOURCE3_STALE_MONTHS_THRESHOLD) {
+    return normalizeSource3Assessment({
+      category: "stale",
+      confidence_tier: "medium",
+      confidence_score: 0.55,
+      decision: "include_warn",
+      reasons: [`No recent filing signal (${monthsSinceAccounts} months since last accounts date)`],
+    });
+  }
+
+  return normalizeSource3Assessment({
+    category: "operating",
+    confidence_tier: "low",
+    confidence_score: 0.2,
+    decision: "include",
+    reasons: ["No high-confidence exclusion signal detected"],
+  });
+}
+
+function source3CategoryLabel(category) {
+  if (category === "non_trading") return "non-trading";
+  if (category === "holding_spv") return "holding/SPV";
+  if (category === "stale") return "stale/no recent filing";
+  return "operating";
+}
+
+function formatSource3AutoFilterDetail(assessment) {
+  const label = source3CategoryLabel(assessment.category);
+  const reason = assessment.reasons?.[0] || "high-confidence exclusion signal";
+  return `Source 3 auto-filtered (${label}, high confidence): ${reason}`;
+}
+
+function formatSource3IncludeDetail(segment, assessment) {
+  const label = source3CategoryLabel(assessment.category);
+  if (assessment.decision === "include_warn") {
+    return `Added as ${segment} (included with warning: ${label}, medium confidence)`;
+  }
+  return `Added as ${segment} (fail-open include: low confidence exclusion signals)`;
+}
+
+function buildSource3ImportedCompany(companyNumber, chData, assessment, options = {}) {
+  const importedAt = new Date().toISOString();
+  const normalizedAssessment = normalizeSource3Assessment(assessment, {
+    evaluated_at: importedAt,
+    override: !!options.override,
+    override_reason: options.overrideReason || null,
+  });
+
+  return {
+    id: `ch-${companyNumber}`,
+    name: displayNameForCompanyNumber(companyNumber, chData.name),
+    company_number: companyNumber,
+    industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
+    segment: guessTurnoverSegment(chData.turnover_hint),
+    turnover: chData.turnover_hint || 0,
+    employee_count: chData.employee_hint || 0,
+    latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}/filing-history`,
+    motions: [],
+    product_fit: {},
+    competitors: [],
+    stakeholders: [],
+    cadence_history: [],
+    response_propensity: { score: 0.3, warmth: "cold", signals: ["Imported from CSV - no engagement data"] },
+    source: options.source || chData.source,
+    imported_at: importedAt,
+    source3_assessment: normalizedAssessment,
+    source3_warning: normalizedAssessment.decision === "include_warn",
+  };
+}
+
+app.post("/api/import/source3/override", async (req, res) => {
+  const requestedNumber = normalizeCompanyNumber(req.body?.company_number);
+  if (!requestedNumber) {
+    return res.status(400).json({ error: "company_number is required" });
+  }
+
+  if (isClosedWonCompanyNumber(requestedNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and cannot be imported.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
+
+  const COMPANIES = loadCompanies();
+  const existing = COMPANIES.find((company) => normalizeCompanyNumber(company.company_number) === requestedNumber);
+  if (existing) {
+    return res.status(200).json({
+      success: true,
+      already_exists: true,
+      company: existing,
+    });
+  }
+
+  try {
+    const chData = await lookupCompany(requestedNumber, {
+      include_charges: true,
+      include_ownership: true,
+    });
+    if (chData?.error) {
+      return res.status(chData.status || 502).json({ error: chData.message || "Lookup failed" });
+    }
+
+    const baseAssessment = classifySource3Entity(chData);
+    const overrideReason = String(req.body?.reason || "manual_source3_override").trim();
+    const overrideAssessment = normalizeSource3Assessment(baseAssessment, {
+      decision: "manual_override_include",
+      reasons: [
+        ...(Array.isArray(baseAssessment?.reasons) ? baseAssessment.reasons : []),
+        `Manual override applied (${overrideReason})`,
+      ],
+    });
+
+    const importedCompany = buildSource3ImportedCompany(requestedNumber, chData, overrideAssessment, {
+      source: "source_3_csv_override",
+      override: true,
+      overrideReason,
+    });
+
+    COMPANIES.push(importedCompany);
+    saveCompanies(COMPANIES);
+
+    if (chData.charge_summary) {
+      upsertCompanyChargeSummary(requestedNumber, chData.charge_summary, "companies_house_api");
+    }
+    if (chData.ownership_summary) {
+      setSetting(`ownership_${requestedNumber}`, {
+        ...chData.ownership_summary,
+        source: "companies_house_api",
+      });
+    }
+
+    enqueueCompanyForAnalysis(
+      { company_number: requestedNumber, company_name: importedCompany.name },
+      "csv_import_override"
+    );
+
+    const jobId = String(req.body?.job_id || "").trim();
+    if (jobId && getImportJob(jobId)) {
+      addImportLogEntry(
+        jobId,
+        requestedNumber,
+        importedCompany.name,
+        "imported",
+        `Manual override include (previously ${source3CategoryLabel(baseAssessment.category)} high-confidence filter)`
+      );
+    }
+
+    return res.json({
+      success: true,
+      already_exists: false,
+      company: importedCompany,
+      source3_assessment: overrideAssessment,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 async function processCSVImport(jobId, companyNumbers) {
   let imported = 0, skipped = 0, errors = 0;
+  const source3Stats = {
+    auto_filtered_high_confidence: 0,
+    auto_filtered_non_trading: 0,
+    auto_filtered_holding_spv: 0,
+    included_with_warning: 0,
+    included_without_warning: 0,
+  };
+
+  const importJob = getImportJob(jobId);
+  const jobMetadata = {
+    ...(importJob?.metadata || {}),
+  };
   const COMPANIES = loadCompanies();
-  const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
+  const existingNumbers = new Set(
+    COMPANIES
+      .map((c) => normalizeCompanyNumber(c.company_number))
+      .filter(Boolean)
+  );
 
   for (let i = 0; i < companyNumbers.length; i++) {
-    const num = companyNumbers[i];
+    const num = normalizeCompanyNumber(companyNumbers[i]);
+    if (!num) {
+      addImportLogEntry(jobId, String(companyNumbers[i] || ""), null, "error", "Invalid company number format");
+      errors++;
+      updateImportJob(jobId, {
+        processed_items: i + 1,
+        imported_items: imported,
+        skipped_items: skipped,
+        error_count: errors,
+      });
+      continue;
+    }
+
+    if (isClosedWonCompanyNumber(num)) {
+      markCompanyClosedWon(num, "Closed-won registry matched during CSV import");
+      addImportLogEntry(jobId, num, null, "skipped", "Closed-won registry match - suppressed from active pipeline");
+      skipped++;
+      updateImportJob(jobId, { processed_items: i + 1, imported_items: imported, skipped_items: skipped, error_count: errors });
+      continue;
+    }
 
     if (existingNumbers.has(num)) {
       addImportLogEntry(jobId, num, null, "skipped", "Already exists in universe");
@@ -2000,41 +3549,67 @@ async function processCSVImport(jobId, companyNumbers) {
     }
 
     try {
-      const chData = await lookupCompany(num, { include_charges: true });
+      const chData = await lookupCompany(num, {
+        include_charges: true,
+        include_ownership: true,
+      });
       if (chData.error) {
         addImportLogEntry(jobId, num, null, "error", chData.message);
         errors++;
-      } else if (chData.status === "dissolved" || chData.status === "liquidation") {
-        addImportLogEntry(jobId, num, chData.name, "skipped", `Status: ${chData.status} (non-trading)`);
-        skipped++;
       } else {
-        const newCompany = {
-          id: `ch-${num}`,
-          name: displayNameForCompanyNumber(num, chData.name),
-          company_number: num,
-          industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
-          segment: guessTurnoverSegment(chData.turnover_hint),
-          turnover: chData.turnover_hint || 0,
-          employee_count: chData.employee_hint || 0,
-          latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${num}/filing-history`,
-          motions: [],
-          product_fit: {},
-          competitors: [],
-          stakeholders: [],
-          cadence_history: [],
-          response_propensity: { score: 0.3, warmth: "cold", signals: ["Imported from CSV — no engagement data"] },
-          source: chData.source,
-          imported_at: new Date().toISOString(),
-        };
+        const source3Assessment = classifySource3Entity(chData);
 
-        COMPANIES.push(newCompany);
-        existingNumbers.add(num);
-        if (chData.charge_summary) {
-          upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
+        if (source3Assessment.decision === "auto_filter") {
+          skipped++;
+          source3Stats.auto_filtered_high_confidence++;
+          if (source3Assessment.category === "non_trading") {
+            source3Stats.auto_filtered_non_trading++;
+          }
+          if (source3Assessment.category === "holding_spv") {
+            source3Stats.auto_filtered_holding_spv++;
+          }
+
+          addImportLogEntry(
+            jobId,
+            num,
+            chData.name,
+            "skipped",
+            formatSource3AutoFilterDetail(source3Assessment)
+          );
+        } else {
+          const newCompany = buildSource3ImportedCompany(num, chData, source3Assessment, {
+            source: chData.source,
+          });
+
+          COMPANIES.push(newCompany);
+          existingNumbers.add(num);
+          if (chData.charge_summary) {
+            upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
+          }
+          if (chData.ownership_summary) {
+            setSetting(`ownership_${num}`, {
+              ...chData.ownership_summary,
+              source: "companies_house_api",
+            });
+          }
+
+          if (source3Assessment.decision === "include_warn") {
+            source3Stats.included_with_warning++;
+          } else {
+            source3Stats.included_without_warning++;
+          }
+
+          addImportLogEntry(
+            jobId,
+            num,
+            newCompany.name,
+            "imported",
+            formatSource3IncludeDetail(newCompany.segment, source3Assessment),
+            newCompany.turnover
+          );
+          enqueueCompanyForAnalysis({ company_number: num, company_name: newCompany.name }, "csv_import");
+          imported++;
         }
-        addImportLogEntry(jobId, num, newCompany.name, "imported", `Added as ${newCompany.segment}`, newCompany.turnover);
-        enqueueCompanyForAnalysis({ company_number: num, company_name: newCompany.name }, "csv_import");
-        imported++;
       }
     } catch (err) {
       addImportLogEntry(jobId, num, null, "error", err.message);
@@ -2057,6 +3632,11 @@ async function processCSVImport(jobId, companyNumbers) {
     imported_items: imported,
     skipped_items: skipped,
     error_count: errors,
+    metadata: JSON.stringify({
+      ...jobMetadata,
+      source3_policy: "fail_open_confidence_tiers",
+      source3: source3Stats,
+    }),
   });
 }
 
@@ -2243,7 +3823,18 @@ async function runProcessRemainingBackfill(mode = "all", maxFiles = 0) {
           );
         }
 
-        const queued = enqueueCompaniesForAnalysis(result.companies || [], `bulk_remaining:${file.type}`);
+        const rawCompanies = Array.isArray(result.companies) ? result.companies : [];
+        const eligibleCompanies = [];
+        for (const row of rawCompanies) {
+          const normalized = normalizeCompanyNumber(row?.company_number);
+          if (normalized && isClosedWonCompanyNumber(normalized)) {
+            markCompanyClosedWon(normalized, "Closed-won registry matched during bulk backfill");
+            continue;
+          }
+          eligibleCompanies.push(row);
+        }
+
+        const queued = enqueueCompaniesForAnalysis(eligibleCompanies, `bulk_remaining:${file.type}`);
         if (queued.queued > 0) {
           await processAnalysisQueueBatch({ batchSize: Math.min(6, Math.max(2, queued.queued)) });
         }
@@ -2580,12 +4171,22 @@ app.post("/api/import/bulk/process", async (req, res) => {
       },
     });
 
+    const eligibleCompanies = [];
     for (const co of result.companies) {
+      const normalizedNumber = normalizeCompanyNumber(co.company_number);
+      if (normalizedNumber && isClosedWonCompanyNumber(normalizedNumber)) {
+        markCompanyClosedWon(normalizedNumber, "Closed-won registry matched during bulk import");
+        addImportLogEntry(jobId, normalizedNumber, co.company_name || null, "skipped", "Closed-won registry match — suppressed from active pipeline", co.turnover);
+        continue;
+      }
+
       addImportLogEntry(jobId, co.company_number, co.company_name || null, "imported",
         `£${(co.turnover / 1e6).toFixed(1)}M turnover (BS date: ${co.balance_sheet_date || "?"})`, co.turnover);
+      eligibleCompanies.push(co);
     }
 
-    const queued = enqueueCompaniesForAnalysis(result.companies, `bulk_import:${filename}`);
+    const suppressedByRegistry = Math.max(0, (result.companies?.length || 0) - eligibleCompanies.length);
+    const queued = enqueueCompaniesForAnalysis(eligibleCompanies, `bulk_import:${filename}`);
     if (queued.queued > 0) {
       await processAnalysisQueueBatch({ batchSize: 3 });
     }
@@ -2595,10 +4196,10 @@ app.post("/api/import/bulk/process", async (req, res) => {
       completed_at: new Date().toISOString(),
       total_items: result.total_files,
       processed_items: result.processed,
-      imported_items: result.qualifying,
-      skipped_items: result.below_threshold,
+      imported_items: eligibleCompanies.length,
+      skipped_items: (result.below_threshold || 0) + suppressedByRegistry,
       error_count: result.parse_errors,
-      metadata: JSON.stringify({ filename, url, analysis_queued: queued.queued }),
+      metadata: JSON.stringify({ filename, url, analysis_queued: queued.queued, suppressed_closed_won: suppressedByRegistry }),
     });
   } catch (err) {
     updateImportJob(jobId, {
@@ -2684,6 +4285,7 @@ app.get("/api/analysis-queue/status", (_req, res) => {
       queue_hard_cap: queueHardCap,
       queue_headroom: Math.max(0, queueSoftCap - queuedCount),
     },
+    tech_enrichment_seed: getTechEnrichmentSeedStatus(),
   });
 });
 
@@ -2701,6 +4303,17 @@ app.post("/api/analysis-queue/retry", async (req, res) => {
     const companyNumber = /^\d{1,8}$/.test(normalized)
       ? normalized.padStart(8, "0")
       : normalized;
+
+    if (isClosedWonCompanyNumber(companyNumber)) {
+      markCompanyClosedWon(companyNumber, "Retry blocked by closed-won registry");
+      return res.status(409).json({
+        retried: 0,
+        queued: 0,
+        company_number: companyNumber,
+        suppressed: true,
+        reason: "closed_won_registry",
+      });
+    }
 
     enqueueCompanyForAnalysis({ company_number: companyNumber }, "manual_retry");
     const processed = await processAnalysisQueueItem(companyNumber);
@@ -2725,10 +4338,12 @@ app.post("/api/analysis-queue/retry", async (req, res) => {
   }
 
   const queued = enqueueCompaniesForAnalysis(
-    failedItems.map((item) => ({
+    failedItems
+      .filter((item) => !isClosedWonCompanyNumber(item.company_number))
+      .map((item) => ({
       company_number: item.company_number,
       company_name: item.company_name,
-    })),
+      })),
     "manual_retry_bulk"
   );
 
@@ -2861,7 +4476,200 @@ app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
 import { analyseCompany, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
+  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4.1-mini" });
+});
+
+app.get("/api/integrations/status", (_req, res) => {
+  const hasConfiguredSecret = (value) => {
+    const key = String(value || "").trim();
+    if (!key) return false;
+    const lower = key.toLowerCase();
+    const looksPlaceholder = lower.startsWith("replace_")
+      || lower.startsWith("replace-")
+      || lower.startsWith("replace")
+      || lower.includes("replace_with")
+      || lower.includes("replacewith")
+      || lower.includes("your_api_key")
+      || lower.includes("optional_")
+      || lower.includes("example")
+      || lower === "changeme"
+      || lower === "change_me";
+    return !looksPlaceholder;
+  };
+  const hasTemplate = (value) => String(value || "").trim().length > 0;
+
+  const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
+
+  const integrations = {
+    companies_house: {
+      configured: isCompaniesHouseConfigured(),
+      required: true,
+      env_var: "COMPANIES_HOUSE_API_KEY or CH_API_KEY",
+      purpose: "Company lookups and filing-monitor refresh",
+    },
+    openai: {
+      configured: isLLMConfigured(),
+      required: true,
+      env_var: "OPENAI_API_KEY",
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      purpose: "Analysis enrichment and advanced email generation",
+    },
+    news_lookup: {
+      configured: newsLookupEnabled,
+      required: false,
+      env_var: "ENABLE_NEWS_LOOKUP",
+      purpose: "Supplementary momentum/news context",
+      default: "true",
+    },
+    news_api: {
+      configured: hasConfiguredSecret(process.env.NEWS_API_KEY),
+      required: false,
+      env_var: "NEWS_API_KEY",
+      purpose: "Optional premium news enrichment",
+    },
+    endole: {
+      configured: hasConfiguredSecret(process.env.ENDOLE_API_KEY) && hasTemplate(process.env.ENDOLE_URL_TEMPLATE),
+      required: false,
+      env_var: "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE",
+      purpose: "Ownership and corporate relationship enrichment",
+    },
+    opencorporates: {
+      configured: hasConfiguredSecret(process.env.OPENCORPORATES_API_TOKEN) && hasTemplate(process.env.OPENCORPORATES_URL_TEMPLATE),
+      required: false,
+      env_var: "OPENCORPORATES_API_TOKEN, OPENCORPORATES_URL_TEMPLATE",
+      purpose: "Cross-jurisdiction corporate registry enrichment",
+    },
+    similarweb: {
+      configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
+      required: false,
+      env_var: "SIMILARWEB_API_KEY, SIMILARWEB_URL_TEMPLATE",
+      purpose: "Traffic and digital growth enrichment",
+    },
+    builtwith: {
+      configured: hasConfiguredSecret(process.env.BUILTWITH_API_KEY) && hasTemplate(process.env.BUILTWITH_URL_TEMPLATE),
+      required: false,
+      env_var: "BUILTWITH_API_KEY, BUILTWITH_URL_TEMPLATE",
+      purpose: "Third-party website technology signals",
+    },
+    adzuna: {
+      configured: hasConfiguredSecret(process.env.ADZUNA_APP_ID)
+        && hasConfiguredSecret(process.env.ADZUNA_APP_KEY)
+        && hasTemplate(process.env.ADZUNA_URL_TEMPLATE),
+      required: false,
+      env_var: "ADZUNA_APP_ID, ADZUNA_APP_KEY, ADZUNA_URL_TEMPLATE",
+      purpose: "Hiring and vacancy velocity enrichment",
+    },
+    crunchbase: {
+      configured: hasConfiguredSecret(process.env.CRUNCHBASE_API_KEY) && hasTemplate(process.env.CRUNCHBASE_URL_TEMPLATE),
+      required: false,
+      env_var: "CRUNCHBASE_API_KEY, CRUNCHBASE_URL_TEMPLATE",
+      purpose: "Funding and investor event enrichment",
+    },
+    clearbit: {
+      configured: hasConfiguredSecret(process.env.CLEARBIT_API_KEY) && hasTemplate(process.env.CLEARBIT_URL_TEMPLATE),
+      required: false,
+      env_var: "CLEARBIT_API_KEY, CLEARBIT_URL_TEMPLATE",
+      purpose: "Firmographic and domain-level enrichment",
+    },
+    lusha: {
+      configured: hasConfiguredSecret(process.env.LUSHA_API_KEY),
+      required: false,
+      env_var: "LUSHA_API_KEY",
+      purpose: "Optional contact enrichment",
+    },
+    linkedin_research: {
+      configured: true,
+      required: false,
+      env_var: null,
+      purpose: "Search-link generation (no API key required)",
+    },
+    tech_enrichment: {
+      configured: true,
+      required: false,
+      env_var: "TECH_ENRICHMENT_TIMEOUT_MS, TECH_ENRICHMENT_MAX_PAGES, TECH_ENRICHMENT_REFRESH_DAYS, TECH_ENRICHMENT_DEEP_SCAN_MODE, TECH_ENRICHMENT_HIGH_VALUE_TURNOVER",
+      purpose: "Deterministic incumbent stack + website intelligence enrichment",
+      defaults: TECH_ENRICHMENT_RUNTIME,
+    },
+    tech_enrichment_scheduler: {
+      configured: TECH_ENRICHMENT_SEED_ENABLED,
+      required: false,
+      env_var: "TECH_ENRICHMENT_SEED_ENABLED, TECH_ENRICHMENT_SEED_INTERVAL_MS, TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS, TECH_ENRICHMENT_SEED_LIMIT, TECH_ENRICHMENT_SEED_MAX_REFRESH, TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE",
+      purpose: "Background refresh loop for stale/missing enrichment payloads on shortlist companies",
+    },
+  };
+
+  const missingRequired = Object.entries(integrations)
+    .filter(([, cfg]) => cfg.required && !cfg.configured)
+    .map(([name]) => name);
+
+  res.json({
+    integrations,
+    missing_required: missingRequired,
+    ready_for_production: missingRequired.length === 0,
+    env_template: [
+      "COMPANIES_HOUSE_API_KEY=your_companies_house_api_key",
+      "# Optional alias supported: CH_API_KEY=your_companies_house_api_key",
+      "OPENAI_API_KEY=your_openai_api_key",
+      "OPENAI_MODEL=gpt-4.1-mini",
+      "LUSHA_API_KEY=optional_lusha_key",
+      "ENABLE_NEWS_LOOKUP=true",
+      "NEWS_API_KEY=optional_newsapi_key",
+      "ENDOLE_API_KEY=optional_endole_key",
+      "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
+      "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
+      "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
+      "SIMILARWEB_API_KEY=optional_similarweb_key",
+      "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
+      "BUILTWITH_API_KEY=optional_builtwith_key",
+      "BUILTWITH_URL_TEMPLATE=https://example.com/builtwith?domain={company_domain}",
+      "ADZUNA_APP_ID=optional_adzuna_app_id",
+      "ADZUNA_APP_KEY=optional_adzuna_app_key",
+      "ADZUNA_URL_TEMPLATE=https://example.com/adzuna?company={company_name_encoded}",
+      "CRUNCHBASE_API_KEY=optional_crunchbase_key",
+      "CRUNCHBASE_URL_TEMPLATE=https://example.com/crunchbase?company={company_name_encoded}",
+      "CLEARBIT_API_KEY=optional_clearbit_key",
+      "CLEARBIT_URL_TEMPLATE=https://example.com/clearbit?domain={company_domain}",
+      "DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC=false",
+      "ANALYSIS_QUEUE_EXTERNAL_SIGNAL_SYNC=false",
+      "TECH_ENRICHMENT_DEEP_SCAN_MODE=auto",
+      "TECH_ENRICHMENT_HIGH_VALUE_TURNOVER=25000000",
+      "TECH_ENRICHMENT_SEED_ENABLED=true",
+      "TECH_ENRICHMENT_SEED_INTERVAL_MS=21600000",
+      "TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS=45000",
+      "TECH_ENRICHMENT_SEED_LIMIT=1200",
+      "TECH_ENRICHMENT_SEED_MAX_REFRESH=60",
+      "TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE=off",
+      "ANALYSIS_QUEUE_ENRICHMENT_DEEP_SCAN_MODE=off",
+    ],
+  });
+});
+
+app.post("/api/signals/sync/:number", async (req, res) => {
+  const companyNumber = normalizeCompanyNumber(req.params?.number);
+  if (!companyNumber) {
+    return res.status(400).json({ error: "valid company number is required" });
+  }
+
+  const monitored = getMonitoredCompany(companyNumber);
+  const companyName = String(req.body?.company_name || monitored?.company_name || "").trim();
+  const companyDomain = String(req.body?.company_domain || req.body?.domain || "").trim();
+
+  try {
+    const sync = await syncExternalSignals({
+      companyNumber,
+      companyName,
+      companyDomain,
+      timeoutMs: req.body?.timeout_ms,
+    });
+
+    if (!sync.updated && sync.status !== "no_connectors_configured") {
+      return res.status(502).json(sync);
+    }
+
+    return res.json(sync);
+  } catch (err) {
+    return res.status(500).json({ error: "External signal sync failed", detail: err?.message || "unknown_error" });
+  }
 });
 
 app.get("/api/integrations/status", (_req, res) => {
@@ -2951,16 +4759,72 @@ app.post("/api/llm/analyse", async (req, res) => {
     return res.status(400).json({ error: "company_number required" });
   }
 
+  if (isClosedWonCompanyNumber(companyNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and excluded from active analysis.",
+      suppressed: true,
+      company_number: companyNumber,
+      reason: "closed_won_registry",
+    });
+  }
+
   const monitored = getMonitoredCompany(companyNumber);
   const name = await resolveMonitorName(companyNumber, monitored?.company_name);
   const turnover = monitored?.latest_turnover || null;
+  const runEnrichment = parseBooleanInput(req.body?.run_enrichment, true);
+  const runExternalSignalSync = parseBooleanInput(req.body?.run_external_sync, DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC);
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+  let enrichment = null;
+  let externalSignalSync = null;
 
   try {
+    if (runEnrichment) {
+      try {
+        enrichment = await runCompanyTechEnrichment({
+          companyNumber,
+          companyName: name,
+          companyWebsite: toOptionalString(req.body?.company_website) || toOptionalString(req.body?.website),
+          companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+          turnover,
+          force: parseBooleanInput(req.body?.force_enrichment, false),
+          ...deepScanOptions,
+          maxPages: req.body?.max_pages,
+          refreshWindowDays: req.body?.refresh_window_days,
+        });
+      } catch (enrichmentErr) {
+        enrichment = {
+          status: "error",
+          updated: false,
+          error: enrichmentErr?.message || "enrichment_failed",
+        };
+      }
+    }
+
+    const ownership = await refreshOwnershipEnvelope(companyNumber);
+
+    if (runExternalSignalSync) {
+      externalSignalSync = await syncExternalSignals({
+        companyNumber,
+        companyName: name,
+        companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+        timeoutMs: req.body?.external_signal_timeout_ms,
+      });
+    }
+
     const analysis = await analyseCompany(companyNumber, name, turnover);
     setSetting(`analysis_${companyNumber}`, analysis);
     const baseScore = scoreCompany(companyNumber);
     const score = baseScore ? integrateAnalysis(baseScore, analysis) : null;
-    res.json({ company_number: companyNumber, company_name: name, analysis, score });
+    const enrichedAnalysis = enrichAnalysisWithCompetitorSignals(analysis, score);
+    res.json({
+      company_number: companyNumber,
+      company_name: name,
+      analysis: enrichedAnalysis,
+      score,
+      enrichment,
+      ownership,
+      external_signal_sync: externalSignalSync,
+    });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
   }
@@ -2971,16 +4835,19 @@ app.post("/api/llm/extract", async (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "Missing company_id" });
 
-  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  const companyNumber = normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(company_id)))
+    || company_id.replace("ch-", "");
   const monitored = getMonitoredCompany(companyNumber);
 
   try {
     const name = await resolveMonitorName(companyNumber, monitored?.company_name);
+    await refreshOwnershipEnvelope(companyNumber);
     const analysis = await analyseCompany(companyNumber, name, monitored?.latest_turnover);
     setSetting(`analysis_${companyNumber}`, analysis);
     const baseScore = scoreCompany(companyNumber);
-    if (baseScore) integrateAnalysis(baseScore, analysis);
-    res.json({ company_id, evidence: analysis });
+    const score = baseScore ? integrateAnalysis(baseScore, analysis) : null;
+    const enrichedAnalysis = enrichAnalysisWithCompetitorSignals(analysis, score);
+    res.json({ company_id, evidence: enrichedAnalysis });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
   }
@@ -2996,7 +4863,7 @@ app.get("/api/export/shortlist", (req, res) => {
     .filter((c) => {
       const excl = isExcluded(c);
       if (excl.excluded) return false;
-      const supp = isSuppressed(c.id);
+      const supp = isSuppressed(c.id, c.company_number);
       if (supp.suppressed) return false;
       return true;
     })
@@ -3271,13 +5138,57 @@ app.get("/api/email/templates", (_req, res) => {
   res.json({ templates, guidance });
 });
 
+app.get("/api/email/style-profile", (_req, res) => {
+  const stored = getStoredEmailStyleProfile();
+  res.json({
+    configured: !!(stored && stored.enabled),
+    profile: stored || {
+      enabled: false,
+      name: null,
+      description: null,
+      style_prompt: null,
+      voice_traits: [],
+      preferred_patterns: [],
+      avoid_patterns: [],
+      examples: [],
+      version: EMAIL_STYLE_PROFILE_VERSION,
+      updated_at: null,
+    },
+  });
+});
+
+app.put("/api/email/style-profile", (req, res) => {
+  const normalized = normalizeEmailStyleProfilePayload(req.body || {}, { allowEmpty: false });
+  if (!normalized) {
+    return res.status(400).json({
+      error: "Invalid style profile payload",
+      detail: "Provide at least one of: style_prompt, voice_traits, preferred_patterns, avoid_patterns, or examples. Set enabled=false to disable.",
+    });
+  }
+
+  setSetting(EMAIL_STYLE_PROFILE_SETTING_KEY, normalized);
+  res.json({
+    saved: true,
+    configured: normalized.enabled === true,
+    profile: normalized,
+  });
+});
+
 app.post("/api/email/generate", async (req, res) => {
   const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
   if (!company_id || !stakeholder_name) {
     return res.status(400).json({ error: "company_id and stakeholder_name are required" });
   }
 
-  const companyNumber = company_id.replace("ch-", "");
+  const companyNumber = normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(company_id)))
+    || company_id.replace("ch-", "");
+  if (isClosedWonCompanyNumber(companyNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and excluded from outreach sequencing.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
 
@@ -3291,6 +5202,7 @@ app.post("/api/email/generate", async (req, res) => {
 
   let analysis = getSetting(`analysis_${companyNumber}`, null);
   const autoMode = !motion || String(motion).toLowerCase() === "holistic narrative";
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {});
 
   if (!analysis || !analysis.level5_extraction) {
     try {
@@ -3314,8 +5226,17 @@ app.post("/api/email/generate", async (req, res) => {
         score,
         motion: null,
         merchantSpend: null,
-        preferredCadence: { steps: 3, delays: [0, 3, 7], strategy: "level5_compact3" },
+        styleProfile,
       });
+
+      if (advanced?.needs_enrichment) {
+        return res.status(422).json({
+          error: advanced.error,
+          dossier_tier: advanced.dossier_tier || "D",
+          needs_enrichment: true,
+          detail: advanced.detail || null,
+        });
+      }
 
       if (!advanced.error && Array.isArray(advanced.steps) && advanced.steps.length > 0) {
         const persisted = saveGeneratedSequence({
@@ -3335,10 +5256,21 @@ app.post("/api/email/generate", async (req, res) => {
             steps: persisted.steps,
             motion: persisted.motion,
             source: "advanced",
+            style_profile_applied: advanced.style_profile_applied === true,
+            style_profile_name: advanced.style_profile_name || null,
           });
         }
       }
     } catch (err) {
+      if (err?.preventTemplateFallback || err?.code === "EMAIL_RETRY_NEEDED") {
+        return res.status(503).json({
+          error: "Live email generation is temporarily unavailable. Please retry.",
+          retry_needed: true,
+          source: "advanced",
+          reason: err?.reason || null,
+          detail: err?.message || null,
+        });
+      }
       console.warn("email/generate: advanced path failed, falling back to templates:", err.message);
     }
   }
@@ -3372,6 +5304,18 @@ app.post("/api/email/sequences/:companyId/purge-placeholders", (req, res) => {
   res.json(result);
 });
 
+app.post("/api/email/sequences/:companyId/purge-broken", (req, res) => {
+  const dryRun = req.body?.dry_run === true;
+  const result = purgeBrokenSequencesForCompany(req.params.companyId, { dryRun });
+  res.json(result);
+});
+
+app.post("/api/email/sequences/purge-broken", (req, res) => {
+  const dryRun = req.body?.dry_run === true;
+  const result = purgeBrokenSequences({ dryRun });
+  res.json(result);
+});
+
 app.get("/api/email/sequence/:id", (req, res) => {
   const sequence = getSequence(req.params.id);
   if (!sequence) return res.status(404).json({ error: "Sequence not found" });
@@ -3380,20 +5324,38 @@ app.get("/api/email/sequence/:id", (req, res) => {
 
 app.patch("/api/email/sequence/:id/step/:stepNumber", (req, res) => {
   const { id, stepNumber } = req.params;
-  const { status, subject, body } = req.body;
+  const { status, subject, body, reviewed } = req.body;
+  const numericStep = parseInt(stepNumber, 10);
 
   if (status) {
-    updateStepStatus(id, parseInt(stepNumber), status);
+    updateStepStatus(id, numericStep, status);
   }
   if (subject !== undefined || body !== undefined) {
     const seq = getSequence(id);
     if (!seq) return res.status(404).json({ error: "Sequence not found" });
-    const step = seq.steps.find((s) => s.step_number === parseInt(stepNumber));
+    const step = seq.steps.find((s) => s.step_number === numericStep);
     if (!step) return res.status(404).json({ error: "Step not found" });
-    updateStepContent(id, parseInt(stepNumber), subject || step.subject, body || step.body);
+    updateStepContent(id, numericStep, subject || step.subject, body || step.body);
+  }
+
+  if (reviewed === true) {
+    markStepReviewed(id, numericStep);
   }
 
   res.json({ success: true });
+});
+
+app.post("/api/email/sequence/:id/step/:stepNumber/review", (req, res) => {
+  const { id, stepNumber } = req.params;
+  const seq = getSequence(id);
+  if (!seq) return res.status(404).json({ error: "Sequence not found" });
+
+  const numericStep = parseInt(stepNumber, 10);
+  const step = seq.steps.find((s) => s.step_number === numericStep);
+  if (!step) return res.status(404).json({ error: "Step not found" });
+
+  markStepReviewed(id, numericStep);
+  res.json({ success: true, sequence_id: id, step_number: numericStep, review_status: "reviewed" });
 });
 
 app.delete("/api/email/sequence/:id", (req, res) => {
@@ -3413,6 +5375,15 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     return res.status(400).json({ error: "company_id and stakeholder_name required" });
   }
 
+  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  if (isClosedWonCompanyNumber(companyNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and excluded from outreach sequencing.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
+
   if (!force) {
     const dupCheck = checkDuplicateContact(stakeholder_name, stakeholder_email, company_id);
     if (dupCheck.duplicate) {
@@ -3425,7 +5396,6 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     }
   }
 
-  const companyNumber = company_id.replace("ch-", "");
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
 
@@ -3439,6 +5409,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
 
   const analysis = getSetting(`analysis_${companyNumber}`, null);
   const score = getSetting(`score_${companyNumber}`, null);
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {});
 
   try {
     const result = await generateFullSequence({
@@ -3448,21 +5419,158 @@ app.post("/api/email/generate-advanced", async (req, res) => {
       score,
       motion: motion || null,
       merchantSpend: merchant_spend || null,
+      styleProfile,
     });
 
-    if (result.error) return res.status(400).json(result);
+    if (result.error) {
+      const statusCode = result.needs_enrichment ? 422 : 400;
+      return res.status(statusCode).json(result);
+    }
     registerActiveContact(stakeholder_name, stakeholder_email || null, company_id, result.archetype + "-" + Date.now());
     res.json(result);
   } catch (err) {
+    if (err?.preventTemplateFallback || err?.code === "EMAIL_RETRY_NEEDED") {
+      return res.status(503).json({
+        error: "Live email generation is temporarily unavailable. Please retry.",
+        retry_needed: true,
+        source: "advanced",
+        reason: err?.reason || null,
+        detail: err?.message || null,
+      });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/email/generate-advanced/shadow", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, motion, merchant_spend, preview_steps } = req.body;
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name required" });
+  }
+
+  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  if (isClosedWonCompanyNumber(companyNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and excluded from outreach sequencing.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
+
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {}, { forceStored: true });
+  if (!styleProfile) {
+    return res.status(400).json({
+      error: "No enabled style profile configured",
+      hint: "PUT /api/email/style-profile or provide style_profile in the request payload.",
+    });
+  }
+
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = {
+        id: company_id,
+        name: formatMonitorName(monitored.company_name, companyNumber),
+        company_number: companyNumber,
+        turnover: monitored.latest_turnover,
+        employee_count: 0,
+        industry: "—",
+        segment: "Mid-Market",
+      };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+  const preferredCadence = buildShadowPreviewCadence(preview_steps, req.body?.dossier_tier);
+
+  try {
+    const baseline = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: merchant_spend || null,
+      preferredCadence,
+      styleProfile: null,
+    });
+
+    const styled = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: merchant_spend || null,
+      preferredCadence,
+      styleProfile,
+    });
+
+    if (baseline?.error || styled?.error) {
+      return res.status(422).json({
+        error: "Unable to generate one or more shadow variants",
+        baseline_error: baseline?.error || null,
+        styled_error: styled?.error || null,
+        baseline,
+        styled,
+      });
+    }
+
+    const comparison = buildShadowSequenceComparison(baseline, styled);
+    res.json({
+      preview: {
+        steps: preferredCadence.steps,
+        dossier_tier: preferredCadence.dossier_tier,
+      },
+      style_profile: {
+        name: styleProfile.name || null,
+        enabled: true,
+      },
+      baseline,
+      styled,
+      comparison,
+    });
+  } catch (err) {
+    if (err?.preventTemplateFallback || err?.code === "EMAIL_RETRY_NEEDED") {
+      return res.status(503).json({
+        error: "Live shadow generation is temporarily unavailable. Please retry.",
+        retry_needed: true,
+        source: "advanced_shadow",
+        reason: err?.reason || null,
+        detail: err?.message || null,
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/email/validate", (req, res) => {
-  const { subject, body, is_initial } = req.body;
+  const {
+    subject,
+    body,
+    is_initial,
+    step_type,
+    followups_last_24h,
+    followups_last_7d,
+    assume_managed_footer,
+  } = req.body;
   if (!body) return res.status(400).json({ error: "body is required" });
 
-  const result = validateEmail({ subject: subject || "", body }, { isInitialOutreach: is_initial !== false });
+  const result = validateEmail(
+    { subject: subject || "", body },
+    {
+      isInitialOutreach: is_initial !== false,
+      stepType: step_type || null,
+      followupsLast24h: Number(followups_last_24h || 0),
+      followupsLast7d: Number(followups_last_7d || 0),
+      assumeManagedFooter: assume_managed_footer !== false,
+    }
+  );
   res.json(result);
 });
 
@@ -3470,7 +5578,7 @@ app.post("/api/email/check-exclusion", (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "company_id required" });
 
-  const companyNumber = company_id.replace("ch-", "");
+  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
 
@@ -3560,6 +5668,8 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   try {
     const context = await getSupplementaryContext({
       companyName,
+      companyWebsite: company?.website || company?.website_url || null,
+      companyDomain: company?.domain || company?.company_domain || null,
       analysis,
       filingText,
     });
@@ -3574,6 +5684,179 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   }
 });
 
+app.get("/api/company/:id/enrichment", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const includeData = parseBooleanInput(req.query.include_data, false);
+  const snapshot = getCompanyEnrichmentSnapshot(context.company_number, { includeData });
+
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    enrichment: snapshot,
+  });
+});
+
+app.post("/api/company/:id/enrichment/refresh", async (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+
+  try {
+    const result = await runCompanyTechEnrichment({
+      companyNumber: context.company_number,
+      companyName: context.company_name,
+      companyWebsite: context.company_website,
+      companyDomain: context.company_domain,
+      turnover: context.turnover,
+      force: parseBooleanInput(req.body?.force, false),
+      ...deepScanOptions,
+      maxPages: req.body?.max_pages,
+      refreshWindowDays: req.body?.refresh_window_days,
+      timeoutMs: req.body?.timeout_ms,
+    });
+
+    const baseScore = scoreCompany(context.company_number);
+    const storedAnalysis = getSetting(`analysis_${context.company_number}`, null);
+    const score = baseScore
+      ? (storedAnalysis ? integrateAnalysis(baseScore, storedAnalysis) : baseScore)
+      : null;
+
+    const snapshot = getCompanyEnrichmentSnapshot(context.company_number, { includeData: false });
+
+    res.json({
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      company_name: context.company_name,
+      enrichment_run: result,
+      enrichment: snapshot,
+      score,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to refresh enrichment", detail: err.message });
+  }
+});
+
+app.post("/api/enrichment/tech-stack/batch", async (req, res) => {
+  const force = parseBooleanInput(req.body?.force, false);
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+  const limit = Math.max(1, Math.min(Number.parseInt(String(req.body?.limit || "25"), 10) || 25, 200));
+
+  const requested = Array.isArray(req.body?.companies) ? req.body.companies : null;
+  const targets = [];
+
+  if (requested && requested.length > 0) {
+    for (const item of requested.slice(0, limit)) {
+      const candidate = typeof item === "string"
+        ? { company_number: item }
+        : (item || {});
+      const candidateId = candidate.company_id || candidate.id || candidate.company_number;
+      if (!candidateId) continue;
+
+      const context = resolveCompanyContextForEnrichment(candidateId, candidate);
+      if (!context) {
+        targets.push({
+          company_number: String(candidate.company_number || candidateId),
+          company_name: toOptionalString(candidate.company_name) || null,
+          company_website: toOptionalString(candidate.company_website || candidate.website),
+          company_domain: toOptionalString(candidate.company_domain || candidate.domain),
+          turnover: toOptionalNumber(candidate.turnover),
+          unresolved: true,
+        });
+        continue;
+      }
+      targets.push(context);
+    }
+  } else {
+    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+    for (const company of shortlist) {
+      targets.push({
+        canonical_id: `ch-${company.company_number}`,
+        company_number: company.company_number,
+        company_name: formatMonitorName(company.company_name, company.company_number),
+        company_website: null,
+        company_domain: null,
+        turnover: company.latest_turnover || null,
+        monitored: company,
+      });
+    }
+  }
+
+  const results = [];
+  let updated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const target of targets.slice(0, limit)) {
+    if (target.unresolved) {
+      skipped += 1;
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: "unresolved_company",
+        updated: false,
+      });
+      continue;
+    }
+
+    try {
+      const run = await runCompanyTechEnrichment({
+        companyNumber: target.company_number,
+        companyName: target.company_name,
+        companyWebsite: target.company_website,
+        companyDomain: target.company_domain,
+        turnover: target.turnover,
+        force,
+        ...deepScanOptions,
+        maxPages: req.body?.max_pages,
+        refreshWindowDays: req.body?.refresh_window_days,
+        timeoutMs: req.body?.timeout_ms,
+      });
+
+      if (run.updated) {
+        updated += 1;
+        const baseScore = scoreCompany(target.company_number);
+        const storedAnalysis = getSetting(`analysis_${target.company_number}`, null);
+        if (baseScore && storedAnalysis) {
+          integrateAnalysis(baseScore, storedAnalysis);
+        }
+      } else {
+        skipped += 1;
+      }
+
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: run.status,
+        updated: run.updated === true,
+        technologies: Array.isArray(run.technologies) ? run.technologies.slice(0, 10) : [],
+        site_currencies: Array.isArray(run.site_currencies) ? run.site_currencies.slice(0, 8) : [],
+      });
+    } catch (err) {
+      failed += 1;
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: "error",
+        updated: false,
+        error: err.message,
+      });
+    }
+  }
+
+  res.json({
+    requested: requested ? requested.length : targets.length,
+    processed: results.length,
+    updated,
+    skipped,
+    failed,
+    results,
+  });
+});
+
 // --- YAMM Export & Sequence Management ---
 
 app.get("/api/email/export/csv/:sequenceId", (req, res) => {
@@ -3581,9 +5864,15 @@ app.get("/api/email/export/csv/:sequenceId", (req, res) => {
     startDate: req.query.start_date,
     senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
     title: req.query.title || "Account Executive",
-    sendTime: req.query.send_time || "08:30",
+    sendTime: req.query.send_time || "08:37",
   });
   if (!exported) return res.status(404).json({ error: "Sequence not found" });
+  if (exported.blocked) {
+    return res.status(409).json({
+      error: "Manual review required before CSV export",
+      detail: exported.metadata,
+    });
+  }
 
   const csv = generateCSV(exported.rows);
   res.setHeader("Content-Type", "text/csv");
@@ -3596,9 +5885,15 @@ app.get("/api/email/export/json/:sequenceId", (req, res) => {
     startDate: req.query.start_date,
     senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
     title: req.query.title || "Account Executive",
-    sendTime: req.query.send_time || "08:30",
+    sendTime: req.query.send_time || "08:37",
   });
   if (!exported) return res.status(404).json({ error: "Sequence not found" });
+  if (exported.blocked) {
+    return res.status(409).json({
+      error: "Manual review required before export",
+      metadata: exported.metadata,
+    });
+  }
 
   res.json({
     metadata: exported.metadata,
@@ -3608,12 +5903,13 @@ app.get("/api/email/export/json/:sequenceId", (req, res) => {
 });
 
 app.get("/api/email/export/company/:companyId", (req, res) => {
-  const rows = exportMultipleSequencesForYAMM(req.params.companyId, {
+  const exported = exportMultipleSequencesForYAMM(req.params.companyId, {
     startDate: req.query.start_date,
     senderName: req.query.sender_name || getSetting("sender_name", "[Your Name]"),
     title: req.query.title || "Account Executive",
-    sendTime: req.query.send_time || "08:30",
+    sendTime: req.query.send_time || "08:37",
   });
+  const rows = exported.rows || [];
 
   if (req.query.format === "csv") {
     const csv = generateCSV(rows);
@@ -3625,6 +5921,7 @@ app.get("/api/email/export/company/:companyId", (req, res) => {
   res.json({
     total_emails: rows.length,
     needs_email: rows.filter((r) => r.needs_email).length,
+    blocked_sequences: exported.blocked_sequences || [],
     sheets_data: generateGoogleSheetsJSON(rows),
   });
 });
@@ -3710,21 +6007,20 @@ if (fs.existsSync(frontendDist)) {
 // --- Weekly Report Auto-Generation (Saturday evenings) ---
 
 function getNextSaturdayEvening() {
-  const now = new Date();
-  const day = now.getDay();
-  const daysUntilSaturday = day === 6 ? 0 : 6 - day;
-  const next = new Date(now);
-  next.setDate(now.getDate() + daysUntilSaturday);
-  next.setHours(18, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 7);
-  return next;
+  return getNextWeeklyZonedRun({
+    timeZone: UK_TIMEZONE,
+    targetWeekday: 6,
+    hour: 18,
+    minute: 0,
+    second: 0,
+  });
 }
 
 function scheduleWeeklyReport() {
   const nextRun = getNextSaturdayEvening();
   const delay = nextRun.getTime() - Date.now();
 
-  console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
+  console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (${UK_TIMEZONE} Saturday 18:00, in ${Math.round(delay / 3600000)}h)`);
 
   setTimeout(async () => {
     await generateAndSaveWeeklyReport();
@@ -3767,6 +6063,18 @@ app.listen(PORT, () => {
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
   console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
+
+  if (LIGHTWEIGHT_RUNTIME) {
+    console.log("Runtime profile: lightweight (background workers/schedulers disabled)");
+    console.log("Analysis queue: disabled in lightweight runtime");
+    console.log("Analysis auto-seed: disabled in lightweight runtime");
+    console.log("Tech enrichment auto-refresh: disabled in lightweight runtime");
+    console.log("Daily auto-pull: disabled in lightweight runtime");
+    console.log("Stale filing monitor: disabled in lightweight runtime");
+    console.log("Backfill autorun: disabled in lightweight runtime");
+    return;
+  }
+
   const queueStatus = startAnalysisQueueWorker();
   console.log(`Analysis queue: enabled (${queueStatus.batch_size} per batch every ${queueStatus.interval_ms}ms), recovered ${queueStatus.recovered_processing_items} in-flight items`);
 
@@ -3778,12 +6086,21 @@ app.listen(PORT, () => {
   const seederStatus = startShortlistBackgroundSeeder();
   console.log(`Analysis auto-seed: enabled (${seederStatus.max_enqueue} max queued every ${seederStatus.interval_ms}ms, queue soft/hard cap ${seederStatus.queue_soft_cap}/${seederStatus.queue_hard_cap})`);
 
+  const techEnrichmentSeederStatus = startTechEnrichmentSeeder();
+  if (techEnrichmentSeederStatus.enabled) {
+    console.log(
+      `Tech enrichment auto-refresh: enabled (${techEnrichmentSeederStatus.max_refresh} max refresh every ${techEnrichmentSeederStatus.interval_ms}ms, deep scan mode ${techEnrichmentSeederStatus.deep_scan_mode})`
+    );
+  } else {
+    console.log("Tech enrichment auto-refresh: disabled (set TECH_ENRICHMENT_SEED_ENABLED=true to enable)");
+  }
+
   scheduleWeeklyReport();
   startAutoPull();
   startStaleFilingMonitor();
   const backfillAutorun = startBackfillAutorun();
-  console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);
-  console.log(`Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)`);
+  console.log("Daily auto-pull: enabled (checking every 12 hours for new CH files)");
+  console.log("Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)");
   if (backfillAutorun.enabled) {
     console.log(
       `Backfill autorun: enabled (normal ${backfillAutorun.max_files} file(s) every ${Math.round(backfillAutorun.interval_ms / 60000)}m, catch-up ${backfillAutorun.catchup_max_files} file(s) every ${Math.round(backfillAutorun.catchup_interval_ms / 60000)}m when pending >= ${backfillAutorun.backlog_threshold})`

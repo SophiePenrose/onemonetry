@@ -1,0 +1,47 @@
+{
+  "data": {
+    "company": {
+      "shareholders": [
+        {
+          "name": "Global Parent BV",
+          "type": "corporate entity",
+          "country_registered": "Netherlands",
+          "governing_law": "Laws of the Netherlands",
+          "share_percent": 62,
+          "registration_number": "NL12345"
+        },
+        {
+          "name": "Founder Individual",
+          "type": "person",
+          "country_registered": "United Kingdom",
+          "share_percent": 20
+        }
+      ],
+      "jobs": [
+        { "title": "Treasury Manager" },
+        { "title": "Finance Director" }
+      ]
+    },
+    "website": {
+      "technologies": [
+        { "name": "Stripe" },
+        { "name": "Xero" },
+        { "name": "Shopify" }
+      ],
+      "monthly_visits": 180000
+    },
+    "traffic": {
+      "geography": [
+        { "country": "UK", "share": 0.54 },
+        { "country": "US", "share": 0.21 },
+        { "country": "DE", "share": 0.11 }
+      ],
+      "estimated_ad_spend": 38000
+    },
+    "reviews": {
+      "count": 140,
+      "payment_related_complaints": 7,
+      "checkout_related_complaints": 4
+    }
+  }
+}

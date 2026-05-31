@@ -22,6 +22,19 @@ db.exec(`
     body TEXT NOT NULL,
     send_delay_days INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
+    step_type TEXT NOT NULL DEFAULT 'follow_up',
+    send_condition TEXT NOT NULL DEFAULT 'always',
+    requires_manual_review INTEGER NOT NULL DEFAULT 1,
+    review_status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_at TEXT,
+    edited_at TEXT,
+    edit_count INTEGER NOT NULL DEFAULT 0,
+    qc_score REAL,
+    qc_pass INTEGER,
+    qc_issues_json TEXT,
+    qc_metrics_json TEXT,
+    quality_gates_json TEXT,
+    voice_percent REAL,
     sent_at TEXT,
     opened_at TEXT,
     replied_at TEXT,
@@ -33,6 +46,53 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sequences_company ON email_sequences(company_id);
   CREATE INDEX IF NOT EXISTS idx_steps_sequence ON email_steps(sequence_id);
 `);
+
+function ensureEmailStepsSchema() {
+  const columns = db.prepare("PRAGMA table_info(email_steps)").all();
+  const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has("step_type")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN step_type TEXT NOT NULL DEFAULT 'follow_up'");
+  }
+  if (!names.has("send_condition")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN send_condition TEXT NOT NULL DEFAULT 'always'");
+  }
+  if (!names.has("requires_manual_review")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN requires_manual_review INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!names.has("review_status")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!names.has("reviewed_at")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN reviewed_at TEXT");
+  }
+  if (!names.has("edited_at")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN edited_at TEXT");
+  }
+  if (!names.has("edit_count")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.has("qc_score")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_score REAL");
+  }
+  if (!names.has("qc_pass")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_pass INTEGER");
+  }
+  if (!names.has("qc_issues_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_issues_json TEXT");
+  }
+  if (!names.has("qc_metrics_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_metrics_json TEXT");
+  }
+  if (!names.has("quality_gates_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN quality_gates_json TEXT");
+  }
+  if (!names.has("voice_percent")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN voice_percent REAL");
+  }
+}
+
+ensureEmailStepsSchema();
 
 const SEQUENCE_TEMPLATES = {
   FX: {
@@ -298,6 +358,135 @@ function stripSignatureAndFooterForYamm(text) {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function compactWhitespace(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function comparableSentence(value) {
+  return compactWhitespace(value).toLowerCase().replace(/[^a-z0-9\s]/g, "");
+}
+
+function ensureSentenceEnding(value) {
+  const text = compactWhitespace(value);
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function extractLastQuestionLine(text) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (let idx = lines.length - 1; idx >= 0; idx -= 1) {
+    if (lines[idx].endsWith("?")) return lines[idx];
+  }
+  return "";
+}
+
+function extractFindingsFrameworkSections(source) {
+  const paragraphs = String(source || "")
+    .replace(/\r/g, "")
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  let observation = "";
+  let origin = "";
+  let pain = "";
+  let valuePath = "";
+  let question = "";
+
+  for (const paragraph of paragraphs) {
+    if (/^Observation\s*(?:&|and)\s*Origin:/i.test(paragraph)) {
+      const raw = paragraph.replace(/^Observation\s*(?:&|and)\s*Origin:\s*/i, "").trim();
+      const parts = raw.split(/Origin evidence:\s*/i);
+      observation = observation || parts[0] || "";
+      if (parts.length > 1) {
+        origin = origin || parts.slice(1).join(" ").trim();
+      }
+      continue;
+    }
+
+    if (/^Main\s+Pain\s+Link:/i.test(paragraph)) {
+      pain = pain || paragraph.replace(/^Main\s+Pain\s+Link:\s*/i, "").trim();
+      continue;
+    }
+
+    if (/^Value\s+Path(?:\s*\(Suggestions\))?:/i.test(paragraph)) {
+      valuePath = valuePath || paragraph.replace(/^Value\s+Path(?:\s*\(Suggestions\))?:\s*/i, "").trim();
+      continue;
+    }
+
+    if (paragraph.endsWith("?")) {
+      question = paragraph;
+    }
+  }
+
+  if (!question) {
+    question = extractLastQuestionLine(source);
+  }
+
+  const hasFrameworkLabels = /Observation\s*(?:&|and)\s*Origin:|Main\s+Pain\s+Link:|Value\s+Path(?:\s*\(Suggestions\))?:/i.test(source);
+
+  return {
+    hasFrameworkLabels,
+    observation,
+    origin,
+    pain,
+    valuePath,
+    question,
+  };
+}
+
+export function normalizeEmailBodyForOutbound(body, options = {}) {
+  const source = String(body || "").replace(/\r/g, "").trim();
+  if (!source) return "";
+
+  const sections = extractFindingsFrameworkSections(source);
+  if (!sections.hasFrameworkLabels) {
+    return source.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  const companyName = String(options.companyName || "").trim();
+  const fallbackObservation = companyName
+    ? `From ${companyName}'s latest filing, one operational signal stands out`
+    : "From the latest filing, one operational signal stands out";
+
+  const observationSentence = ensureSentenceEnding(sections.observation || fallbackObservation);
+  const originSentence = ensureSentenceEnding(sections.origin || "");
+  const intro = [observationSentence]
+    .concat(
+      originSentence
+      && comparableSentence(originSentence) !== comparableSentence(observationSentence)
+        ? [originSentence]
+        : []
+    )
+    .filter(Boolean)
+    .join(" ");
+
+  const pain = ensureSentenceEnding(sections.pain || "That likely creates avoidable cost, delay, or reconciliation friction for the finance team");
+  const valuePath = ensureSentenceEnding(sections.valuePath || "A scoped first step can usually run in parallel with your existing setup before any broader change");
+  const questionRaw = compactWhitespace(sections.question || "Would it be useful if I shared the assumptions behind that view?");
+  const question = questionRaw
+    ? (questionRaw.endsWith("?") ? questionRaw : `${questionRaw.replace(/[.!]+$/, "")}?`)
+    : "";
+
+  let normalized = [intro, pain, valuePath, question]
+    .filter(Boolean)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const firstName = compactWhitespace(options.stakeholderName || "").split(" ")[0] || "";
+  const stepType = String(options.stepType || "").toLowerCase();
+  if (firstName && stepType !== "nudge_1" && stepType !== "nudge_2" && !/^(hi|hello|dear)\b/i.test(normalized)) {
+    normalized = `Hi ${firstName},\n\n${normalized}`;
+  }
+
+  return normalized;
+}
+
 export function getSequenceTemplates() {
   return [HOLISTIC_MOTION, ...Object.keys(SEQUENCE_TEMPLATES)];
 }
@@ -391,20 +580,58 @@ function buildHolisticSteps(params) {
   }));
 }
 
-function normalizeSteps(steps) {
+function inferStepType(stepNumber, totalSteps) {
+  if (stepNumber === 1) return "proof";
+  if (totalSteps >= 6) {
+    if (stepNumber === 2) return "nudge_1";
+    if (stepNumber === 3) return "depth";
+    if (stepNumber === 4) return "nudge_2";
+    if (stepNumber === 5) return "provocation";
+    if (stepNumber === 6) return "close";
+  }
+  if (stepNumber === totalSteps) return "close";
+  return "depth";
+}
+
+function normalizeSteps(steps, options = {}) {
+  const totalSteps = (steps || []).length || 1;
   return (steps || [])
     .map((step, idx) => {
       const stepNumber = Number.parseInt(String(step.step_number || idx + 1), 10);
       const delay = Number.parseInt(String(step.send_delay_days || 0), 10);
-      const safeBody = stripSignatureAndFooterForYamm(String(step.body || "").trim());
+      const resolvedStepType = String(step.step_type || inferStepType(stepNumber || (idx + 1), totalSteps));
+      const safeBody = normalizeEmailBodyForOutbound(
+        stripSignatureAndFooterForYamm(String(step.body || "").trim()),
+        {
+          ...options,
+          stepType: resolvedStepType,
+        }
+      );
       const footer = stripSignatureAndFooterForYamm(String(step.footer || "").trim());
       const mergedBody = [safeBody, footer].filter(Boolean).join("\n\n").trim();
+      const editCount = Number.parseInt(String(step.edit_count || 0), 10);
+      const qcScore = Number(step.qc_score);
+      const voicePercent = Number(step.voice_percent ?? step.metrics?.voice_percent);
+      const qcPassValue = step.qc_pass;
       return {
         step_number: Number.isFinite(stepNumber) && stepNumber > 0 ? stepNumber : idx + 1,
         subject: String(step.subject || "").trim() || `Step ${idx + 1}`,
         body: mergedBody,
         send_delay_days: Number.isFinite(delay) && delay >= 0 ? delay : 0,
         status: String(step.status || "pending"),
+        step_type: resolvedStepType,
+        send_condition: String(step.send_condition || "always"),
+        requires_manual_review: step.requires_manual_review === false ? 0 : 1,
+        review_status: String(step.review_status || "pending"),
+        reviewed_at: step.reviewed_at || null,
+        edited_at: step.edited_at || null,
+        edit_count: Number.isFinite(editCount) && editCount >= 0 ? editCount : 0,
+        qc_score: Number.isFinite(qcScore) ? qcScore : null,
+        qc_pass: qcPassValue === 1 || qcPassValue === true ? 1 : qcPassValue === 0 || qcPassValue === false ? 0 : null,
+        qc_issues: Array.isArray(step.qc_issues) ? step.qc_issues : [],
+        qc_metrics: step.metrics && typeof step.metrics === "object" ? step.metrics : {},
+        quality_gates: step.quality_gates && typeof step.quality_gates === "object" ? step.quality_gates : null,
+        voice_percent: Number.isFinite(voicePercent) ? voicePercent : null,
       };
     })
     .sort((a, b) => a.step_number - b.step_number);
@@ -424,7 +651,7 @@ export function saveGeneratedSequence(params) {
   } = params;
 
   const fixedSubject = companyName ? buildResearchHeaderSubject(companyName) : null;
-  const normalizedSteps = normalizeSteps(steps).map((step) => ({
+  const normalizedSteps = normalizeSteps(steps, { companyName, stakeholderName }).map((step) => ({
     ...step,
     subject: fixedSubject || step.subject,
   }));
@@ -448,9 +675,49 @@ export function saveGeneratedSequence(params) {
 
   for (const step of normalizedSteps) {
     db.prepare(`
-      INSERT INTO email_steps (sequence_id, step_number, subject, body, send_delay_days, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(sequenceId, step.step_number, step.subject, step.body, step.send_delay_days, step.status || "pending");
+      INSERT INTO email_steps (
+        sequence_id,
+        step_number,
+        subject,
+        body,
+        send_delay_days,
+        status,
+        step_type,
+        send_condition,
+        requires_manual_review,
+        review_status,
+        reviewed_at,
+        edited_at,
+        edit_count,
+        qc_score,
+        qc_pass,
+        qc_issues_json,
+        qc_metrics_json,
+        quality_gates_json,
+        voice_percent
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sequenceId,
+      step.step_number,
+      step.subject,
+      step.body,
+      step.send_delay_days,
+      step.status || "pending",
+      step.step_type || "follow_up",
+      step.send_condition || "always",
+      step.requires_manual_review === 0 ? 0 : 1,
+      step.review_status || "pending",
+      step.reviewed_at || null,
+      step.edited_at || null,
+      step.edit_count || 0,
+      step.qc_score,
+      step.qc_pass,
+      JSON.stringify(step.qc_issues || []),
+      JSON.stringify(step.qc_metrics || {}),
+      JSON.stringify(step.quality_gates || null),
+      step.voice_percent
+    );
   }
 
   return { id: sequenceId, steps: normalizedSteps, motion: resolvedMotion };
@@ -486,12 +753,19 @@ export function generateSequence(params) {
     ? ` (${analysis.international_exposure.details})`
     : "";
 
-  const painHook = analysis?.pain_indicators?.length > 0
-    ? `I also noticed ${analysis.pain_indicators[0].pain.toLowerCase()} — something we help similar businesses address directly.`
+  const firstPain = Array.isArray(analysis?.pain_indicators) ? analysis.pain_indicators[0] : null;
+  const firstPainText = typeof firstPain === "string"
+    ? firstPain
+    : (firstPain?.pain || firstPain?.indicator || "");
+  const painHook = firstPainText
+    ? `I also noticed ${String(firstPainText).toLowerCase()} — something we help similar businesses address directly.`
     : "";
 
-  const competitorAngle = analysis?.competitors_detected?.length > 0
-    ? `I understand you may currently work with ${analysis.competitors_detected[0].name}. Many of our clients switched from similar providers and typically see ${analysis.competitors_detected[0].displacement_angle?.toLowerCase() || "meaningful improvement"}.`
+  const firstCompetitor = Array.isArray(analysis?.competitors_detected) ? analysis.competitors_detected[0] : null;
+  const competitorName = typeof firstCompetitor === "string" ? firstCompetitor : firstCompetitor?.name;
+  const competitorDisplacement = typeof firstCompetitor === "string" ? "" : firstCompetitor?.displacement_angle;
+  const competitorAngle = competitorName
+    ? `I understand you may currently work with ${competitorName}. Many of our clients switched from similar providers and typically see ${String(competitorDisplacement || "meaningful improvement").toLowerCase()}.`
     : "Many finance teams we speak to are surprised by how much they're overpaying on what feels like a commodity service.";
 
   const estimatedSavings = turnover ? Math.round((turnover * 0.003) / 1000) + "K" : "50K+";
@@ -544,7 +818,18 @@ export function getSequencesForCompany(companyId) {
   const sequences = db.prepare("SELECT * FROM email_sequences WHERE company_id = ? ORDER BY created_at DESC").all(companyId);
   return sequences.map((seq) => ({
     ...seq,
-    steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id),
+    steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
+      ...step,
+      qc_issues: safeJsonParse(step.qc_issues_json, []),
+      metrics: safeJsonParse(step.qc_metrics_json, {}),
+      quality_gates: safeJsonParse(step.quality_gates_json, null),
+      qc_pass: step.qc_pass === null || step.qc_pass === undefined ? null : Number(step.qc_pass) === 1,
+      voice_percent: Number.isFinite(Number(step.voice_percent)) ? Number(step.voice_percent) : null,
+      body: normalizeEmailBodyForOutbound(step.body, {
+        stakeholderName: seq.stakeholder_name,
+        stepType: step.step_type,
+      }),
+    })),
   }));
 }
 
@@ -553,7 +838,18 @@ export function getSequence(sequenceId) {
   if (!seq) return null;
   return {
     ...seq,
-    steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id),
+    steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
+      ...step,
+      qc_issues: safeJsonParse(step.qc_issues_json, []),
+      metrics: safeJsonParse(step.qc_metrics_json, {}),
+      quality_gates: safeJsonParse(step.quality_gates_json, null),
+      qc_pass: step.qc_pass === null || step.qc_pass === undefined ? null : Number(step.qc_pass) === 1,
+      voice_percent: Number.isFinite(Number(step.voice_percent)) ? Number(step.voice_percent) : null,
+      body: normalizeEmailBodyForOutbound(step.body, {
+        stakeholderName: seq.stakeholder_name,
+        stepType: step.step_type,
+      }),
+    })),
   };
 }
 
@@ -569,8 +865,42 @@ export function updateStepStatus(sequenceId, stepNumber, status) {
 }
 
 export function updateStepContent(sequenceId, stepNumber, subject, body) {
-  db.prepare("UPDATE email_steps SET subject = ?, body = ? WHERE sequence_id = ? AND step_number = ?")
-    .run(subject, body, sequenceId, stepNumber);
+  const editedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE email_steps
+    SET subject = ?,
+        body = ?,
+        edited_at = ?,
+        edit_count = COALESCE(edit_count, 0) + 1,
+        review_status = 'pending',
+        reviewed_at = NULL,
+        qc_score = NULL,
+        qc_pass = NULL,
+        qc_issues_json = NULL,
+        qc_metrics_json = NULL,
+        quality_gates_json = NULL,
+        voice_percent = NULL
+    WHERE sequence_id = ? AND step_number = ?
+  `).run(subject, body, editedAt, sequenceId, stepNumber);
+}
+
+function safeJsonParse(raw, fallback) {
+  if (raw === null || raw === undefined || raw === "") return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+export function markStepReviewed(sequenceId, stepNumber) {
+  const reviewedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE email_steps
+    SET review_status = 'reviewed',
+        reviewed_at = ?
+    WHERE sequence_id = ? AND step_number = ?
+  `).run(reviewedAt, sequenceId, stepNumber);
 }
 
 export function deleteSequence(sequenceId) {
@@ -614,6 +944,122 @@ export function purgePlaceholderSequencesForCompany(companyId, options = {}) {
 
   return {
     company_id: companyId,
+    dry_run: dryRun,
+    scanned_sequences: rows.length,
+    matched_sequences: matches.length,
+    deleted_sequences: dryRun ? 0 : matches.length,
+    matches,
+  };
+}
+
+function countWords(value) {
+  const text = compactWhitespace(value);
+  if (!text) return 0;
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function brokenReasonForStep(step) {
+  const stepType = String(step?.step_type || "").toLowerCase();
+  const subject = String(step?.subject || "");
+  const body = String(step?.body || "");
+  const combined = `${subject}\n${body}`;
+
+  const placeholderToken = extractPlaceholderToken(combined);
+  if (placeholderToken) {
+    return `placeholder_token_${placeholderToken}`;
+  }
+
+  if (stepType === "nudge_2") {
+    if (/worth\s+picking\s+this\s+back\s+up/i.test(body)) return "legacy_nudge_2_picking_back_up";
+    if (/keen\s+to\s+hear\s+your\s+take\s+on\s+the\s+above/i.test(body)) return "legacy_nudge_2_hear_your_take";
+  }
+
+  if (stepType === "nudge_1" || stepType === "nudge_2") {
+    const words = countWords(body);
+    if (words < 8 || words > 20) return `nudge_word_count_${words}`;
+  }
+
+  if (/A second layer worth pressure-testing is this:[^\n]*\bHi\s+[A-Za-z]/i.test(body)) {
+    return "depth_scaffold_before_greeting";
+  }
+
+  if (/One hypothesis I may be wrong about:[^\n]*\bHi\s+[A-Za-z]/i.test(body)) {
+    return "provocation_scaffold_before_greeting";
+  }
+
+  if (stepType === "provocation"
+    && /If that read is materially off, I value the correction\./i.test(body)
+    && !/One hypothesis I may be wrong about:/i.test(body)) {
+    return "provocation_missing_hypothesis_opener";
+  }
+
+  return null;
+}
+
+function findBrokenSequences(rows) {
+  const matches = [];
+
+  for (const row of rows) {
+    const steps = db.prepare("SELECT step_number, step_type, subject, body FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(row.id);
+    const reasons = [];
+
+    for (const step of steps) {
+      const reason = brokenReasonForStep(step);
+      if (!reason) continue;
+
+      reasons.push({
+        step_number: step.step_number,
+        step_type: step.step_type,
+        reason,
+      });
+    }
+
+    if (reasons.length === 0) continue;
+
+    matches.push({
+      id: row.id,
+      company_id: row.company_id,
+      created_at: row.created_at,
+      reasons,
+    });
+  }
+
+  return matches;
+}
+
+export function purgeBrokenSequencesForCompany(companyId, options = {}) {
+  const dryRun = options.dryRun === true;
+  const rows = db.prepare("SELECT id, company_id, created_at FROM email_sequences WHERE company_id = ? ORDER BY created_at DESC").all(companyId);
+  const matches = findBrokenSequences(rows);
+
+  if (!dryRun) {
+    for (const match of matches) {
+      deleteSequence(match.id);
+    }
+  }
+
+  return {
+    company_id: companyId,
+    dry_run: dryRun,
+    scanned_sequences: rows.length,
+    matched_sequences: matches.length,
+    deleted_sequences: dryRun ? 0 : matches.length,
+    matches,
+  };
+}
+
+export function purgeBrokenSequences(options = {}) {
+  const dryRun = options.dryRun === true;
+  const rows = db.prepare("SELECT id, company_id, created_at FROM email_sequences ORDER BY created_at DESC").all();
+  const matches = findBrokenSequences(rows);
+
+  if (!dryRun) {
+    for (const match of matches) {
+      deleteSequence(match.id);
+    }
+  }
+
+  return {
     dry_run: dryRun,
     scanned_sequences: rows.length,
     matched_sequences: matches.length,

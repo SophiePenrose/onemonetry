@@ -6,7 +6,7 @@ const LAYER_LABELS = {
   commercial_value: "Commercial Value",
   pain_strength: "Pain Strength",
   urgency: "Urgency",
-  competitor_context: "Competitor Context",
+  competitor_context: "Current Stack Context",
 };
 
 const LAYER_COLORS = {
@@ -40,7 +40,7 @@ function ScoreBar({ score, color }) {
 
 ScoreBar.propTypes = { score: PropTypes.number.isRequired, color: PropTypes.string.isRequired };
 
-function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation }) {
+function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation, scoreNarrative }) {
   const hasLayers = scoreBreakdown && Object.keys(scoreBreakdown).some((k) => scoreBreakdown[k]?.evidence);
   const renderEvidence = (evidence) => {
     if (Array.isArray(evidence)) {
@@ -51,6 +51,20 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation 
     if (typeof evidence === "object") return JSON.stringify(evidence);
     return evidence;
   };
+
+  const normalizeNarrativeItems = (items, limit = 3) => {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item) => String(typeof item === "object" ? item?.text || "" : item || "").trim())
+      .filter(Boolean)
+      .slice(0, limit);
+  };
+
+  const narrativeHeadline = scoreNarrative?.headline || explanation || "N/A";
+  const narrativeDrivers = normalizeNarrativeItems(scoreNarrative?.drivers, 3);
+  const narrativeEvidence = normalizeNarrativeItems(scoreNarrative?.evidence, 3);
+  const narrativeRisks = normalizeNarrativeItems(scoreNarrative?.risks, 3);
+  const hasNarrative = narrativeDrivers.length > 0 || narrativeEvidence.length > 0 || narrativeRisks.length > 0;
 
   return (
     <div style={{ border: "1px solid #e0e3e8", borderRadius: 8, padding: 16, background: "#fafbfc" }}>
@@ -64,9 +78,50 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation 
             <strong>Fit Level:</strong>{" "}
             <span style={{ textTransform: "capitalize" }}>{productFit?.fit_level ?? "N/A"}</span>
           </div>
-          <div style={{ fontSize: 13, color: "#666" }}>{explanation ?? "N/A"}</div>
+          <div style={{ fontSize: 13, color: "#666" }}>{narrativeHeadline}</div>
         </div>
       </div>
+
+      {hasNarrative && (
+        <div style={{ marginBottom: 14, border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, background: "#fff" }}>
+          <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+            Why This Score
+          </div>
+
+          {narrativeDrivers.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Drivers</div>
+              <ul style={{ margin: 0, paddingLeft: 16, color: "#4b5563", fontSize: 12 }}>
+                {narrativeDrivers.map((item, idx) => (
+                  <li key={`driver-${idx}`} style={{ marginBottom: 2 }}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {narrativeEvidence.length > 0 && (
+            <div style={{ marginBottom: narrativeRisks.length ? 8 : 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Evidence Highlights</div>
+              <ul style={{ margin: 0, paddingLeft: 16, color: "#4b5563", fontSize: 12 }}>
+                {narrativeEvidence.map((item, idx) => (
+                  <li key={`evidence-${idx}`} style={{ marginBottom: 2 }}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {narrativeRisks.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#9a3412", marginBottom: 4 }}>Watchouts</div>
+              <ul style={{ margin: 0, paddingLeft: 16, color: "#9a3412", fontSize: 12 }}>
+                {narrativeRisks.map((item, idx) => (
+                  <li key={`risk-${idx}`} style={{ marginBottom: 2 }}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {hasLayers && (
         <div>
@@ -118,6 +173,12 @@ ScoreExplanation.propTypes = {
   scoreBreakdown: PropTypes.object,
   finalScore: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   explanation: PropTypes.string,
+  scoreNarrative: PropTypes.shape({
+    headline: PropTypes.string,
+    drivers: PropTypes.arrayOf(PropTypes.string),
+    risks: PropTypes.arrayOf(PropTypes.string),
+    evidence: PropTypes.arrayOf(PropTypes.string),
+  }),
 };
 
 export default ScoreExplanation;

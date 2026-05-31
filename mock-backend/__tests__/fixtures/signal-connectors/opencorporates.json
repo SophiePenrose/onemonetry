@@ -1,0 +1,28 @@
+{
+  "results": {
+    "company": {
+      "company": {
+        "name": "Example UK Subsidiary Ltd",
+        "jurisdiction_code": "gb"
+      },
+      "beneficial_owners": [
+        {
+          "owner": {
+            "name": "Euro HoldCo GmbH",
+            "type": "corporate entity",
+            "country": "Germany",
+            "percentage": "55"
+          }
+        },
+        {
+          "owner": {
+            "name": "Domestic Partner Ltd",
+            "type": "corporate entity",
+            "country": "United Kingdom",
+            "percentage": "20"
+          }
+        }
+      ]
+    }
+  }
+}

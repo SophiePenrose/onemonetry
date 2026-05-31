@@ -5,6 +5,31 @@ set -euo pipefail
 
 echo "=== Onemonetry startup ==="
 
+is_configured_secret() {
+  local value="${1:-}"
+  local lower
+  lower="$(printf "%s" "$value" | tr '[:upper:]' '[:lower:]')"
+
+  if [ -z "$lower" ]; then
+    return 1
+  fi
+
+  if [[ "$lower" == replace_* \
+    || "$lower" == *replace_with* \
+    || "$lower" == *your_openai* \
+    || "$lower" == *your_api_key* \
+    || "$lower" == *your-key-here* \
+    || "$lower" == *placeholder* \
+    || "$lower" == sk-your-* \
+    || "$lower" == *example* \
+    || "$lower" == changeme \
+    || "$lower" == change_me ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
@@ -21,6 +46,13 @@ if [ -f .env ]; then
   # shellcheck disable=SC1091
   source .env
   set +a
+fi
+
+REQUIRE_OPENAI="${REQUIRE_OPENAI:-false}"
+if [ "${REQUIRE_OPENAI,,}" = "true" ] && ! is_configured_secret "${OPENAI_API_KEY:-}"; then
+  echo "❌ REQUIRE_OPENAI=true but OPENAI_API_KEY is not configured."
+  echo "   Add a real OPENAI_API_KEY to .env, then rerun: REQUIRE_OPENAI=true ./start.sh"
+  exit 1
 fi
 
 # Install dependencies if needed
@@ -58,7 +90,11 @@ done
 # Start backend
 echo "Starting backend on port 8000..."
 cd "$REPO_ROOT"
-nohup env NODE_OPTIONS="--max-old-space-size=4096" node mock-backend/server.js > /tmp/onemonetry-backend.log 2>&1 &
+IGNORE_RUNTIME_SIGTERM="${IGNORE_RUNTIME_SIGTERM:-true}"
+LIGHTWEIGHT_RUNTIME="${LIGHTWEIGHT_RUNTIME:-true}"
+NODE_MAX_OLD_SPACE_MB="${NODE_MAX_OLD_SPACE_MB:-1024}"
+EMAIL_LLM_FAIL_CLOSED="${EMAIL_LLM_FAIL_CLOSED:-false}"
+nohup env LIGHTWEIGHT_RUNTIME="${LIGHTWEIGHT_RUNTIME}" IGNORE_RUNTIME_SIGTERM="${IGNORE_RUNTIME_SIGTERM}" EMAIL_LLM_FAIL_CLOSED="${EMAIL_LLM_FAIL_CLOSED}" NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}" node mock-backend/server.js > /tmp/onemonetry-backend.log 2>&1 &
 BACKEND_PID=$!
 
 # Wait for backend
@@ -87,8 +123,17 @@ echo "Backend logs: /tmp/onemonetry-backend.log"
 echo "Frontend logs: /tmp/onemonetry-frontend.log"
 echo ""
 echo "Environment:"
-[ -n "${COMPANIES_HOUSE_API_KEY:-}" ] && echo "  ✅ Companies House API: configured" || echo "  ⚠️  Companies House API: not set"
-[ -n "${OPENAI_API_KEY:-}" ] && echo "  ✅ OpenAI API: configured" || echo "  ⚠️  OpenAI API: not set"
+if is_configured_secret "${COMPANIES_HOUSE_API_KEY:-}"; then
+  echo "  ✅ Companies House API: configured"
+else
+  echo "  ⚠️  Companies House API: not set"
+fi
+
+if is_configured_secret "${OPENAI_API_KEY:-}"; then
+  echo "  ✅ OpenAI API: configured"
+else
+  echo "  ⚠️  OpenAI API: not set"
+fi
 
 echo ""
 echo "Startup complete. Services are running in the background."

@@ -1,0 +1,14 @@
+{
+  "visits": [
+    { "date": "2025-01", "visits": 210000 },
+    { "date": "2025-02", "visits": 245000 }
+  ],
+  "countries": [
+    { "country": "UK", "share": 0.62 },
+    { "country": "US", "share": 0.23 },
+    { "country": "DE", "share": 0.08 }
+  ],
+  "ads": {
+    "search_spend": 42000
+  }
+}

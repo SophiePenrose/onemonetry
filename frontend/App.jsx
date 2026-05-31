@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Home from "./pages/Home";
 import Shortlist from "./pages/Shortlist";
 import CompanyDetail from "./pages/CompanyDetail";
@@ -8,9 +8,46 @@ import Import from "./pages/Import";
 import Settings from "./pages/Settings";
 
 export default function App() {
-  const [view, setView] = useState("home");
+  const [view, setView] = useState("shortlist");
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [returnView, setReturnView] = useState(null);
+  const [runtimeStatus, setRuntimeStatus] = useState({
+    loading: true,
+    backendReachable: true,
+    openaiConfigured: true,
+    openaiModel: null,
+  });
+
+  async function loadRuntimeStatus() {
+    try {
+      const response = await fetch("/api/integrations/status");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const openai = payload?.integrations?.openai || {};
+      setRuntimeStatus({
+        loading: false,
+        backendReachable: true,
+        openaiConfigured: openai.configured === true,
+        openaiModel: openai.model || null,
+      });
+    } catch {
+      setRuntimeStatus((current) => ({
+        ...current,
+        loading: false,
+        backendReachable: false,
+      }));
+    }
+  }
+
+  useEffect(() => {
+    loadRuntimeStatus();
+    const timer = window.setInterval(() => {
+      loadRuntimeStatus();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   function navigateHome() {
     setView("home");
@@ -30,6 +67,18 @@ export default function App() {
     setReturnView(null);
   }
 
+  function navigateImport() {
+    setView("import");
+    setSelectedCompanyId(null);
+    setReturnView(null);
+  }
+
+  function navigateSettings() {
+    setView("settings");
+    setSelectedCompanyId(null);
+    setReturnView(null);
+  }
+
   function navigateToCompany(companyId, fromView) {
     setSelectedCompanyId(companyId);
     setReturnView(fromView || view);
@@ -43,47 +92,93 @@ export default function App() {
     setReturnView(null);
   }
 
-  const backLabel = returnView === "reports" ? "Reports" : returnView === "shortlist" ? "Shortlist" : "Workspace";
+  const backLabel = returnView === "reports"
+    ? "Performance"
+    : returnView === "shortlist"
+      ? "This Week"
+      : returnView === "home"
+        ? "All Companies"
+        : returnView === "import"
+          ? "Data Pipeline"
+          : "Workspace";
+  const tabs = [
+    { id: "shortlist", label: "This Week", action: navigateShortlist },
+    { id: "home", label: "All Companies", action: navigateHome },
+    { id: "reports", label: "Performance", action: navigateReports },
+    { id: "import", label: "Data Pipeline", action: navigateImport },
+  ];
+  const showRuntimeBanner = !runtimeStatus.loading && (!runtimeStatus.backendReachable || !runtimeStatus.openaiConfigured);
+  const runtimeBannerTone = runtimeStatus.backendReachable ? "warning" : "error";
 
   return (
-    <div style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", background: "#f6f7f9", minHeight: "100vh" }}>
-      <header style={{ background: "#191B22", color: "#fff", padding: "16px 24px", display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 20, cursor: "pointer", letterSpacing: "-0.5px" }} onClick={navigateHome}>
-          Prospector
-        </span>
-        <span style={{ opacity: 0.5, fontSize: 13 }}>Mid-Market Intelligence</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.4, fontWeight: 500 }}>Revolut Business</span>
+    <div className="app-shell">
+      <header className="app-header">
+        <button type="button" className="app-brand" onClick={navigateShortlist}>
+          <span className="app-brand-mark">Prospector</span>
+          <span className="app-brand-subtitle">Mid-Market Intelligence</span>
+        </button>
+
+        <div className="app-top-meta" aria-label="Workspace context">
+          <span className="app-live-dot" aria-hidden="true" />
+          <span>Revolut Business</span>
+        </div>
+
+        <div className="app-secondary-actions" aria-label="Secondary navigation">
+          <button
+            type="button"
+            className={`app-secondary-button${view === "settings" ? " active" : ""}`}
+            onClick={navigateSettings}
+          >
+            Settings
+          </button>
+          <button type="button" className="app-secondary-button" disabled>
+            Account
+          </button>
+        </div>
       </header>
 
-      <nav style={{ display: "flex", gap: 0, background: "#fff", borderBottom: "1px solid #e0e3e8", padding: "0 24px" }}>
-        {[
-          { id: "home", label: "⌂ Workspace", action: navigateHome },
-          { id: "shortlist", label: "📋 Shortlist", action: navigateShortlist },
-          { id: "reports", label: "📊 Reports", action: navigateReports },
-          { id: "import", label: "📥 Import", action: () => { setView("import"); setSelectedCompanyId(null); setReturnView(null); } },
-          { id: "settings", label: "⚙ Settings", action: () => { setView("settings"); setSelectedCompanyId(null); setReturnView(null); } },
-        ].map((tab) => {
+      {showRuntimeBanner && (
+        <section
+          className={`app-status-banner app-status-banner-${runtimeBannerTone}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="app-status-banner-copy">
+            <strong>
+              {runtimeStatus.backendReachable ? "LLM Mode Is Off" : "Backend Unreachable"}
+            </strong>
+            <span>
+              {runtimeStatus.backendReachable
+                ? `OPENAI_API_KEY is not configured, so generation is running in fallback mode. Configure the key in Settings for true LLM output${runtimeStatus.openaiModel ? ` (${runtimeStatus.openaiModel})` : ""}.`
+                : "The frontend cannot reach the backend API right now, so data and LLM generation are unavailable until it reconnects."}
+            </span>
+          </div>
+          <div className="app-status-banner-actions">
+            <button type="button" onClick={loadRuntimeStatus}>Recheck</button>
+            <button type="button" onClick={navigateSettings}>Open Settings</button>
+          </div>
+        </section>
+      )}
+
+      <div className="app-nav-wrap">
+        <nav className="app-nav" aria-label="Primary">
+          {tabs.map((tab) => {
           const isActive = view === tab.id || (view === "company_detail" && returnView === tab.id) || (view === "add_company" && tab.id === "shortlist");
           return (
             <button
               key={tab.id}
               onClick={tab.action}
-              style={{
-                padding: "12px 20px", border: "none",
-                borderBottom: isActive ? "3px solid #0075EB" : "3px solid transparent",
-                background: "none",
-                color: isActive ? "#0075EB" : "#555",
-                fontWeight: isActive ? 600 : 400,
-                fontSize: 14, cursor: "pointer", whiteSpace: "nowrap",
-              }}
+              className={`app-nav-button${isActive ? " active" : ""}`}
+              aria-current={isActive ? "page" : undefined}
             >
               {tab.label}
             </button>
           );
         })}
-      </nav>
+        </nav>
+      </div>
 
-      <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
+      <main className="app-main">
         {view === "home" && (
           <Home onNavigateToCompany={(id) => navigateToCompany(id, "home")} />
         )}
@@ -108,10 +203,7 @@ export default function App() {
           <div>
             <button
               onClick={handleBackFromDetail}
-              style={{
-                padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6,
-                background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16,
-              }}
+              className="detail-back-button"
             >
               ← Back to {backLabel}
             </button>

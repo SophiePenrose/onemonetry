@@ -101,12 +101,12 @@ const INDUSTRY_PRIOR_PATTERNS = {
 
 // --- Scoring weights ---
 const SCORING_WEIGHTS = {
-  product_fit: 0.30,
-  commercial_value: 0.20,
-  pain_strength: 0.20,
-  urgency: 0.12,
-  competitor_context: 0.08,
-  switching_feasibility: 0.10,
+  product_fit: 0.28,
+  commercial_value: 0.18,
+  pain_strength: 0.18,
+  urgency: 0.14,
+  competitor_context: 0.10,
+  switching_feasibility: 0.12,
 };
 
 const MOTION_LLM_BOOST_CAP = 0.22;
@@ -357,6 +357,134 @@ const COMPETITOR_SCORING_EFFECTS = {
   },
 };
 
+const TECH_STACK_MOTION_SIGNALS = {
+  "Worldpay": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.25 }, switching: 0.08, competitor: true },
+  "Stripe": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20, "API Integrations": 0.15 }, switching: 0.12, competitor: true },
+  "Adyen": { motions: { "Merchant Acquiring": 0.25, "Revolut Pay": 0.15 }, switching: -0.05, competitor: true },
+  "PayPal": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.25 }, switching: 0.10, competitor: true },
+  "Square": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.30 }, switching: 0.15, competitor: true },
+  "SumUp": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.30 }, switching: 0.18, competitor: true },
+  "Sage Pay": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20 }, switching: 0.06, competitor: true },
+  "Global Payments": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20 }, switching: 0.05, competitor: true },
+  "Xero": { motions: { "API Integrations": 0.15, "Spend Management": 0.10 }, switching: 0.12, integration_ready: true },
+  "QuickBooks": { motions: { "API Integrations": 0.15, "Spend Management": 0.10 }, switching: 0.12, integration_ready: true },
+  "NetSuite": { motions: { "API Integrations": 0.20, "Spend Management": 0.12 }, switching: 0.08, integration_ready: true },
+  "Sage": { motions: { "API Integrations": 0.08 }, switching: -0.05, integration_ready: false },
+  "SAP": { motions: { "API Integrations": 0.10, "Spend Management": 0.08 }, switching: -0.10, integration_ready: false },
+  "Shopify": { motions: { "Merchant Acquiring": 0.25, "Revolut Pay": 0.30 }, switching: 0.15, b2c_confirmed: true },
+  "WooCommerce": { motions: { "Merchant Acquiring": 0.25, "Revolut Pay": 0.25 }, switching: 0.12, b2c_confirmed: true },
+  "Magento": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20 }, switching: 0.06, b2c_confirmed: true },
+  "BigCommerce": { motions: { "Merchant Acquiring": 0.25, "Revolut Pay": 0.25 }, switching: 0.10, b2c_confirmed: true },
+};
+
+const MULTI_CURRENCY_TECH_SIGNALS = [
+  "Multi-Currency for WooCommerce",
+  "WPML",
+  "Weglot",
+  "GeoTargetingWP",
+  "hreflang",
+];
+
+const HIRING_SIGNAL_WEIGHTS = {
+  urgency: {
+    "CFO": { boost: 0.22, velocity_trigger: "new_finance_leader" },
+    "Finance Director": { boost: 0.20, velocity_trigger: "new_finance_leader" },
+    "FD": { boost: 0.20, velocity_trigger: "new_finance_leader" },
+    "Head of Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
+    "VP Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
+    "Financial Controller": { boost: 0.12, velocity_trigger: null },
+  },
+  motion_signals: {
+    "Treasury Manager": { motions: { "FX": 0.20, "FX Forwards": 0.18 }, pain_boost: 0.10 },
+    "Treasury Analyst": { motions: { "FX": 0.15, "FX Forwards": 0.12 }, pain_boost: 0.06 },
+    "Head of Treasury": { motions: { "FX": 0.25, "FX Forwards": 0.22 }, pain_boost: 0.15 },
+    "FX Dealer": { motions: { "FX": 0.22, "FX Forwards": 0.20 }, pain_boost: 0.12 },
+    "Accounts Payable": { motions: { "Cards": 0.10, "Spend Management": 0.12 }, pain_boost: 0.05 },
+    "Accounts Receivable": { motions: { "Merchant Acquiring": 0.08 }, pain_boost: 0.04 },
+    "Procurement Manager": { motions: { "FX": 0.08, "Cards": 0.10, "Spend Management": 0.15 }, pain_boost: 0.06 },
+    "Ecommerce Manager": { motions: { "Merchant Acquiring": 0.15, "Revolut Pay": 0.12 }, pain_boost: 0.06 },
+    "Head of Digital": { motions: { "Merchant Acquiring": 0.12, "Revolut Pay": 0.10, "API Integrations": 0.10 }, pain_boost: 0.05 },
+    "International Manager": { motions: { "FX": 0.15, "FX Forwards": 0.10 }, pain_boost: 0.08 },
+    "EMEA Director": { motions: { "FX": 0.12, "FX Forwards": 0.08 }, pain_boost: 0.06 },
+  },
+};
+
+const HEADCOUNT_GROWTH_THRESHOLDS = [
+  { band: "strong", min_pct: 20, propensity_boost: 0.12, urgency_boost: 0.08 },
+  { band: "moderate", min_pct: 10, propensity_boost: 0.06, urgency_boost: 0.04 },
+  { band: "stable", min_pct: 0, propensity_boost: 0, urgency_boost: 0 },
+  { band: "declining", min_pct: -100, propensity_boost: -0.04, urgency_boost: -0.03 },
+];
+
+const OWNERSHIP_SCORING_EFFECTS = {
+  pe_backed: {
+    switching_feasibility_delta: 0.12,
+    urgency_boost: 0.08,
+    motion_boosts: { "Spend Management": 0.08 },
+    pain_boost: 0.06,
+  },
+  family_owned: {
+    switching_feasibility_delta: -0.08,
+    urgency_boost: 0,
+    motion_boosts: {},
+    pain_boost: 0,
+  },
+  foreign_subsidiary: {
+    switching_feasibility_delta: 0.04,
+    urgency_boost: 0.04,
+    motion_boosts: { "FX": 0.15, "FX Forwards": 0.10, "API Integrations": 0.08 },
+    pain_boost: 0.08,
+  },
+  public_company: {
+    switching_feasibility_delta: -0.06,
+    urgency_boost: 0,
+    motion_boosts: { "Spend Management": 0.10 },
+    pain_boost: 0.04,
+  },
+};
+
+const BUSINESS_MODEL_MOTION_WEIGHTS = {
+  B2C: {
+    "Merchant Acquiring": 1.4,
+    "Revolut Pay": 1.5,
+    "FX": 0.8,
+    "FX Forwards": 0.7,
+    "Spend Management": 0.7,
+    "Cards": 0.9,
+    "API Integrations": 1.1,
+  },
+  B2B: {
+    "Merchant Acquiring": 0.6,
+    "Revolut Pay": 0.4,
+    "FX": 1.3,
+    "FX Forwards": 1.3,
+    "Spend Management": 1.2,
+    "Cards": 1.2,
+    "API Integrations": 1.0,
+  },
+  hybrid: {},
+  unknown: {},
+};
+
+const MOTION_VELOCITY_CLASS = {
+  "FX": { class: "quick_win", typical_months: 2, gp_velocity: 1.0 },
+  "FX Forwards": { class: "quick_win", typical_months: 3, gp_velocity: 0.9 },
+  "Cards": { class: "quick_win", typical_months: 2, gp_velocity: 0.8 },
+  "Spend Management": { class: "quick_win", typical_months: 3, gp_velocity: 0.6 },
+  "API Integrations": { class: "long_play", typical_months: 6, gp_velocity: 0.5 },
+  "Merchant Acquiring": { class: "long_play", typical_months: 8, gp_velocity: 0.7 },
+  "Revolut Pay": { class: "long_play", typical_months: 6, gp_velocity: 0.6 },
+};
+
+const ENRICHMENT_STALENESS = {
+  tech_stack: { max_age_days: 90, decay_after_days: 60 },
+  hiring_signals: { max_age_days: 30, decay_after_days: 14 },
+  website: { max_age_days: 90, decay_after_days: 60 },
+  marketing: { max_age_days: 60, decay_after_days: 30 },
+  reputation: { max_age_days: 180, decay_after_days: 120 },
+  ownership: { max_age_days: 365, decay_after_days: 240 },
+};
+
 function buildSnippet(text, idx, length) {
   const start = Math.max(0, idx - 90);
   const end = Math.min(text.length, idx + length + 140);
@@ -383,6 +511,840 @@ function daysSinceDate(value) {
   const diff = Date.now() - parsed.getTime();
   if (!Number.isFinite(diff) || diff < 0) return 0;
   return Math.floor(diff / 86400000);
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null) return [];
+  return [value];
+}
+
+function normalizeLookupToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function computeIndustryProductFitHint(industries = []) {
+  const entries = asArray(industries)
+    .map((industry) => ({
+      industry,
+      score: Number(INDUSTRY_PRODUCT_FIT[industry] || 0),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (entries.length === 0) {
+    return { best_industry: "unknown", score: 0 };
+  }
+
+  return {
+    best_industry: entries[0].industry,
+    score: Math.round(entries[0].score * 100) / 100,
+  };
+}
+
+function normalizeCompactToken(value) {
+  return normalizeLookupToken(value).replace(/\s+/g, "");
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function extractApproxNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return null;
+  const match = raw.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([kmb])?/i);
+  if (!match) return null;
+  const base = Number.parseFloat(match[1]);
+  if (!Number.isFinite(base)) return null;
+  const unit = String(match[2] || "").toLowerCase();
+  if (unit === "k") return base * 1_000;
+  if (unit === "m") return base * 1_000_000;
+  if (unit === "b") return base * 1_000_000_000;
+  return base;
+}
+
+function getEnrichmentTimestamp(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const keys = [
+    "updated_at",
+    "fetched_at",
+    "generated_at",
+    "collected_at",
+    "scraped_at",
+    "timestamp",
+    "as_of",
+    "run_at",
+    "created_at",
+  ];
+
+  for (const key of keys) {
+    if (payload[key]) return payload[key];
+  }
+
+  const meta = payload.meta && typeof payload.meta === "object" ? payload.meta : null;
+  if (!meta) return null;
+  for (const key of keys) {
+    if (meta[key]) return meta[key];
+  }
+  return null;
+}
+
+function resolveEnrichmentPayload(settingKey, profileKey) {
+  const raw = getSetting(settingKey, null);
+  if (!raw || typeof raw !== "object") {
+    return {
+      data: null,
+      available: false,
+      stale: false,
+      expired: false,
+      decay_multiplier: 0,
+      days_old: null,
+      as_of: null,
+      source_key: settingKey,
+    };
+  }
+
+  const profile = ENRICHMENT_STALENESS[profileKey] || { max_age_days: 365, decay_after_days: 240 };
+  const asOf = getEnrichmentTimestamp(raw);
+  const daysOld = daysSinceDate(asOf);
+
+  if (daysOld === null) {
+    return {
+      data: raw,
+      available: true,
+      stale: false,
+      expired: false,
+      decay_multiplier: 1,
+      days_old: null,
+      as_of: null,
+      source_key: settingKey,
+    };
+  }
+
+  const maxAge = Number(profile.max_age_days || 365);
+  const decayAfter = Number(profile.decay_after_days || Math.floor(maxAge * 0.67));
+  const expired = daysOld > maxAge;
+  const stale = daysOld > decayAfter;
+
+  if (expired) {
+    return {
+      data: null,
+      available: false,
+      stale: true,
+      expired: true,
+      decay_multiplier: 0,
+      days_old: daysOld,
+      as_of: asOf,
+      source_key: settingKey,
+    };
+  }
+
+  let decayMultiplier = 1;
+  if (stale) {
+    const span = Math.max(1, maxAge - decayAfter);
+    const progress = Math.max(0, Math.min(daysOld - decayAfter, span));
+    decayMultiplier = Math.max(0, 1 - (progress / span));
+  }
+
+  return {
+    data: raw,
+    available: true,
+    stale,
+    expired: false,
+    decay_multiplier: Math.round(decayMultiplier * 100) / 100,
+    days_old: daysOld,
+    as_of: asOf,
+    source_key: settingKey,
+  };
+}
+
+function applyMotionBoostMap(motionScores, boostMap, sourceKey, capPerMotion = 0.35, scale = 1) {
+  const adjustments = [];
+  if (!boostMap || typeof boostMap !== "object") return adjustments;
+
+  const sourceField = `${sourceKey}_boost`;
+  const scaler = Math.max(0, Math.min(Number(scale || 1), 1.5));
+  for (const [motion, rawBoost] of Object.entries(boostMap)) {
+    if (!motionScores?.[motion]) continue;
+    const base = Number(motionScores[motion].score || 0);
+    const boost = Math.max(0, Math.min(Number(rawBoost || 0) * scaler, capPerMotion));
+    if (!Number.isFinite(boost) || boost <= 0) continue;
+    const next = clamp01(base + boost);
+    const applied = Math.round((next - base) * 100) / 100;
+    if (applied <= 0) continue;
+
+    motionScores[motion].score = next;
+    motionScores[motion][sourceField] = Math.round((Number(motionScores[motion][sourceField] || 0) + applied) * 100) / 100;
+    adjustments.push({ motion, delta: applied, source: sourceKey });
+  }
+
+  return adjustments;
+}
+
+function mergeCompetitorSignals(existingCompetitors, extraCompetitors) {
+  const output = Array.isArray(existingCompetitors) ? existingCompetitors : [];
+  const existingByName = new Map(output.map((c) => [normalizeLookupToken(c?.name), c]));
+
+  for (const item of asArray(extraCompetitors)) {
+    const nameKey = normalizeLookupToken(item?.name);
+    if (!nameKey) continue;
+    const existing = existingByName.get(nameKey);
+    if (existing) {
+      if (!existing.source && item?.source) existing.source = item.source;
+      continue;
+    }
+    output.push(item);
+    existingByName.set(nameKey, item);
+  }
+
+  return output;
+}
+
+function extractTextEntries(payload, keys) {
+  const values = [];
+  for (const key of keys) {
+    const value = payload?.[key];
+    for (const item of asArray(value)) {
+      if (item === null || item === undefined) continue;
+      if (typeof item === "string" || typeof item === "number") {
+        values.push(String(item));
+      } else if (typeof item === "object") {
+        if (item.name) values.push(String(item.name));
+        if (item.value) values.push(String(item.value));
+        if (item.title) values.push(String(item.title));
+      }
+    }
+  }
+  return values;
+}
+
+function resolveTechSignalKey(value) {
+  const raw = normalizeCompactToken(value);
+  if (!raw) return null;
+  for (const key of Object.keys(TECH_STACK_MOTION_SIGNALS)) {
+    const normalizedKey = normalizeCompactToken(key);
+    if (!normalizedKey) continue;
+    if (raw === normalizedKey || raw.includes(normalizedKey) || normalizedKey.includes(raw)) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function scoreTechStackSignals(techStack, freshnessScale = 1) {
+  if (!techStack || typeof techStack !== "object") {
+    return { applied: false, motion_boosts: {}, competitor_signals: [], switching_delta: 0, b2c_confirmed: false, integration_ready: false, adjustments: [] };
+  }
+
+  const textEntries = extractTextEntries(techStack, [
+    "technologies",
+    "detected_technologies",
+    "stack",
+    "wappalyzer",
+    "plugins",
+    "detected_plugins",
+    "platforms",
+  ]);
+
+  const directCandidates = [
+    techStack?.payment_gateway,
+    techStack?.payment_processor,
+    techStack?.psp,
+    techStack?.gateway,
+    techStack?.accounting_software,
+    techStack?.accounting_system,
+    techStack?.erp,
+    techStack?.ecommerce_platform,
+    techStack?.store_platform,
+  ].filter(Boolean);
+
+  const allCandidates = [...directCandidates, ...textEntries];
+
+  const motionBoosts = {};
+  const competitorSignals = [];
+  const adjustments = [];
+  let switchingDelta = 0;
+  let b2cConfirmed = false;
+  let integrationReady = false;
+
+  const seenSignals = new Set();
+  for (const candidate of allCandidates) {
+    const signalKey = resolveTechSignalKey(candidate);
+    if (!signalKey || seenSignals.has(signalKey)) continue;
+    seenSignals.add(signalKey);
+    const config = TECH_STACK_MOTION_SIGNALS[signalKey];
+    if (!config) continue;
+
+    for (const [motion, boost] of Object.entries(config.motions || {})) {
+      motionBoosts[motion] = (motionBoosts[motion] || 0) + Number(boost || 0);
+    }
+    switchingDelta += Number(config.switching || 0);
+
+    if (config.competitor) {
+      competitorSignals.push({
+        name: signalKey,
+        source: "tech_stack",
+        products: Object.keys(config.motions || {}),
+      });
+    }
+
+    if (config.b2c_confirmed) b2cConfirmed = true;
+    if (config.integration_ready) integrationReady = true;
+    adjustments.push({ source: "tech_stack", detected: signalKey });
+  }
+
+  const plugins = extractTextEntries(techStack, ["plugins", "detected_plugins", "technologies"]);
+  const detectedCurrencyPlugins = plugins.filter((plugin) => {
+    const token = normalizeLookupToken(plugin);
+    return MULTI_CURRENCY_TECH_SIGNALS.some((sig) => token.includes(normalizeLookupToken(sig)));
+  });
+  if (detectedCurrencyPlugins.length > 0) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.15;
+    adjustments.push({ source: "multi_currency_plugins", count: detectedCurrencyPlugins.length });
+  }
+
+  const siteCurrencies = extractTextEntries(techStack, ["currencies_detected", "currencies_on_site", "site_currencies", "pricing_currencies"]);
+  if (siteCurrencies.length >= 2) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.12;
+    if (siteCurrencies.length >= 3) {
+      motionBoosts["FX Forwards"] = (motionBoosts["FX Forwards"] || 0) + 0.08;
+    }
+    adjustments.push({ source: "site_currencies", currencies: siteCurrencies.slice(0, 8) });
+  }
+
+  const scaledMotionBoosts = {};
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: adjustments.length > 0,
+    motion_boosts: scaledMotionBoosts,
+    competitor_signals: competitorSignals,
+    switching_delta: Math.max(-0.15, Math.min(0.2, switchingDelta * scaler)),
+    b2c_confirmed: b2cConfirmed,
+    integration_ready: integrationReady,
+    adjustments,
+  };
+}
+
+function scoreHiringSignals(hiringData, freshnessScale = 1) {
+  if (!hiringData || typeof hiringData !== "object") {
+    return {
+      applied: false,
+      urgency_boost: 0,
+      pain_boost: 0,
+      propensity_boost: 0,
+      headcount_urgency_boost: 0,
+      motion_boosts: {},
+      velocity_triggers: [],
+      adjustments: [],
+    };
+  }
+
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  let urgencyBoost = 0;
+  let painBoost = 0;
+  const motionBoosts = {};
+  const velocityTriggers = [];
+  const adjustments = [];
+
+  const newSeniorHires = asArray(hiringData.new_senior_hires);
+  for (const hire of newSeniorHires) {
+    const role = String(hire?.role || "").trim();
+    if (!role) continue;
+    const roleToken = normalizeLookupToken(role);
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.urgency)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      const monthsSinceHire = hire?.start_date
+        ? Math.max(0, (Date.now() - new Date(hire.start_date).getTime()) / (30 * 86400000))
+        : 6;
+      const recencyMultiplier = monthsSinceHire <= 3 ? 1 : monthsSinceHire <= 6 ? 0.7 : 0.4;
+      const delta = Number(config.boost || 0) * recencyMultiplier;
+      urgencyBoost += delta;
+      if (config.velocity_trigger) velocityTriggers.push(config.velocity_trigger);
+      adjustments.push({ type: "new_senior_hire", role, months_since: Math.round(monthsSinceHire), boost: Math.round(delta * 100) / 100 });
+      break;
+    }
+  }
+
+  const openRoleGroups = [
+    ...asArray(hiringData.finance_roles_open),
+    ...asArray(hiringData.treasury_roles_open),
+    ...asArray(hiringData.international_roles_open),
+    ...asArray(hiringData.ecommerce_roles_open),
+    ...asArray(hiringData.open_roles),
+  ];
+
+  for (const roleValue of openRoleGroups) {
+    const role = String(roleValue?.role || roleValue || "").trim();
+    if (!role) continue;
+    const roleToken = normalizeLookupToken(role);
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.motion_signals)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      for (const [motion, boost] of Object.entries(config.motions || {})) {
+        motionBoosts[motion] = (motionBoosts[motion] || 0) + (Number(boost || 0) * 0.6);
+      }
+      painBoost += Number(config.pain_boost || 0) * 0.6;
+      adjustments.push({ type: "open_role", role, pattern });
+      break;
+    }
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.urgency)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      urgencyBoost += Number(config.boost || 0) * 0.5;
+      adjustments.push({ type: "open_urgency_role", role });
+      break;
+    }
+  }
+
+  const headcountGrowthPctRaw = toFiniteNumber(hiringData.headcount_growth_pct, NaN);
+  const employeeCount = toFiniteNumber(hiringData.employee_count, NaN);
+  const employeeCount12mAgo = toFiniteNumber(hiringData.employee_count_12m_ago, NaN);
+  const derivedGrowth = Number.isFinite(employeeCount) && Number.isFinite(employeeCount12mAgo) && employeeCount12mAgo > 0
+    ? ((employeeCount - employeeCount12mAgo) / employeeCount12mAgo) * 100
+    : NaN;
+  const growthPct = Number.isFinite(headcountGrowthPctRaw) ? headcountGrowthPctRaw : derivedGrowth;
+
+  let headcountPropensityBoost = 0;
+  let headcountUrgencyBoost = 0;
+  if (Number.isFinite(growthPct)) {
+    for (const band of HEADCOUNT_GROWTH_THRESHOLDS) {
+      if (growthPct < band.min_pct) continue;
+      headcountPropensityBoost = Number(band.propensity_boost || 0);
+      headcountUrgencyBoost = Number(band.urgency_boost || 0);
+      if (growthPct >= 20) velocityTriggers.push("headcount_growth");
+      adjustments.push({ type: "headcount_growth", pct: Math.round(growthPct), band: band.band });
+      break;
+    }
+  }
+
+  const totalOpenRoles = toFiniteNumber(hiringData.total_open_roles, 0);
+  if (totalOpenRoles >= 20) {
+    headcountPropensityBoost += 0.04;
+    adjustments.push({ type: "total_open_roles", count: totalOpenRoles });
+  }
+
+  const scaledMotionBoosts = {};
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: adjustments.length > 0,
+    urgency_boost: Math.min(urgencyBoost * scaler, 0.25),
+    pain_boost: Math.min(painBoost * scaler, 0.15),
+    propensity_boost: headcountPropensityBoost * scaler,
+    headcount_urgency_boost: headcountUrgencyBoost * scaler,
+    motion_boosts: scaledMotionBoosts,
+    velocity_triggers: [...new Set(velocityTriggers)],
+    adjustments,
+  };
+}
+
+function scoreWebsiteIntelligence(websiteData, freshnessScale = 1) {
+  if (!websiteData || typeof websiteData !== "object") {
+    return {
+      applied: false,
+      motion_boosts: {},
+      pain_boost: 0,
+      b2c_confirmed: false,
+      employee_count_override: null,
+      adjustments: [],
+    };
+  }
+
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  const motionBoosts = {};
+  let painBoost = 0;
+  let b2cConfirmed = false;
+  const adjustments = [];
+
+  const pricingCurrencies = extractTextEntries(websiteData, ["pricing_currencies", "currencies_on_pricing_page", "site_currencies", "currencies"]);
+  if (pricingCurrencies.length >= 2) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.18;
+    if (pricingCurrencies.length >= 3) {
+      motionBoosts["FX Forwards"] = (motionBoosts["FX Forwards"] || 0) + 0.10;
+    }
+    adjustments.push({ source: "pricing_currencies", count: pricingCurrencies.length });
+  }
+
+  const internationalShipping = !!websiteData.international_shipping;
+  const shippingCountries = toFiniteNumber(websiteData.shipping_countries, 0);
+  if (internationalShipping) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.12;
+    if (shippingCountries >= 20) {
+      motionBoosts["FX Forwards"] = (motionBoosts["FX Forwards"] || 0) + 0.08;
+    }
+    adjustments.push({ source: "international_shipping", countries: shippingCountries });
+  }
+
+  const officeLocations = extractTextEntries(websiteData, ["office_locations", "locations", "regional_offices"]);
+  if (officeLocations.length >= 3) {
+    motionBoosts["Cards"] = (motionBoosts["Cards"] || 0) + 0.12;
+    motionBoosts["Spend Management"] = (motionBoosts["Spend Management"] || 0) + 0.10;
+    painBoost += 0.06;
+    adjustments.push({ source: "multi_location", count: officeLocations.length });
+  }
+
+  const internationalOffices = officeLocations.filter((location) => {
+    const token = normalizeLookupToken(location);
+    if (!token) return false;
+    return !/(london|uk|england|scotland|wales|northern ireland)/i.test(token);
+  });
+  if (internationalOffices.length > 0) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.10;
+    adjustments.push({ source: "international_offices", count: internationalOffices.length });
+  }
+
+  const customerType = normalizeLookupToken(websiteData.customer_type);
+  if (customerType.includes("b2c") || customerType.includes("consumer")) {
+    b2cConfirmed = true;
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.12;
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.10;
+    adjustments.push({ source: "customer_type", type: "b2c" });
+  }
+
+  const websiteEmployees = toFiniteNumber(websiteData.employee_count_claimed, toFiniteNumber(websiteData.employee_count, 0));
+  if (websiteEmployees >= 200) {
+    motionBoosts["Cards"] = (motionBoosts["Cards"] || 0) + 0.10;
+    motionBoosts["Spend Management"] = (motionBoosts["Spend Management"] || 0) + 0.08;
+    painBoost += 0.04;
+    adjustments.push({ source: "employee_count", value: websiteEmployees });
+  }
+
+  const scaledMotionBoosts = {};
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: adjustments.length > 0,
+    motion_boosts: scaledMotionBoosts,
+    pain_boost: Math.min(painBoost * scaler, 0.12),
+    b2c_confirmed: b2cConfirmed,
+    employee_count_override: websiteEmployees > 0 ? websiteEmployees : null,
+    adjustments,
+  };
+}
+
+function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
+  if (!marketingData || typeof marketingData !== "object") {
+    return {
+      applied: false,
+      motion_boosts: {},
+      pain_boost: 0,
+      commercial_value_boost: 0,
+      adjustments: [],
+    };
+  }
+
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  const motionBoosts = {};
+  let painBoost = 0;
+  let commercialValueBoost = 0;
+  const adjustments = [];
+
+  const monthlyTraffic = toFiniteNumber(
+    marketingData.monthly_web_traffic,
+    toFiniteNumber(marketingData.web_traffic, 0)
+  );
+
+  if (monthlyTraffic >= 500_000) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.15;
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.12;
+    commercialValueBoost += 0.08;
+    adjustments.push({ source: "high_traffic", monthly: monthlyTraffic });
+  } else if (monthlyTraffic >= 100_000) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.08;
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.06;
+    commercialValueBoost += 0.04;
+    adjustments.push({ source: "moderate_traffic", monthly: monthlyTraffic });
+  }
+
+  const adSpendValue = extractApproxNumber(marketingData.estimated_monthly_ad_spend ?? marketingData.estimated_ad_spend);
+  if (Number.isFinite(adSpendValue) && adSpendValue >= 50_000) {
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.15;
+    painBoost += 0.06;
+    adjustments.push({ source: "ad_spend", level: "high" });
+  } else if (Number.isFinite(adSpendValue) && adSpendValue >= 20_000) {
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.08;
+    painBoost += 0.03;
+    adjustments.push({ source: "ad_spend", level: "moderate" });
+  }
+
+  const geography = marketingData.traffic_geography && typeof marketingData.traffic_geography === "object"
+    ? marketingData.traffic_geography
+    : {};
+  const ukShare = toFiniteNumber(geography.UK, toFiniteNumber(geography.uk, 100));
+  if (ukShare < 70) {
+    motionBoosts["FX"] = (motionBoosts["FX"] || 0) + 0.10;
+    if (ukShare < 50) {
+      motionBoosts["FX Forwards"] = (motionBoosts["FX Forwards"] || 0) + 0.06;
+    }
+    adjustments.push({ source: "international_traffic", uk_pct: ukShare });
+  }
+
+  const scaledMotionBoosts = {};
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: adjustments.length > 0,
+    motion_boosts: scaledMotionBoosts,
+    pain_boost: Math.min(painBoost * scaler, 0.10),
+    commercial_value_boost: Math.max(0, commercialValueBoost * scaler),
+    adjustments,
+  };
+}
+
+function scoreReputationSignals(reputationData, freshnessScale = 1) {
+  if (!reputationData || typeof reputationData !== "object") {
+    return {
+      applied: false,
+      motion_boosts: {},
+      pain_boost: 0,
+      adjustments: [],
+    };
+  }
+
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  const motionBoosts = {};
+  let painBoost = 0;
+  const adjustments = [];
+
+  const paymentComplaints = toFiniteNumber(reputationData.payment_related_complaints, 0);
+  const checkoutComplaints = toFiniteNumber(reputationData.checkout_related_complaints, 0);
+  const totalReviews = toFiniteNumber(reputationData.trustpilot_review_count, 0);
+
+  if (paymentComplaints >= 5 || (totalReviews > 500 && paymentComplaints >= 3)) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.10;
+    painBoost += 0.06;
+    adjustments.push({ source: "payment_complaints", count: paymentComplaints });
+  }
+
+  if (checkoutComplaints >= 3) {
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.08;
+    painBoost += 0.04;
+    adjustments.push({ source: "checkout_complaints", count: checkoutComplaints });
+  }
+
+  if (totalReviews >= 1000) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.06;
+    adjustments.push({ source: "high_review_volume", count: totalReviews });
+  }
+
+  const scaledMotionBoosts = {};
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: adjustments.length > 0,
+    motion_boosts: scaledMotionBoosts,
+    pain_boost: Math.min(painBoost * scaler, 0.10),
+    adjustments,
+  };
+}
+
+function scoreOwnershipStructure(ownershipData, freshnessScale = 1) {
+  if (!ownershipData || typeof ownershipData !== "object") {
+    return {
+      applied: false,
+      classified_as: "unknown",
+      switching_feasibility_delta: 0,
+      urgency_boost: 0,
+      motion_boosts: {},
+      pain_boost: 0,
+      evidence: {
+        significant_corporate_controllers_count: 0,
+        non_uk_significant_corporate_controllers_count: 0,
+      },
+    };
+  }
+
+  const structure = normalizeLookupToken(ownershipData.structure);
+  const peBacked = ownershipData.pe_backed === true;
+  const parentCompany = ownershipData.parent_company || null;
+  const parentCountry = normalizeLookupToken(ownershipData.parent_country);
+  const significantCorporateCount = toFiniteNumber(
+    ownershipData.significant_corporate_controllers_count,
+    Array.isArray(ownershipData.significant_corporate_controllers)
+      ? ownershipData.significant_corporate_controllers.length
+      : 0
+  );
+  const nonUkSignificantCorporateCount = toFiniteNumber(
+    ownershipData.non_uk_significant_corporate_controllers_count,
+    Array.isArray(ownershipData.non_uk_significant_corporate_controllers)
+      ? ownershipData.non_uk_significant_corporate_controllers.length
+      : 0
+  );
+  const hasNonUkSignificantCorporateController = nonUkSignificantCorporateCount >= 1;
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+
+  let profile = null;
+  let classifiedAs = "unknown";
+  let nonUkCorporateMultiplier = 1;
+
+  if (peBacked) {
+    profile = OWNERSHIP_SCORING_EFFECTS.pe_backed;
+    classifiedAs = "pe_backed";
+  } else if (hasNonUkSignificantCorporateController) {
+    profile = OWNERSHIP_SCORING_EFFECTS.foreign_subsidiary;
+    classifiedAs = "foreign_subsidiary";
+    nonUkCorporateMultiplier = Math.min(1.6, 1 + ((nonUkSignificantCorporateCount - 1) * 0.12));
+  } else if (parentCompany && parentCountry && parentCountry !== "uk" && parentCountry !== "united kingdom") {
+    profile = OWNERSHIP_SCORING_EFFECTS.foreign_subsidiary;
+    classifiedAs = "foreign_subsidiary";
+  } else if (structure.includes("family") || structure.includes("owner operator") || structure.includes("owner_operator")) {
+    profile = OWNERSHIP_SCORING_EFFECTS.family_owned;
+    classifiedAs = "family_owned";
+  } else if (structure.includes("public") || structure.includes("plc")) {
+    profile = OWNERSHIP_SCORING_EFFECTS.public_company;
+    classifiedAs = "public_company";
+  }
+
+  if (!profile) {
+    return {
+      applied: false,
+      classified_as: "unknown",
+      switching_feasibility_delta: 0,
+      urgency_boost: 0,
+      motion_boosts: {},
+      pain_boost: 0,
+      evidence: {
+        significant_corporate_controllers_count: significantCorporateCount,
+        non_uk_significant_corporate_controllers_count: nonUkSignificantCorporateCount,
+      },
+    };
+  }
+
+  const motionBoosts = {};
+  for (const [motion, boost] of Object.entries(profile.motion_boosts || {})) {
+    motionBoosts[motion] = Math.round((Number(boost || 0) * nonUkCorporateMultiplier * scaler) * 1000) / 1000;
+  }
+
+  return {
+    applied: true,
+    classified_as: classifiedAs,
+    switching_feasibility_delta: Number(profile.switching_feasibility_delta || 0) * nonUkCorporateMultiplier * scaler,
+    urgency_boost: Number(profile.urgency_boost || 0) * nonUkCorporateMultiplier * scaler,
+    motion_boosts: motionBoosts,
+    pain_boost: Number(profile.pain_boost || 0) * nonUkCorporateMultiplier * scaler,
+    evidence: {
+      significant_corporate_controllers_count: significantCorporateCount,
+      non_uk_significant_corporate_controllers_count: nonUkSignificantCorporateCount,
+      has_non_uk_significant_corporate_controller: hasNonUkSignificantCorporateController,
+      source: ownershipData.source || null,
+    },
+  };
+}
+
+function classifyBusinessModel(params = {}) {
+  const industries = asArray(params.industries);
+  const techStackSignals = params.techStackSignals || {};
+  const websiteData = params.websiteData || {};
+  const marketingData = params.marketingData || {};
+  const reputationData = params.reputationData || {};
+  const filingText = String(params.filingText || "");
+
+  let b2cScore = 0;
+  let b2bScore = 0;
+  const signals = [];
+
+  const b2cIndustries = ["retail", "ecommerce", "hospitality", "food", "travel", "restaurant"];
+  const b2bIndustries = ["consulting", "construction", "manufacturing", "logistics", "freight", "it", "saas"];
+
+  for (const industry of industries) {
+    if (b2cIndustries.includes(industry)) {
+      b2cScore += 0.25;
+      signals.push({ source: "industry", type: "b2c", value: industry });
+    }
+    if (b2bIndustries.includes(industry)) {
+      b2bScore += 0.25;
+      signals.push({ source: "industry", type: "b2b", value: industry });
+    }
+  }
+
+  if (techStackSignals?.b2c_confirmed) {
+    b2cScore += 0.30;
+    signals.push({ source: "tech_stack", type: "b2c" });
+  }
+
+  const customerType = normalizeLookupToken(websiteData.customer_type);
+  if (customerType.includes("b2c") || customerType.includes("consumer")) {
+    b2cScore += 0.25;
+    signals.push({ source: "website", type: "b2c" });
+  }
+  if (customerType.includes("b2b") || customerType.includes("enterprise")) {
+    b2bScore += 0.25;
+    signals.push({ source: "website", type: "b2b" });
+  }
+
+  const reviewCount = toFiniteNumber(reputationData.trustpilot_review_count, 0);
+  if (reviewCount >= 500) {
+    b2cScore += 0.20;
+    signals.push({ source: "reviews", type: "b2c" });
+  }
+
+  const monthlyTraffic = toFiniteNumber(marketingData.monthly_web_traffic, toFiniteNumber(marketingData.web_traffic, 0));
+  if (monthlyTraffic >= 200_000) {
+    b2cScore += 0.15;
+    signals.push({ source: "traffic", type: "b2c" });
+  }
+
+  if (/(?:consumer|customer|retail|checkout|storefront|shop|basket)/i.test(filingText)) b2cScore += 0.10;
+  if (/(?:client|contract|invoice|tender|procurement|b2b)/i.test(filingText)) b2bScore += 0.10;
+
+  const total = b2cScore + b2bScore;
+  const classification = total === 0
+    ? "unknown"
+    : b2cScore > (b2bScore * 1.5)
+      ? "B2C"
+      : b2bScore > (b2cScore * 1.5)
+        ? "B2B"
+        : "hybrid";
+
+  return {
+    classification,
+    b2c_score: Math.round(b2cScore * 100) / 100,
+    b2b_score: Math.round(b2bScore * 100) / 100,
+    confidence: total > 0.5 ? "high" : total > 0.25 ? "medium" : "low",
+    signals,
+  };
+}
+
+function applyBusinessModelCalibration(motionScores, classification) {
+  const weights = BUSINESS_MODEL_MOTION_WEIGHTS[classification] || {};
+  const adjustments = [];
+
+  for (const [motion, multiplier] of Object.entries(weights)) {
+    if (!motionScores[motion]) continue;
+    if (Math.abs(Number(multiplier || 1) - 1) < 0.001) continue;
+    const raw = Number(motionScores[motion].score || 0);
+    const adjusted = clamp01(raw * Number(multiplier || 1));
+    const delta = Math.round((adjusted - raw) * 100) / 100;
+    if (Math.abs(delta) < 0.001) continue;
+    motionScores[motion].score = adjusted;
+    motionScores[motion].business_model_multiplier = Number(multiplier || 1);
+    adjustments.push({ motion, multiplier: Number(multiplier || 1), delta });
+  }
+
+  return { classification, adjustments };
+}
+
+function classifyMotionVelocity(bestMotion) {
+  return MOTION_VELOCITY_CLASS[bestMotion] || { class: "unknown", typical_months: 6, gp_velocity: 0.5 };
 }
 
 function getFilingRecencyProfile(filingDate) {
@@ -598,6 +1560,7 @@ function estimateConversionVelocity(params = {}) {
   const filingRecency = params.filingRecency || { freshness_signal: 0.5, days_old: null };
   const switchingFeasibility = params.switchingFeasibility || { score: 0.5 };
   const competitors = params.competitors || [];
+  const brandAwareness = normalizeLookupToken(params.brandAwareness || "unknown");
 
   let score = 0.32;
   const triggers = [];
@@ -644,6 +1607,14 @@ function estimateConversionVelocity(params = {}) {
     triggers.push("sticky_incumbent");
   }
 
+  if (brandAwareness === "known retail") {
+    score += 0.06;
+    triggers.push("brand_aware_retail");
+  } else if (brandAwareness === "known business") {
+    score += 0.12;
+    triggers.push("brand_aware_business");
+  }
+
   if (triggers.length === 0) {
     score -= 0.08;
   } else if (triggers.length >= 3) {
@@ -662,7 +1633,7 @@ function estimateConversionVelocity(params = {}) {
   };
 }
 
-function buildConfidenceInterval(score, evidenceConfidence, filingRecency, textLength, motionScores) {
+function buildConfidenceInterval(score, evidenceConfidence, filingRecency, textLength, motionScores, enrichmentMeta = {}) {
   const confidence = clamp01(evidenceConfidence);
   const recencyMultiplier = clamp01(filingRecency?.signal_multiplier ?? 0.6);
   const normalizedTextLength = Number(textLength || 0);
@@ -673,6 +1644,13 @@ function buildConfidenceInterval(score, evidenceConfidence, filingRecency, textL
   plusMinus += (1 - recencyMultiplier) * 0.14;
   if (normalizedTextLength < 500) plusMinus += 0.08;
   if (activeMotions < 2) plusMinus += 0.05;
+
+  const enrichmentSources = Number(enrichmentMeta?.enrichment_source_count || 0);
+  if (enrichmentSources >= 4) plusMinus -= 0.06;
+  else if (enrichmentSources >= 2) plusMinus -= 0.03;
+  else if (enrichmentSources >= 1) plusMinus -= 0.01;
+
+  if (enrichmentMeta?.tech_stack_confirmed) plusMinus -= 0.02;
 
   plusMinus = Math.min(0.38, Math.max(0.04, plusMinus));
 
@@ -685,6 +1663,7 @@ function buildConfidenceInterval(score, evidenceConfidence, filingRecency, textL
   if (recencyMultiplier < 0.7) reasons.push("stale_filing_signals");
   if (activeMotions < 2) reasons.push("limited_motion_evidence");
   if (confidence < 0.55) reasons.push("low_evidence_confidence");
+  if (enrichmentSources >= 1) reasons.push("enrichment_supported");
 
   return {
     lower: Math.round(lower * 100) / 100,
@@ -705,7 +1684,8 @@ function computeDataFingerprint(meta = {}) {
   const filingCount = Number(meta.filing_count || 0);
   const turnover = Number(meta.turnover || 0);
   const chargeMarker = meta.charge_marker || "none";
-  return `${filingDate}|${textLength}|${filingCount}|${turnover}|${chargeMarker}`;
+  const enrichmentMarker = meta.enrichment_marker || "none";
+  return `${filingDate}|${textLength}|${filingCount}|${turnover}|${chargeMarker}|${enrichmentMarker}`;
 }
 
 function deriveScoreVolatility(previousScore, nextScore, dataFingerprint) {
@@ -983,7 +1963,7 @@ function detectCreditGapPenalty(text, competitors, chargeSummary) {
   };
 }
 
-function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary, competitorTuning = null) {
+function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary, competitorTuning = null, enrichmentTuning = null) {
   const rawText = String(text || "");
   const outstandingCharges = Number(chargeSummary?.outstanding_count || 0);
   const uniqueLenders = Number(chargeSummary?.unique_lenders || 0);
@@ -1049,12 +2029,30 @@ function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary
     adjustments.push({ reason: "competitor_specific_feasibility", impact: competitorFeasibilityDelta });
   }
 
+  const techStackSwitchingDelta = Number(enrichmentTuning?.techStackSwitchingDelta || 0);
+  if (techStackSwitchingDelta !== 0) {
+    score += Math.max(-0.2, Math.min(0.2, techStackSwitchingDelta));
+    adjustments.push({ reason: "tech_stack_switching_signal", impact: Math.max(-0.2, Math.min(0.2, techStackSwitchingDelta)) });
+  }
+
+  const ownershipSwitchingDelta = Number(enrichmentTuning?.ownershipSwitchingDelta || 0);
+  if (ownershipSwitchingDelta !== 0) {
+    score += Math.max(-0.2, Math.min(0.2, ownershipSwitchingDelta));
+    adjustments.push({ reason: "ownership_structure", impact: Math.max(-0.2, Math.min(0.2, ownershipSwitchingDelta)) });
+  }
+
+  if (enrichmentTuning?.integrationReady) {
+    score += 0.04;
+    adjustments.push({ reason: "integration_ready_stack", impact: 0.04 });
+  }
+
   return {
     score: clamp01(score),
     has_credit_signals: hasCreditSignals,
     has_multi_bank_signals: hasMultiBankSignals,
     has_long_tenure_incumbent: hasLongTenureIncumbent,
     has_strong_bank_incumbent: hasStrongBankIncumbent,
+    integration_ready_stack: !!enrichmentTuning?.integrationReady,
     charge_data_available: !!chargeSummary,
     charge_summary: chargeSummary ? {
       outstanding_count: outstandingCharges,
@@ -1240,6 +2238,21 @@ export function scoreCompany(companyNumber) {
   const previousStored = getSetting(`score_${companyNumber}`, null);
   const filingRecency = getFilingRecencyProfile(latestFilingDate);
 
+  const techStackEnvelope = resolveEnrichmentPayload(`tech_stack_${companyNumber}`, "tech_stack");
+  const websiteEnvelope = resolveEnrichmentPayload(`website_intelligence_${companyNumber}`, "website");
+  const marketingEnvelope = resolveEnrichmentPayload(`marketing_intelligence_${companyNumber}`, "marketing");
+  const reputationEnvelope = resolveEnrichmentPayload(`reputation_${companyNumber}`, "reputation");
+  const hiringEnvelope = resolveEnrichmentPayload(`hiring_signals_${companyNumber}`, "hiring_signals");
+  const ownershipEnvelope = resolveEnrichmentPayload(`ownership_${companyNumber}`, "ownership");
+
+   const brandAwarenessRaw = getSetting(
+     `brand_awareness_${companyNumber}`,
+     getSetting(`brand_awareness_status_${companyNumber}`, "unknown")
+   );
+   const brandAwareness = typeof brandAwarenessRaw === "string"
+     ? brandAwarenessRaw
+     : (brandAwarenessRaw?.status || brandAwarenessRaw?.level || "unknown");
+
   const motionScores = {};
 
   for (const motion of PRODUCT_MOTIONS) {
@@ -1253,40 +2266,127 @@ export function scoreCompany(companyNumber) {
   }
 
   const industries = detectIndustry(text);
+  const industryProductFitHint = computeIndustryProductFitHint(industries);
   const priorCategories = inferIndustryPriorCategories(text, industries);
   const qualificationGates = applyMotionQualificationGates(motionScores, text);
   const sparsePriors = applySparseDataIndustryPriors(motionScores, priorCategories, textLength);
   const industryCalibration = applyIndustryMotionCalibration(motionScores, industries, text);
   const filingDecay = applyFilingRecencyDecay(motionScores, filingRecency);
   const competitors = detectCompetitors(text);
+
+   const techSignals = scoreTechStackSignals(techStackEnvelope.data, techStackEnvelope.decay_multiplier || 0);
+   const techMotionAdjustments = applyMotionBoostMap(motionScores, techSignals.motion_boosts, "tech_stack", 0.35, 1);
+   mergeCompetitorSignals(competitors, techSignals.competitor_signals);
+
   const competitorMotionTuning = applyCompetitorSpecificMotionAdjustments(motionScores, competitors);
+
+   const webSignals = scoreWebsiteIntelligence(websiteEnvelope.data, websiteEnvelope.decay_multiplier || 0);
+   const webMotionAdjustments = applyMotionBoostMap(motionScores, webSignals.motion_boosts, "website", 0.28, 1);
+
+   const mktSignals = scoreMarketingIntelligence(marketingEnvelope.data, marketingEnvelope.decay_multiplier || 0);
+   const marketingMotionAdjustments = applyMotionBoostMap(motionScores, mktSignals.motion_boosts, "marketing", 0.24, 1);
+
+   const repSignals = scoreReputationSignals(reputationEnvelope.data, reputationEnvelope.decay_multiplier || 0);
+   const reputationMotionAdjustments = applyMotionBoostMap(motionScores, repSignals.motion_boosts, "reputation", 0.2, 1);
+
+   const ownershipSignals = scoreOwnershipStructure(ownershipEnvelope.data, ownershipEnvelope.decay_multiplier || 0);
+   const ownershipMotionAdjustments = applyMotionBoostMap(motionScores, ownershipSignals.motion_boosts, "ownership", 0.2, 1);
+
+   const qualSignals = detectQualificationSignals(text);
+   const hiringSignals = scoreHiringSignals(hiringEnvelope.data, hiringEnvelope.decay_multiplier || 0);
+   const hiringMotionAdjustments = applyMotionBoostMap(motionScores, hiringSignals.motion_boosts, "hiring", 0.25, 1);
+   if (hiringSignals.applied) {
+     for (const trigger of hiringSignals.velocity_triggers || []) {
+       if (trigger === "new_finance_leader") {
+         qualSignals.positive.push({ signal: "New CFO/FD", weight: 0.15, source: "hiring" });
+       } else if (trigger === "headcount_growth") {
+         qualSignals.positive.push({ signal: "Headcount growth", weight: 0.1, source: "hiring" });
+       }
+     }
+   }
+
+   const businessModel = classifyBusinessModel({
+     industries,
+     techStackSignals: techSignals,
+     websiteData: websiteEnvelope.data,
+     marketingData: marketingEnvelope.data,
+     reputationData: reputationEnvelope.data,
+     filingText: text,
+   });
+   const businessModelCalibration = applyBusinessModelCalibration(motionScores, businessModel.classification);
+
   const motionSummary = recomputeMotionWeightsAndFit(motionScores);
 
   const productFitScore = motionSummary.product_fit_score;
   const bestMotionScore = motionSummary.best_score;
   const bestMotion = motionSummary.best_motion;
-  const commercialValue = scoreCommercialValue(turnover);
+  const commercialValue = clamp01(scoreCommercialValue(turnover) + Number(mktSignals.commercial_value_boost || 0));
   const growth = scoreGrowth(filings);
-  const employees = extractEmployeeCount(text);
+  const employeesFromFiling = extractEmployeeCount(text);
+  const employees = webSignals.employee_count_override || employeesFromFiling;
   const competitorContextBase = scoreCompetitorContext(competitors);
   const competitorScore = clamp01(competitorContextBase + Number(competitorMotionTuning.competitor_context_delta || 0));
-  const qualSignals = detectQualificationSignals(text);
-  const switchingFeasibility = scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary, competitorMotionTuning);
+
+  const switchingFeasibility = scoreSwitchingFeasibility(
+    text,
+    competitors,
+    qualSignals,
+    chargeSummary,
+    competitorMotionTuning,
+    {
+      techStackSwitchingDelta: techSignals.switching_delta || 0,
+      ownershipSwitchingDelta: ownershipSignals.switching_feasibility_delta || 0,
+      integrationReady: !!techSignals.integration_ready,
+    }
+  );
+
   const evidenceConfidenceRaw = computeEvidenceConfidence(text, filings, motionScores);
-  const evidenceConfidence = clamp01(
+  const enrichmentSourceCount = [
+    techSignals.applied,
+    webSignals.applied,
+    mktSignals.applied,
+    repSignals.applied,
+    hiringSignals.applied,
+    ownershipSignals.applied,
+  ].filter(Boolean).length;
+  const evidenceConfidenceBase = clamp01(
     (evidenceConfidenceRaw * 0.72)
     + (Number(filingRecency.signal_multiplier || 0.55) * 0.28)
     - (sparsePriors.applied ? 0.08 : 0)
   );
+  const enrichmentConfidenceBoost = Math.min(enrichmentSourceCount * 0.04, 0.15);
+  const evidenceConfidence = clamp01(evidenceConfidenceBase + enrichmentConfidenceBoost);
 
   const positiveBoost = qualSignals.positive.reduce((s, sig) => s + sig.weight, 0);
   const negativeImpact = qualSignals.negative.reduce((s, sig) => s + sig.weight, 0);
-  const urgencyScore = Math.min(
+  let urgencyScore = Math.min(
     Math.max(
       growth.score + (positiveBoost * Number(filingRecency.signal_multiplier || 0.55)),
       0
     ),
     1
+  );
+  urgencyScore = clamp01(
+    urgencyScore
+    + Number(hiringSignals.urgency_boost || 0)
+    + Number(hiringSignals.headcount_urgency_boost || 0)
+    + Number(ownershipSignals.urgency_boost || 0)
+  );
+
+  let painScore = Math.min(
+    (motionScores["FX"]?.score || 0) * 0.25 +
+    (motionScores["Cards"]?.score || 0) * 0.20 +
+    (motionScores["Spend Management"]?.score || 0) * 0.20 +
+    (motionScores["Merchant Acquiring"]?.score || 0) * 0.20 +
+    (employees && employees > 200 ? 0.15 : employees && employees > 50 ? 0.08 : 0),
+    1
+  );
+  painScore = clamp01(
+    painScore
+    + Number(webSignals.pain_boost || 0)
+    + Number(hiringSignals.pain_boost || 0)
+    + Number(repSignals.pain_boost || 0)
+    + Number(ownershipSignals.pain_boost || 0)
   );
 
   const velocity = estimateConversionVelocity({
@@ -1295,16 +2395,8 @@ export function scoreCompany(companyNumber) {
     filingRecency,
     switchingFeasibility,
     competitors,
+    brandAwareness,
   });
-
-  const painScore = Math.min(
-    (motionScores["FX"]?.score || 0) * 0.25 +
-    (motionScores["Cards"]?.score || 0) * 0.20 +
-    (motionScores["Spend Management"]?.score || 0) * 0.20 +
-    (motionScores["Merchant Acquiring"]?.score || 0) * 0.20 +
-    (employees && employees > 200 ? 0.15 : employees && employees > 50 ? 0.08 : 0),
-    1
-  );
 
   const synergy = computeMotionSynergy(motionScores);
 
@@ -1325,7 +2417,7 @@ export function scoreCompany(companyNumber) {
 
   const fitScore = clamp01(fitScoreBase + Number(synergy.boost || 0));
 
-  const propensityScore = clamp01((urgencyScore * 0.65) + (velocity.score * 0.35));
+  const propensityScore = clamp01((urgencyScore * 0.65) + (velocity.score * 0.35) + Number(hiringSignals.propensity_boost || 0));
   const preGateComposite = (fitScore * 0.6) + (propensityScore * 0.4);
 
   const productFitGate = computeProductFitGate(productFitScore);
@@ -1348,13 +2440,34 @@ export function scoreCompany(companyNumber) {
   compositeScore = Math.round(compositeScore * 100) / 100;
 
   const gpPotentialScore = computeGpPotential(productFitScore, commercialValue, bestMotionScore);
-  const confidenceInterval = buildConfidenceInterval(compositeScore, evidenceConfidence, filingRecency, textLength, motionScores);
+  const confidenceInterval = buildConfidenceInterval(
+    compositeScore,
+    evidenceConfidence,
+    filingRecency,
+    textLength,
+    motionScores,
+    {
+      enrichment_source_count: enrichmentSourceCount,
+      tech_stack_confirmed: techSignals.applied,
+    }
+  );
+
+  const enrichmentMarker = [
+    `tech:${techStackEnvelope.available ? (techStackEnvelope.days_old ?? "na") : "none"}`,
+    `web:${websiteEnvelope.available ? (websiteEnvelope.days_old ?? "na") : "none"}`,
+    `mkt:${marketingEnvelope.available ? (marketingEnvelope.days_old ?? "na") : "none"}`,
+    `rep:${reputationEnvelope.available ? (reputationEnvelope.days_old ?? "na") : "none"}`,
+    `hire:${hiringEnvelope.available ? (hiringEnvelope.days_old ?? "na") : "none"}`,
+    `own:${ownershipEnvelope.available ? (ownershipEnvelope.days_old ?? "na") : "none"}`,
+  ].join("|");
+
   const dataFingerprint = computeDataFingerprint({
     latest_filing_date: latestFilingDate,
     text_length: textLength,
     filing_count: filings.length,
     turnover,
     charge_marker: chargeSummary?.latest_charge_created_on || chargeSummary?.fetched_at || "none",
+    enrichment_marker: enrichmentMarker,
   });
   const volatility = deriveScoreVolatility(previousStored, { composite_score: compositeScore }, dataFingerprint);
 
@@ -1371,8 +2484,10 @@ export function scoreCompany(companyNumber) {
     fit_score: Math.round(fitScore * 100) / 100,
     propensity_score: Math.round(propensityScore * 100) / 100,
     gp_potential_score: gpPotentialScore,
+    motion_velocity: classifyMotionVelocity(bestMotion),
     velocity,
     synergy,
+    business_model: businessModel,
     confidence_interval: confidenceInterval,
     volatility,
     layers: {
@@ -1393,9 +2508,72 @@ export function scoreCompany(companyNumber) {
     charge_summary: chargeSummary,
     filing_recency: filingRecency,
     sparse_priors: sparsePriors,
+    enrichment: {
+      sources_available: enrichmentSourceCount,
+      tech_stack: {
+        ...techSignals,
+        freshness: {
+          stale: techStackEnvelope.stale,
+          days_old: techStackEnvelope.days_old,
+          decay_multiplier: techStackEnvelope.decay_multiplier,
+        },
+      },
+      website: {
+        ...webSignals,
+        freshness: {
+          stale: websiteEnvelope.stale,
+          days_old: websiteEnvelope.days_old,
+          decay_multiplier: websiteEnvelope.decay_multiplier,
+        },
+      },
+      marketing: {
+        ...mktSignals,
+        freshness: {
+          stale: marketingEnvelope.stale,
+          days_old: marketingEnvelope.days_old,
+          decay_multiplier: marketingEnvelope.decay_multiplier,
+        },
+      },
+      reputation: {
+        ...repSignals,
+        freshness: {
+          stale: reputationEnvelope.stale,
+          days_old: reputationEnvelope.days_old,
+          decay_multiplier: reputationEnvelope.decay_multiplier,
+        },
+      },
+      hiring: {
+        ...hiringSignals,
+        freshness: {
+          stale: hiringEnvelope.stale,
+          days_old: hiringEnvelope.days_old,
+          decay_multiplier: hiringEnvelope.decay_multiplier,
+        },
+      },
+      ownership: {
+        ...ownershipSignals,
+        freshness: {
+          stale: ownershipEnvelope.stale,
+          days_old: ownershipEnvelope.days_old,
+          decay_multiplier: ownershipEnvelope.decay_multiplier,
+        },
+      },
+      business_model_calibration: businessModelCalibration,
+      motion_adjustments: {
+        tech_stack: techMotionAdjustments,
+        website: webMotionAdjustments,
+        marketing: marketingMotionAdjustments,
+        reputation: reputationMotionAdjustments,
+        hiring: hiringMotionAdjustments,
+        ownership: ownershipMotionAdjustments,
+      },
+    },
     confidence: {
       evidence: Math.round(evidenceConfidence * 100) / 100,
+      evidence_base: Math.round(evidenceConfidenceBase * 100) / 100,
       evidence_raw: Math.round(evidenceConfidenceRaw * 100) / 100,
+      enrichment_confidence_boost: Math.round(enrichmentConfidenceBoost * 100) / 100,
+      enrichment_source_count: enrichmentSourceCount,
       product_fit_gate: productFitGate,
       confidence_multiplier: Math.round(confidenceMultiplier * 100) / 100,
       credit_gap_penalty: creditGap.penalty,
@@ -1410,6 +2588,9 @@ export function scoreCompany(companyNumber) {
       competitor_tuning: competitorMotionTuning,
       cross_layer_penalty: correlationPenalty,
       industry_calibration: industryCalibration,
+      industry_product_fit_hint: industryProductFitHint,
+      business_model_calibration: businessModelCalibration,
+      switching_adjustments: switchingFeasibility.adjustments,
       pre_gate_composite: Math.round(preGateComposite * 100) / 100,
     },
     score_explanation: buildScoreExplanation({
@@ -1424,6 +2605,7 @@ export function scoreCompany(companyNumber) {
       switchingFeasibility,
     }),
     has_filing_text: !!text,
+    brand_awareness: brandAwareness,
     scored_at: new Date().toISOString(),
   };
 
@@ -1551,7 +2733,8 @@ export function integrateAnalysis(baseResult, analysis) {
 
   const newsSignals = supplementary.news_signals || [];
   const mnaSignals = supplementary.mna_signals || [];
-  const peopleResearch = supplementary.people_research || [];
+  const peopleResearch = supplementary.people_research || supplementary.people_targets || [];
+  const valueNuggets = supplementary.value_nuggets || [];
   const joinedNews = newsSignals.map((n) => `${n.signal || ""} ${n.relevance || ""}`).join(" ");
 
   if (newsSignals.length > 0) {
@@ -1564,6 +2747,9 @@ export function integrateAnalysis(baseResult, analysis) {
   }
   if (peopleResearch.length > 0) {
     boost += Math.min(peopleResearch.length * 0.004, 0.02);
+  }
+  if (valueNuggets.length > 0) {
+    boost += Math.min(valueNuggets.length * 0.003, 0.015);
   }
 
   if (/international|overseas|global|cross[- ]?border|export|import|multi[- ]?currency/i.test(joinedNews)) {
@@ -1601,6 +2787,7 @@ export function integrateAnalysis(baseResult, analysis) {
     newsSignals.length > 0,
     mnaSignals.length > 0,
     peopleResearch.length > 0,
+    valueNuggets.length > 0,
   ];
   const coveredSignals = integrationCoverageSignals.filter(Boolean).length;
   const coverageRatio = integrationCoverageSignals.length > 0
@@ -1650,6 +2837,7 @@ export function integrateAnalysis(baseResult, analysis) {
       news_signals: newsSignals.length,
       mna_signals: mnaSignals.length,
       people_research: peopleResearch.length,
+      value_nuggets: valueNuggets.length,
     },
   };
 

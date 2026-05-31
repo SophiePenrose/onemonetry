@@ -7,6 +7,7 @@ import {
   getMonitoredCompanyCount,
 } from "./db.js";
 import { lookupCompany, isCompaniesHouseConfigured } from "./companies-house.js";
+import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 const INACTIVE_STATUSES = ["dissolved", "liquidation", "converted-closed", "voluntary-arrangement", "insolvency-proceedings"];
@@ -303,7 +304,14 @@ export async function importMonitorListFromCSV(csvContent, source) {
 // --- Weekly monitor scheduler ---
 
 let weeklyMonitorTimer = null;
-let weeklyMonitorStatus = { enabled: false, last_run: null, next_run: null, last_result: null };
+let weeklyMonitorStatus = {
+  enabled: false,
+  last_run: null,
+  next_run: null,
+  last_result: null,
+  schedule: "Saturday evenings at 18:00",
+  timezone: UK_TIMEZONE,
+};
 let staleMonitorTimer = null;
 let staleMonitorStatus = {
   enabled: false,
@@ -314,14 +322,13 @@ let staleMonitorStatus = {
 };
 
 function getNextSaturdayEvening() {
-  const now = new Date();
-  const day = now.getDay();
-  const daysUntilSat = day === 6 ? 7 : (6 - day);
-  const next = new Date(now);
-  next.setDate(now.getDate() + daysUntilSat);
-  next.setHours(18, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 7);
-  return next;
+  return getNextWeeklyZonedRun({
+    timeZone: UK_TIMEZONE,
+    targetWeekday: 6,
+    hour: 18,
+    minute: 0,
+    second: 0,
+  });
 }
 
 export function getWeeklyMonitorStatus() {
