@@ -17,6 +17,6 @@
 - Start the backend **before** the frontend to avoid proxy errors on initial page load.
 - During development, prefer `npm run dev` in `mock-backend/` so Node restarts automatically on backend file changes. Vite already hot-reloads frontend changes.
 - Both services use `npm` (lockfiles are `package-lock.json`).
-- Both services define `lint`, `test`, and build/dev scripts in their `package.json`. `npm run build` in `frontend/` runs `vite build`; `npm test` runs `vitest run` (frontend) and `node --test __tests__/*.test.js` (backend).
+- Both services define `lint` and `test` scripts in their `package.json`. The frontend additionally defines `build`/`dev`/`preview` (`npm run build` runs `vite build`), while the backend defines `start`/`dev` (no backend build step). `npm test` runs `vitest run` (frontend) and `node --test __tests__/*.test.js` (backend).
 - **CI:** every pull request and every push to `main` runs `.github/workflows/ci.yml` (Node 22) — a `Backend (mock-backend tests)` job (`npm ci` + `npm test`) and a `Frontend (build + tests)` job (`npm ci` + `npm run build` + `npm test`). To make CI a hard merge gate, enable branch protection on `main` requiring those two checks (see the README "Continuous integration" section).
 - `mock-backend/companies.json` ships as a single placeholder company — a clean slate intended for real Companies House data loaded via the import pipeline. A fuller 27-company reference dataset with varied product motions (`FX`, `Cards`, `Merchant Acquiring`, etc.) is available in `mock-backend/companies.sample.json`.
