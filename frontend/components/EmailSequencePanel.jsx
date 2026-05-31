@@ -123,7 +123,9 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 503 && data?.retry_needed) {
-          setGenerateError(data.error || "Live generation is temporarily unavailable. Please retry.");
+          const reason = data?.reason ? `Reason: ${data.reason}.` : "";
+          const detail = data?.detail ? ` ${data.detail}` : "";
+          setGenerateError(`${data.error || "Live generation is temporarily unavailable. Please retry."} ${reason}${detail}`.trim());
           return;
         }
 
@@ -389,6 +391,12 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                       const sm = STATUS_META[step.status] || STATUS_META.pending;
                       const rm = REVIEW_META[step.review_status] || REVIEW_META.pending;
                       const isEditing = editingStep === `${seq.id}-${step.step_number}`;
+                      const voicePercentRaw = Number(step.voice_percent ?? step.metrics?.voice_percent);
+                      const hasVoicePercent = Number.isFinite(voicePercentRaw);
+                      const voicePercent = hasVoicePercent ? Math.round(voicePercentRaw) : null;
+                      const voiceDisplayPass = hasVoicePercent
+                        ? (step.metrics?.voice_display_pass ?? voicePercent >= 85)
+                        : false;
 
                       return (
                         <div key={step.step_number} style={{ padding: "12px 0", borderBottom: "1px solid #f8f8f8" }}>
@@ -404,6 +412,18 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                               <span style={{ fontSize: 11, fontWeight: 600, color: rm.color, background: rm.bg, padding: "1px 8px", borderRadius: 8 }}>
                                 {rm.label}
                               </span>
+                              {hasVoicePercent && (
+                                <span style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: voiceDisplayPass ? "#065f46" : "#92400e",
+                                  background: voiceDisplayPass ? "#d1fae5" : "#fef3c7",
+                                  padding: "1px 8px",
+                                  borderRadius: 8,
+                                }}>
+                                  Voice {voicePercent}% {voiceDisplayPass ? "pass" : "review"}
+                                </span>
+                              )}
                               {step.status === "pending" && step.send_delay_days > 0 && (
                                 <span style={{ fontSize: 10, color: "#c27b00", fontStyle: "italic" }}>
                                   Send on: {new Date(Date.now() + step.send_delay_days * 86400000).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}

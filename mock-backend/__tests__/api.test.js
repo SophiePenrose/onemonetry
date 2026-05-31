@@ -1,6 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "path";
@@ -199,12 +200,36 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("GET /api/integrations/status", () => {
+    it("includes enrichment runtime and scheduler controls", async () => {
+      const { status, data } = await fetchJSON("/api/integrations/status");
+      assert.equal(status, 200);
+      assert.equal(typeof data.integrations.tech_enrichment, "object");
+      assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
+      assert.equal(typeof data.integrations.tech_enrichment.defaults?.deep_scan_mode, "string");
+      assert.ok(Array.isArray(data.env_template));
+      assert.ok(data.env_template.includes("TECH_ENRICHMENT_DEEP_SCAN_MODE=auto"));
+      assert.ok(data.env_template.includes("TECH_ENRICHMENT_SEED_ENABLED=true"));
+    });
+  });
+
   describe("GET /api/reports/schedule", () => {
     it("returns Saturday evening schedule", async () => {
       const { status, data } = await fetchJSON("/api/reports/schedule");
       assert.equal(status, 200);
       assert.equal(data.schedule, "Saturday evenings at 18:00");
       assert.ok(data.next_generation);
+    });
+  });
+
+  describe("GET /api/analysis-queue/status", () => {
+    it("returns worker enrichment settings and tech enrichment seeder status", async () => {
+      const { status, data } = await fetchJSON("/api/analysis-queue/status");
+      assert.equal(status, 200);
+      assert.equal(typeof data.enrichment, "object");
+      assert.equal(typeof data.tech_enrichment_seed, "object");
+      assert.equal(typeof data.tech_enrichment_seed.enabled, "boolean");
+      assert.equal(typeof data.tech_enrichment_seed.interval_ms, "number");
     });
   });
 
@@ -253,6 +278,200 @@ describe("API endpoints", () => {
         body: JSON.stringify({ turnover: 1000000 }),
       });
       assert.equal(status, 400);
+    });
+  });
+
+  describe("POST /api/email/validate", () => {
+    it("returns gate-level QC output including voice display metrics", async () => {
+      const { status, data } = await fetchJSON("/api/email/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: "Research note",
+          body: "Reading through your latest filing, what stood out was the treasury friction underneath current scale.",
+          is_initial: true,
+          step_type: "proof",
+        }),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(typeof data.metrics?.voice_percent, "number");
+      assert.equal(typeof data.metrics?.voice_display_pass, "boolean");
+      assert.equal(typeof data.gates?.gate1?.pass, "boolean");
+      assert.equal(typeof data.gates?.gate2?.pass, "boolean");
+      assert.equal(typeof data.gates?.gate3?.pass, "boolean");
+    });
+  });
+
+  describe("Email style profile endpoints", () => {
+    it("stores and returns email style profile configuration", async () => {
+      const updated = await fetchJSON("/api/email/style-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: true,
+          name: "Gemini voice pilot",
+          description: "Prioritise strategic, filing-grounded narrative with calm confidence.",
+          style_prompt: "Use tighter narrative arcs and board-level implication framing before product language.",
+          voice_traits: ["concise", "evidence-led", "non-hype"],
+          preferred_patterns: ["lead with filing observation", "state implication before offer"],
+          avoid_patterns: ["generic pleasantries", "feature laundry lists"],
+          examples: [
+            {
+              label: "Preferred opener",
+              text: "Reading your latest filing, the tension appears less about volume and more about execution consistency across treasury lanes.",
+            },
+          ],
+        }),
+      });
+
+      assert.equal(updated.status, 200);
+      assert.equal(updated.data.saved, true);
+      assert.equal(updated.data.profile.enabled, true);
+      assert.equal(updated.data.profile.name, "Gemini voice pilot");
+
+      const fetched = await fetchJSON("/api/email/style-profile");
+      assert.equal(fetched.status, 200);
+      assert.equal(fetched.data.configured, true);
+      assert.equal(fetched.data.profile.enabled, true);
+      assert.equal(fetched.data.profile.name, "Gemini voice pilot");
+      assert.equal(typeof fetched.data.profile.style_prompt, "string");
+      assert.ok(Array.isArray(fetched.data.profile.examples));
+      assert.ok(fetched.data.profile.examples.length >= 1);
+    });
+  });
+
+  describe("POST /api/email/generate-advanced/shadow", () => {
+    it("returns baseline vs styled shadow outputs without persisting sequence state", async () => {
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Shadow Style Test Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 22000000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const companyId = created.data.company?.id;
+      assert.ok(companyId);
+
+      const shadow = await fetchJSON("/api/email/generate-advanced/shadow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_id: companyId,
+          stakeholder_name: "Morgan Lee",
+          stakeholder_role: "Finance Director",
+          use_style_profile: true,
+          preview_steps: 3,
+        }),
+      });
+
+      assert.equal(shadow.status, 200);
+      assert.equal(shadow.data.preview?.steps, 3);
+      assert.equal(shadow.data.baseline?.style_profile_applied, false);
+      assert.equal(shadow.data.styled?.style_profile_applied, true);
+      assert.ok(Array.isArray(shadow.data.baseline?.steps));
+      assert.ok(Array.isArray(shadow.data.styled?.steps));
+      assert.ok(Array.isArray(shadow.data.comparison?.step_deltas));
+      assert.equal(shadow.data.comparison?.baseline?.steps, 3);
+      assert.equal(shadow.data.comparison?.styled?.steps, 3);
+    });
+  });
+
+  describe("Enrichment endpoints", () => {
+    it("refreshes and reads enrichment snapshot", async () => {
+      const websiteServer = http.createServer((req, res) => {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+
+        if (String(req.url || "").startsWith("/pricing")) {
+          res.end(`
+            <html>
+              <head><title>Pricing</title></head>
+              <body>
+                <p>Starter £29, Growth EUR 89, Pro USD 129</p>
+                <p>International shipping to over 22 countries</p>
+              </body>
+            </html>
+          `);
+          return;
+        }
+
+        res.end(`
+          <html>
+            <head>
+              <title>Enrichment API Test Co</title>
+              <script src="https://js.stripe.com/v3/"></script>
+            </head>
+            <body>
+              <p>Built with WooCommerce and Xero.</p>
+              <p>Add to cart and checkout securely.</p>
+              <a href="/pricing">Pricing</a>
+            </body>
+          </html>
+        `);
+      });
+
+      await new Promise((resolve) => websiteServer.listen(0, "127.0.0.1", resolve));
+      const websitePort = websiteServer.address().port;
+      const websiteUrl = `http://127.0.0.1:${websitePort}`;
+
+      try {
+        const created = await fetchJSON("/api/companies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Enrichment API Test Co",
+            industry: "Technology",
+            segment: "Mid-Market",
+            turnover: 35000000,
+          }),
+        });
+
+        assert.equal(created.status, 201);
+        const companyId = created.data.company.id;
+
+        const refreshed = await fetchJSON(`/api/company/${companyId}/enrichment/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            website: websiteUrl,
+            force: true,
+            deep_scan: true,
+            max_pages: 4,
+          }),
+        });
+
+        assert.equal(refreshed.status, 200);
+        assert.equal(refreshed.data.enrichment_run.updated, true);
+        assert.equal(refreshed.data.enrichment_run.deep_scan_mode, "always");
+        assert.ok((refreshed.data.enrichment_run.technologies || []).includes("Stripe"));
+
+        const snapshot = await fetchJSON(`/api/company/${companyId}/enrichment?include_data=true`);
+        assert.equal(snapshot.status, 200);
+        assert.equal(snapshot.data.enrichment.tech_stack.available, true);
+        assert.equal(snapshot.data.enrichment.website_intelligence.available, true);
+        assert.equal(snapshot.data.enrichment.tech_stack.data?.deep_scan_mode, "always");
+        assert.ok((snapshot.data.enrichment.tech_stack.data?.technologies || []).includes("Stripe"));
+      } finally {
+        websiteServer.close();
+      }
+    });
+  });
+
+  describe("POST /api/import/source3/override", () => {
+    it("rejects requests without company number", async () => {
+      const { status, data } = await fetchJSON("/api/import/source3/override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      assert.equal(status, 400);
+      assert.match(String(data.error || ""), /company_number/i);
     });
   });
 

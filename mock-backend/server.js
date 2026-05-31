@@ -25,6 +25,7 @@ import {
   isCompaniesHouseConfigured,
   lookupCompany,
   lookupCompanyCharges,
+  lookupCompanyOwnership,
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
 } from "./companies-house.js";
@@ -69,6 +70,7 @@ import {
   isStaleMonitorRunning,
   getStaleMonitorProgress,
 } from "./company-monitor.js";
+import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 import {
   getMonitorStats,
   getMonitoredCompanies as dbGetMonitoredCompanies,
@@ -95,6 +97,12 @@ import {
   listClosedWonCompanies,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
+import {
+  runCompanyTechEnrichment,
+  getCompanyEnrichmentSnapshot,
+  getTechEnrichmentRuntimeConfig,
+} from "./tech-enrichment.js";
+import { syncExternalSignals } from "./signal-connectors.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,6 +117,21 @@ app.use(express.json({ limit: "10mb" }));
 app.use(authMiddleware);
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
+const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(
+  String(process.env.IGNORE_RUNTIME_SIGTERM || "").trim().toLowerCase()
+);
+const LIGHTWEIGHT_RUNTIME = ["1", "true", "yes", "on"].includes(
+  String(process.env.LIGHTWEIGHT_RUNTIME || "").trim().toLowerCase()
+);
+const DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC = ["1", "true", "yes", "on"].includes(
+  String(process.env.DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC || "false").trim().toLowerCase()
+);
+
+if (IGNORE_RUNTIME_SIGTERM) {
+  process.on("SIGTERM", () => {
+    console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
+  });
+}
 
 const bulkRemainingState = {
   running: false,
@@ -305,6 +328,15 @@ const SHORTLIST_BACKGROUND_SEED_LIMIT = Number.parseInt(process.env.SHORTLIST_BA
 const SHORTLIST_BACKGROUND_SEED_MAX_ENQUEUE = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_MAX_ENQUEUE || "80", 10);
 const SHORTLIST_BACKGROUND_SEED_QUEUE_SOFT_CAP = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_QUEUE_SOFT_CAP || "180", 10);
 const SHORTLIST_BACKGROUND_SEED_QUEUE_HARD_CAP = Number.parseInt(process.env.SHORTLIST_BACKGROUND_SEED_QUEUE_HARD_CAP || "320", 10);
+const TECH_ENRICHMENT_RUNTIME = getTechEnrichmentRuntimeConfig();
+const TECH_ENRICHMENT_SEED_ENABLED = String(process.env.TECH_ENRICHMENT_SEED_ENABLED || "true").toLowerCase() !== "false";
+const TECH_ENRICHMENT_SEED_INTERVAL_MS = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
+const TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS || "45000", 10);
+const TECH_ENRICHMENT_SEED_LIMIT = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_LIMIT || "1200", 10);
+const TECH_ENRICHMENT_SEED_MAX_REFRESH = Number.parseInt(process.env.TECH_ENRICHMENT_SEED_MAX_REFRESH || "60", 10);
+const TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE = String(process.env.TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE || "off").trim().toLowerCase();
+const EMAIL_STYLE_PROFILE_SETTING_KEY = "email_style_profile_v1";
+const EMAIL_STYLE_PROFILE_VERSION = "1.0";
 const BACKFILL_AUTORUN_ENABLED = String(process.env.BACKFILL_AUTORUN || "true").toLowerCase() !== "false";
 const BACKFILL_AUTORUN_INTERVAL_MS = Number.parseInt(process.env.BACKFILL_AUTORUN_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
 const BACKFILL_AUTORUN_MAX_FILES = Number.parseInt(process.env.BACKFILL_AUTORUN_MAX_FILES || "1", 10);
@@ -313,6 +345,21 @@ const BACKFILL_AUTORUN_BACKLOG_THRESHOLD = Number.parseInt(process.env.BACKFILL_
 const BACKFILL_AUTORUN_CATCHUP_MAX_FILES = Number.parseInt(process.env.BACKFILL_AUTORUN_CATCHUP_MAX_FILES || "3", 10);
 let lastShortlistAutoQueueRunAt = 0;
 let shortlistBackgroundSeedTimer = null;
+let techEnrichmentSeedTimer = null;
+const techEnrichmentSeedStatus = {
+  enabled: false,
+  timer_active: false,
+  running: false,
+  interval_ms: Math.max(60000, Number.isFinite(TECH_ENRICHMENT_SEED_INTERVAL_MS) ? TECH_ENRICHMENT_SEED_INTERVAL_MS : 6 * 60 * 60 * 1000),
+  initial_delay_ms: Math.max(5000, Number.isFinite(TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS) ? TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS : 45000),
+  limit: Math.max(50, Number.isFinite(TECH_ENRICHMENT_SEED_LIMIT) ? TECH_ENRICHMENT_SEED_LIMIT : 1200),
+  max_refresh: Math.max(1, Number.isFinite(TECH_ENRICHMENT_SEED_MAX_REFRESH) ? TECH_ENRICHMENT_SEED_MAX_REFRESH : 60),
+  deep_scan_mode: "off",
+  last_started_at: null,
+  last_completed_at: null,
+  last_result: null,
+  last_error: null,
+};
 let backfillAutoTimer = null;
 
 const backfillAutoStatus = {
@@ -647,6 +694,212 @@ function startShortlistBackgroundSeeder() {
   };
 }
 
+function getTechEnrichmentSeedStatus() {
+  return {
+    ...techEnrichmentSeedStatus,
+    timer_active: !!techEnrichmentSeedTimer,
+  };
+}
+
+async function seedMissingTechEnrichment(options = {}) {
+  const configuredLimit = Number.parseInt(String(options.limit || TECH_ENRICHMENT_SEED_LIMIT), 10) || TECH_ENRICHMENT_SEED_LIMIT;
+  const configuredMaxRefresh = Number.parseInt(String(options.maxRefresh || TECH_ENRICHMENT_SEED_MAX_REFRESH), 10) || TECH_ENRICHMENT_SEED_MAX_REFRESH;
+  const configuredRefreshWindow = Number.parseInt(
+    String(options.refreshWindowDays || TECH_ENRICHMENT_RUNTIME.refresh_window_days),
+    10
+  ) || TECH_ENRICHMENT_RUNTIME.refresh_window_days;
+
+  const limit = Math.max(100, Math.min(configuredLimit, 5000));
+  const maxRefresh = Math.max(1, Math.min(configuredMaxRefresh, 300));
+  const refreshWindowDays = Math.max(1, Math.min(configuredRefreshWindow, 365));
+  const source = toOptionalString(options.source) || "background_tech_enrichment_seed";
+  const deepScanMode =
+    parseDeepScanModeInput(options.deepScanMode)
+    || parseDeepScanModeInput(TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE)
+    || "off";
+
+  const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+  if (shortlist.length === 0) {
+    return {
+      source,
+      scanned: 0,
+      candidates: 0,
+      processed: 0,
+      refreshed: 0,
+      skipped: 0,
+      failed: 0,
+      deep_scan_mode: deepScanMode,
+      refresh_window_days: refreshWindowDays,
+    };
+  }
+
+  const candidates = [];
+  for (const company of shortlist) {
+    if (isClosedWonCompanyNumber(company.company_number)) continue;
+
+    const snapshot = getCompanyEnrichmentSnapshot(company.company_number, { includeData: false });
+    const techNeedsRefresh = !snapshot.tech_stack.available || snapshot.tech_stack.stale;
+    const websiteNeedsRefresh = !snapshot.website_intelligence.available || snapshot.website_intelligence.stale;
+    const marketingNeedsRefresh = !snapshot.marketing_intelligence.available || snapshot.marketing_intelligence.stale;
+
+    if (!techNeedsRefresh && !websiteNeedsRefresh && !marketingNeedsRefresh) continue;
+
+    candidates.push(company);
+    if (candidates.length >= maxRefresh) break;
+  }
+
+  let refreshed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const runs = [];
+
+  for (const company of candidates) {
+    const context = resolveCompanyContextForEnrichment(company.company_number, company);
+    if (!context) {
+      skipped += 1;
+      runs.push({
+        company_number: company.company_number,
+        company_name: company.company_name,
+        status: "unresolved_company",
+        updated: false,
+      });
+      continue;
+    }
+
+    try {
+      const run = await runCompanyTechEnrichment({
+        companyNumber: context.company_number,
+        companyName: context.company_name || company.company_name,
+        companyWebsite: context.company_website,
+        companyDomain: context.company_domain,
+        turnover: context.turnover,
+        force: false,
+        deepScanMode,
+        refreshWindowDays,
+      });
+
+      if (run.updated) {
+        refreshed += 1;
+      } else {
+        skipped += 1;
+      }
+
+      runs.push({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        status: run.status,
+        updated: run.updated === true,
+        scan_mode: run.scan_mode || null,
+      });
+    } catch (err) {
+      failed += 1;
+      runs.push({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        status: "error",
+        updated: false,
+        error: err.message,
+      });
+    }
+  }
+
+  return {
+    source,
+    scanned: shortlist.length,
+    candidates: candidates.length,
+    processed: runs.length,
+    refreshed,
+    skipped,
+    failed,
+    deep_scan_mode: deepScanMode,
+    refresh_window_days: refreshWindowDays,
+    sample: runs.slice(0, 25),
+  };
+}
+
+async function runTechEnrichmentSeedCycle(source = "background_tech_enrichment_seed") {
+  if (techEnrichmentSeedStatus.running) {
+    return {
+      skipped: true,
+      reason: "already_running",
+    };
+  }
+
+  techEnrichmentSeedStatus.running = true;
+  techEnrichmentSeedStatus.last_started_at = new Date().toISOString();
+
+  try {
+    const result = await seedMissingTechEnrichment({
+      limit: techEnrichmentSeedStatus.limit,
+      maxRefresh: techEnrichmentSeedStatus.max_refresh,
+      deepScanMode: techEnrichmentSeedStatus.deep_scan_mode,
+      source,
+    });
+    techEnrichmentSeedStatus.last_result = result;
+    techEnrichmentSeedStatus.last_error = null;
+    return result;
+  } catch (err) {
+    techEnrichmentSeedStatus.last_error = err.message;
+    return {
+      status: "error",
+      error: err.message,
+    };
+  } finally {
+    techEnrichmentSeedStatus.running = false;
+    techEnrichmentSeedStatus.last_completed_at = new Date().toISOString();
+  }
+}
+
+function startTechEnrichmentSeeder() {
+  if (techEnrichmentSeedTimer) {
+    clearInterval(techEnrichmentSeedTimer);
+    techEnrichmentSeedTimer = null;
+  }
+
+  techEnrichmentSeedStatus.enabled = TECH_ENRICHMENT_SEED_ENABLED;
+  techEnrichmentSeedStatus.interval_ms = Math.max(
+    60000,
+    Number.isFinite(TECH_ENRICHMENT_SEED_INTERVAL_MS) ? TECH_ENRICHMENT_SEED_INTERVAL_MS : 6 * 60 * 60 * 1000
+  );
+  techEnrichmentSeedStatus.initial_delay_ms = Math.max(
+    5000,
+    Number.isFinite(TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS) ? TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS : 45000
+  );
+  techEnrichmentSeedStatus.limit = Math.max(
+    100,
+    Math.min(Number.isFinite(TECH_ENRICHMENT_SEED_LIMIT) ? TECH_ENRICHMENT_SEED_LIMIT : 1200, 5000)
+  );
+  techEnrichmentSeedStatus.max_refresh = Math.max(
+    1,
+    Math.min(Number.isFinite(TECH_ENRICHMENT_SEED_MAX_REFRESH) ? TECH_ENRICHMENT_SEED_MAX_REFRESH : 60, 300)
+  );
+  techEnrichmentSeedStatus.deep_scan_mode =
+    parseDeepScanModeInput(TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE)
+    || parseDeepScanModeInput(TECH_ENRICHMENT_RUNTIME.deep_scan_mode)
+    || "off";
+  techEnrichmentSeedStatus.last_error = null;
+
+  if (!TECH_ENRICHMENT_SEED_ENABLED) {
+    techEnrichmentSeedStatus.timer_active = false;
+    return getTechEnrichmentSeedStatus();
+  }
+
+  techEnrichmentSeedTimer = setInterval(() => {
+    runTechEnrichmentSeedCycle("background_tech_enrichment_seed").catch((err) => {
+      techEnrichmentSeedStatus.last_error = err.message;
+    });
+  }, techEnrichmentSeedStatus.interval_ms);
+
+  setTimeout(() => {
+    runTechEnrichmentSeedCycle("background_tech_enrichment_seed_initial").catch((err) => {
+      techEnrichmentSeedStatus.last_error = err.message;
+    });
+  }, techEnrichmentSeedStatus.initial_delay_ms);
+
+  techEnrichmentSeedStatus.timer_active = true;
+  return getTechEnrichmentSeedStatus();
+}
+
 // --- State persistence (SQLite) ---
 
 function getCompanyState(companyId) {
@@ -729,14 +982,339 @@ function saveCompanies(companies) {
 }
 
 function canonicalCompanyId(id) {
-  if (!id) return id;
-  if (id.startsWith("ch-")) return id;
-  if (/^\d{6,8}$/.test(id)) return `ch-${id.padStart(8, "0")}`;
-  return id;
+  if (id === undefined || id === null) return id;
+  const normalized = String(id).trim();
+  if (!normalized) return normalized;
+  if (normalized.startsWith("ch-")) return normalized;
+  if (/^\d{6,8}$/.test(normalized)) return `ch-${normalized.padStart(8, "0")}`;
+  return normalized;
 }
 
 function companyNumberFromId(id) {
-  return id?.startsWith("ch-") ? id.replace("ch-", "") : id;
+  if (id === undefined || id === null) return id;
+  const normalized = String(id).trim();
+  return normalized.startsWith("ch-") ? normalized.replace("ch-", "") : normalized;
+}
+
+function parseBooleanInput(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  const token = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(token)) return true;
+  if (["false", "0", "no", "n", "off"].includes(token)) return false;
+  return fallback;
+}
+
+function parseDeepScanModeInput(value) {
+  if (value === undefined || value === null) return null;
+  const token = String(value).trim().toLowerCase();
+  if (!token) return null;
+  if (["off", "false", "0"].includes(token)) return "off";
+  if (["always", "true", "1", "on"].includes(token)) return "always";
+  if (token === "auto") return "auto";
+  return null;
+}
+
+function resolveEnrichmentDeepScanOptions(payload = {}, fallbackMode = null) {
+  const explicitMode = parseDeepScanModeInput(payload.deep_scan_mode);
+  if (explicitMode) {
+    return { deepScanMode: explicitMode };
+  }
+
+  const modeFromLegacyFlag = parseDeepScanModeInput(payload.deep_scan);
+  if (modeFromLegacyFlag) {
+    return { deepScanMode: modeFromLegacyFlag };
+  }
+
+  if (payload.deep_scan !== undefined && payload.deep_scan !== null) {
+    return { deepScan: parseBooleanInput(payload.deep_scan, true) };
+  }
+
+  const normalizedFallback = parseDeepScanModeInput(fallbackMode);
+  if (normalizedFallback) {
+    return { deepScanMode: normalizedFallback };
+  }
+
+  return {};
+}
+
+function toOptionalString(value) {
+  if (value === undefined || value === null) return null;
+  const next = String(value).trim();
+  return next || null;
+}
+
+function toOptionalNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTextList(value, options = {}) {
+  const maxItems = Math.max(1, Math.min(Number.parseInt(String(options.maxItems || 10), 10) || 10, 20));
+  const maxLength = Math.max(20, Math.min(Number.parseInt(String(options.maxLength || 180), 10) || 180, 500));
+  const rawItems = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(/\r?\n|;/) : []);
+
+  const seen = new Set();
+  const output = [];
+  for (const rawItem of rawItems) {
+    const token = toOptionalString(rawItem);
+    if (!token) continue;
+    const normalized = token.slice(0, maxLength);
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+    if (output.length >= maxItems) break;
+  }
+
+  return output;
+}
+
+function normalizeStyleExamples(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const output = [];
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    const item = raw[idx];
+    const label = toOptionalString(item?.label || `Example ${idx + 1}`) || `Example ${idx + 1}`;
+    const bodyRaw = typeof item === "string"
+      ? item
+      : (item?.text || item?.body || item?.content || "");
+    const text = toOptionalString(bodyRaw);
+    if (!text) continue;
+    output.push({
+      label: label.slice(0, 80),
+      text: text.slice(0, 1000),
+    });
+    if (output.length >= 4) break;
+  }
+  return output;
+}
+
+function normalizeEmailStyleProfilePayload(rawProfile, options = {}) {
+  if (!rawProfile || typeof rawProfile !== "object") return null;
+
+  const enabled = rawProfile.enabled !== false;
+  const name = toOptionalString(rawProfile.name || rawProfile.title);
+  const description = toOptionalString(rawProfile.description);
+  const stylePrompt = toOptionalString(rawProfile.style_prompt || rawProfile.stylePrompt);
+  const voiceTraits = normalizeTextList(rawProfile.voice_traits || rawProfile.voiceTraits, { maxItems: 10, maxLength: 120 });
+  const preferredPatterns = normalizeTextList(
+    rawProfile.preferred_patterns || rawProfile.preferredPatterns || rawProfile.do,
+    { maxItems: 12, maxLength: 220 }
+  );
+  const avoidPatterns = normalizeTextList(
+    rawProfile.avoid_patterns || rawProfile.avoidPatterns || rawProfile.dont,
+    { maxItems: 12, maxLength: 220 }
+  );
+  const examples = normalizeStyleExamples(rawProfile.examples);
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      name: name ? name.slice(0, 120) : null,
+      description: description ? description.slice(0, 600) : null,
+      style_prompt: stylePrompt ? stylePrompt.slice(0, 2600) : null,
+      voice_traits: voiceTraits,
+      preferred_patterns: preferredPatterns,
+      avoid_patterns: avoidPatterns,
+      examples,
+      version: EMAIL_STYLE_PROFILE_VERSION,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const hasContent = !!stylePrompt
+    || voiceTraits.length > 0
+    || preferredPatterns.length > 0
+    || avoidPatterns.length > 0
+    || examples.length > 0;
+
+  if (!hasContent && options.allowEmpty !== true) {
+    return null;
+  }
+
+  return {
+    enabled: true,
+    name: name ? name.slice(0, 120) : null,
+    description: description ? description.slice(0, 600) : null,
+    style_prompt: stylePrompt ? stylePrompt.slice(0, 2600) : null,
+    voice_traits: voiceTraits,
+    preferred_patterns: preferredPatterns,
+    avoid_patterns: avoidPatterns,
+    examples,
+    version: EMAIL_STYLE_PROFILE_VERSION,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function getStoredEmailStyleProfile() {
+  const raw = getSetting(EMAIL_STYLE_PROFILE_SETTING_KEY, null);
+  return normalizeEmailStyleProfilePayload(raw, { allowEmpty: false });
+}
+
+function resolveEmailStyleProfileForRequest(payload = {}, options = {}) {
+  const inlineProfile = normalizeEmailStyleProfilePayload(payload.style_profile || payload.styleProfile, { allowEmpty: false });
+  if (inlineProfile && inlineProfile.enabled) return inlineProfile;
+
+  const forceStored = options.forceStored === true;
+  const useStored = forceStored || parseBooleanInput(payload.use_style_profile, false);
+  if (!useStored) return null;
+
+  const stored = getStoredEmailStyleProfile();
+  if (!stored || stored.enabled !== true) return null;
+  return stored;
+}
+
+function buildShadowPreviewCadence(rawPreviewSteps, rawTier) {
+  const requested = Number.parseInt(String(rawPreviewSteps || "3"), 10);
+  const steps = Math.max(3, Math.min(Number.isFinite(requested) ? requested : 3, 6));
+  const tier = String(rawTier || "B").trim().toUpperCase();
+  const safeTier = ["A", "B", "C"].includes(tier) ? tier : "B";
+  const delays = [0, 3, 6, 9, 11, 14].slice(0, steps);
+  const stepTypes = ["proof", "depth", "close", "peer_benchmark", "nudge_2", "close"].slice(0, steps);
+  const sendConditions = Array.from({ length: steps }, () => "always");
+
+  return {
+    steps,
+    delays,
+    step_types: stepTypes,
+    send_conditions: sendConditions,
+    dossier_tier: safeTier,
+    strategy: "shadow_preview",
+  };
+}
+
+function compactPreviewText(value, maxLength = 150) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  return normalized.slice(0, maxLength);
+}
+
+function summarizeGeneratedSequence(sequence) {
+  const steps = Array.isArray(sequence?.steps) ? sequence.steps : [];
+  const qcScores = steps
+    .map((step) => Number(step?.qc_score))
+    .filter((value) => Number.isFinite(value));
+  const voiceScores = steps
+    .map((step) => Number(step?.voice_percent))
+    .filter((value) => Number.isFinite(value));
+  const passCount = steps.filter((step) => step?.qc_pass === true).length;
+  const llmCount = steps.filter((step) => String(step?.source || "").startsWith("llm")).length;
+  const fallbackCount = steps.filter((step) => String(step?.source || "") === "fallback").length;
+
+  return {
+    steps: steps.length,
+    avg_qc_score: qcScores.length > 0
+      ? Math.round((qcScores.reduce((sum, value) => sum + value, 0) / qcScores.length) * 100) / 100
+      : null,
+    avg_voice_percent: voiceScores.length > 0
+      ? Math.round((voiceScores.reduce((sum, value) => sum + value, 0) / voiceScores.length) * 100) / 100
+      : null,
+    pass_count: passCount,
+    fail_count: Math.max(0, steps.length - passCount),
+    llm_steps: llmCount,
+    fallback_steps: fallbackCount,
+  };
+}
+
+function buildShadowSequenceComparison(baseline, styled) {
+  const baselineSummary = summarizeGeneratedSequence(baseline);
+  const styledSummary = summarizeGeneratedSequence(styled);
+  const baselineSteps = Array.isArray(baseline?.steps) ? baseline.steps : [];
+  const styledSteps = Array.isArray(styled?.steps) ? styled.steps : [];
+  const stepCount = Math.max(baselineSteps.length, styledSteps.length);
+
+  const stepDeltas = [];
+  for (let idx = 0; idx < stepCount; idx += 1) {
+    const baseStep = baselineSteps[idx] || null;
+    const styledStep = styledSteps[idx] || null;
+    const baseQc = Number(baseStep?.qc_score);
+    const styledQc = Number(styledStep?.qc_score);
+    const qcDelta = Number.isFinite(baseQc) && Number.isFinite(styledQc)
+      ? Math.round((styledQc - baseQc) * 100) / 100
+      : null;
+
+    stepDeltas.push({
+      step_number: idx + 1,
+      step_type: styledStep?.step_type || baseStep?.step_type || null,
+      baseline_qc_score: Number.isFinite(baseQc) ? baseQc : null,
+      styled_qc_score: Number.isFinite(styledQc) ? styledQc : null,
+      qc_delta: qcDelta,
+      baseline_preview: compactPreviewText(baseStep?.body),
+      styled_preview: compactPreviewText(styledStep?.body),
+    });
+  }
+
+  const avgQcDelta = baselineSummary.avg_qc_score !== null && styledSummary.avg_qc_score !== null
+    ? Math.round((styledSummary.avg_qc_score - baselineSummary.avg_qc_score) * 100) / 100
+    : null;
+  const avgVoiceDelta = baselineSummary.avg_voice_percent !== null && styledSummary.avg_voice_percent !== null
+    ? Math.round((styledSummary.avg_voice_percent - baselineSummary.avg_voice_percent) * 100) / 100
+    : null;
+
+  return {
+    baseline: baselineSummary,
+    styled: styledSummary,
+    deltas: {
+      avg_qc_score: avgQcDelta,
+      avg_voice_percent: avgVoiceDelta,
+      pass_count: styledSummary.pass_count - baselineSummary.pass_count,
+      fail_count: styledSummary.fail_count - baselineSummary.fail_count,
+    },
+    step_deltas: stepDeltas,
+  };
+}
+
+function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const companyNumber = companyNumberFromId(canonicalId);
+  const companies = loadCompanies();
+  const company = companies.find((c) => c.id === companyId || c.id === canonicalId || c.company_number === companyNumber);
+  const monitored = company ? null : getMonitoredCompany(companyNumber);
+
+  if (!company && !monitored) return null;
+
+  const companyName =
+    toOptionalString(overrides.company_name)
+    || toOptionalString(overrides.companyName)
+    || toOptionalString(company?.name)
+    || toOptionalString(monitored?.company_name)
+    || pendingCompanyName();
+
+  const companyWebsite =
+    toOptionalString(overrides.company_website)
+    || toOptionalString(overrides.website)
+    || toOptionalString(overrides.website_url)
+    || toOptionalString(company?.website)
+    || toOptionalString(company?.website_url)
+    || null;
+
+  const companyDomain =
+    toOptionalString(overrides.company_domain)
+    || toOptionalString(overrides.domain)
+    || toOptionalString(overrides.domain_hint)
+    || toOptionalString(company?.domain)
+    || toOptionalString(company?.company_domain)
+    || null;
+
+  const turnover =
+    toOptionalNumber(overrides.turnover)
+    ?? toOptionalNumber(company?.turnover)
+    ?? toOptionalNumber(monitored?.latest_turnover)
+    ?? null;
+
+  return {
+    canonical_id: canonicalId,
+    company_number: companyNumber,
+    company_name: companyName,
+    company_website: companyWebsite,
+    company_domain: companyDomain,
+    turnover,
+    company,
+    monitored,
+  };
 }
 
 function isFallbackCompanyName(name, companyNumber) {
@@ -757,6 +1335,41 @@ function getManualList(kind, companyId) {
 
 function setManualList(kind, companyId, items) {
   setSetting(`${kind}_${canonicalCompanyId(companyId)}`, items);
+}
+
+async function refreshOwnershipEnvelope(companyNumber) {
+  if (!isCompaniesHouseConfigured()) {
+    return {
+      status: "skipped",
+      reason: "companies_house_not_configured",
+    };
+  }
+
+  try {
+    const ownership = await lookupCompanyOwnership(companyNumber);
+    if (ownership?.error || !ownership?.summary) {
+      return {
+        status: "error",
+        error: ownership?.message || "ownership_lookup_failed",
+      };
+    }
+
+    setSetting(`ownership_${companyNumber}`, {
+      ...ownership.summary,
+      source: "companies_house_api",
+    });
+
+    return {
+      status: "updated",
+      significant_corporate_controllers_count: Number(ownership.summary.significant_corporate_controllers_count || 0),
+      non_uk_significant_corporate_controllers_count: Number(ownership.summary.non_uk_significant_corporate_controllers_count || 0),
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      error: err?.message || "ownership_lookup_failed",
+    };
+  }
 }
 
 async function resolveMonitorName(companyNumber, storedName) {
@@ -2211,6 +2824,7 @@ app.get("/api/reports/schedule", (_req, res) => {
   const nextRun = getNextSaturdayEvening();
   res.json({
     schedule: "Saturday evenings at 18:00",
+    timezone: UK_TIMEZONE,
     next_generation: nextRun.toISOString(),
     note: "Report will be ready for Sunday review before Monday outreach.",
   });
@@ -2380,10 +2994,20 @@ app.get("/api/companies-house/lookup/:number", async (req, res) => {
   const { number } = req.params;
   try {
     const includeCharges = String(req.query.include_charges || "true").toLowerCase() !== "false";
-    const data = await lookupCompany(number, { include_charges: includeCharges });
+    const includeOwnership = String(req.query.include_ownership || "true").toLowerCase() !== "false";
+    const data = await lookupCompany(number, {
+      include_charges: includeCharges,
+      include_ownership: includeOwnership,
+    });
     if (data.error) return res.status(data.status || 500).json(data);
     if (data?.charge_summary) {
       upsertCompanyChargeSummary(data.company_number, data.charge_summary, "companies_house_api");
+    }
+    if (data?.ownership_summary) {
+      setSetting(`ownership_${data.company_number}`, {
+        ...data.ownership_summary,
+        source: "companies_house_api",
+      });
     }
     res.json({ company: data });
   } catch (err) {
@@ -2413,17 +3037,404 @@ app.post("/api/import/csv", (req, res) => {
   });
 });
 
+const SOURCE3_HARD_NON_TRADING_STATUS_PATTERNS = [
+  /dissolved/i,
+  /liquidation/i,
+  /administration/i,
+  /receivership/i,
+  /struck\s*off/i,
+  /insolven/i,
+];
+
+const SOURCE3_SOFT_NON_TRADING_STATUS_PATTERNS = [
+  /dormant/i,
+  /non[-\s]?trading/i,
+  /inactive/i,
+];
+
+const SOURCE3_HOLDING_NAME_PATTERNS = [
+  /\bholdings?\b/i,
+  /\binvestments?\b/i,
+  /\bnominees?\b/i,
+  /\btrustees?\b/i,
+  /\bspv\b/i,
+  /special\s+purpose/i,
+  /\btreasury\b/i,
+];
+
+const SOURCE3_HOLDING_SIC_CODES = new Set([
+  "64201",
+  "64202",
+  "64203",
+  "64204",
+  "64205",
+  "64209",
+  "64301",
+  "64303",
+  "64304",
+  "64305",
+  "64306",
+]);
+
+const SOURCE3_STALE_MONTHS_THRESHOLD = 24;
+
+function parseDateSafe(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function monthsSinceDate(dateValue) {
+  const parsed = parseDateSafe(dateValue);
+  if (!parsed) return null;
+  const now = new Date();
+  const monthDelta = (now.getFullYear() - parsed.getFullYear()) * 12 + (now.getMonth() - parsed.getMonth());
+  return Math.max(0, monthDelta);
+}
+
+function parseSource3NumericHint(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getSource3LatestAccountsDate(chData) {
+  const fromAccounts = parseDateSafe(chData?.accounts?.last_accounts_made_up_to);
+  if (fromAccounts) return fromAccounts;
+
+  const recentFilings = Array.isArray(chData?.recent_filings) ? chData.recent_filings : [];
+  for (const filing of recentFilings) {
+    const parsed = parseDateSafe(filing?.date);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function normalizeSource3Assessment(assessment, overrides = {}) {
+  const merged = {
+    category: "operating",
+    confidence_tier: "low",
+    confidence_score: 0.2,
+    decision: "include",
+    reasons: [],
+    ...assessment,
+    ...overrides,
+  };
+
+  return {
+    ...merged,
+    confidence_score: Math.max(0, Math.min(Number(merged.confidence_score || 0), 0.99)),
+    reasons: Array.isArray(merged.reasons) ? merged.reasons.filter(Boolean) : [],
+  };
+}
+
+function classifySource3Entity(chData = {}) {
+  const status = String(chData?.status || "").toLowerCase();
+  const companyType = String(chData?.type || "").toLowerCase();
+  const name = String(chData?.name || "");
+  const lowerName = name.toLowerCase();
+  const sicCodes = Array.isArray(chData?.sic_codes)
+    ? chData.sic_codes.map((code) => String(code || "").trim())
+    : [];
+  const recentFilings = Array.isArray(chData?.recent_filings) ? chData.recent_filings : [];
+  const recentFilingText = recentFilings
+    .map((filing) => String(filing?.description || ""))
+    .join(" ")
+    .toLowerCase();
+  const turnoverHint = parseSource3NumericHint(chData?.turnover_hint);
+  const employeeHint = parseSource3NumericHint(chData?.employee_hint);
+  const hasZeroTurnover = turnoverHint !== null && turnoverHint <= 0;
+  const hasZeroEmployees = employeeHint !== null && employeeHint <= 0;
+  const hasDormantFilingSignal = /dormant|non[-\s]?trading/.test(recentFilingText);
+  const hasStrategicReportSignal = /strategic\s+report|accounts-with-accounts-type-full|group-accounts/.test(recentFilingText);
+
+  if (SOURCE3_HARD_NON_TRADING_STATUS_PATTERNS.some((pattern) => pattern.test(status))) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.95,
+      decision: "auto_filter",
+      reasons: [`Status indicates non-trading state (${status || "unknown"})`],
+    });
+  }
+
+  if (SOURCE3_SOFT_NON_TRADING_STATUS_PATTERNS.some((pattern) => pattern.test(status))) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.9,
+      decision: "auto_filter",
+      reasons: [`Status indicates likely non-trading state (${status || "unknown"})`],
+    });
+  }
+
+  if (hasDormantFilingSignal) {
+    return normalizeSource3Assessment({
+      category: "non_trading",
+      confidence_tier: "high",
+      confidence_score: 0.92,
+      decision: "auto_filter",
+      reasons: ["Recent filing descriptions indicate dormant/non-trading accounts"],
+    });
+  }
+
+  const holdingNameMatches = SOURCE3_HOLDING_NAME_PATTERNS.filter((pattern) => pattern.test(lowerName));
+  const hasHoldingSic = sicCodes.some((code) => SOURCE3_HOLDING_SIC_CODES.has(code));
+
+  let holdingSignal = 0;
+  const holdingReasons = [];
+
+  if (hasHoldingSic) {
+    holdingSignal += 0.72;
+    holdingReasons.push("SIC profile maps to holding/investment activity");
+  }
+
+  if (holdingNameMatches.length > 0) {
+    holdingSignal += Math.min(0.5, holdingNameMatches.length * 0.22);
+    holdingReasons.push("Company name contains holding/SPV markers");
+  }
+
+  if (/\bholding\b|\bspv\b/.test(companyType)) {
+    holdingSignal += 0.2;
+    holdingReasons.push("Company type suggests a holding/SPV structure");
+  }
+
+  if (hasZeroTurnover && hasZeroEmployees) {
+    holdingSignal += 0.22;
+    holdingReasons.push("Source record shows zero turnover and zero employees");
+  }
+
+  if (hasStrategicReportSignal) {
+    holdingSignal -= 0.12;
+    holdingReasons.push("Recent filing profile includes strategic/full accounts signals");
+  }
+
+  const latestAccountsDate = getSource3LatestAccountsDate(chData);
+  const monthsSinceAccounts = latestAccountsDate ? monthsSinceDate(latestAccountsDate) : null;
+  const highConfidenceHoldingBundle = hasHoldingSic
+    && holdingNameMatches.length > 0
+    && hasZeroTurnover
+    && hasZeroEmployees
+    && !hasStrategicReportSignal;
+
+  if (highConfidenceHoldingBundle) {
+    return normalizeSource3Assessment({
+      category: "holding_spv",
+      confidence_tier: "high",
+      confidence_score: Math.max(holdingSignal, 0.9),
+      decision: "auto_filter",
+      reasons: holdingReasons,
+    });
+  }
+
+  if (holdingSignal >= 0.45) {
+    return normalizeSource3Assessment({
+      category: "holding_spv",
+      confidence_tier: "medium",
+      confidence_score: holdingSignal,
+      decision: "include_warn",
+      reasons: holdingReasons,
+    });
+  }
+
+  if (monthsSinceAccounts !== null && monthsSinceAccounts >= SOURCE3_STALE_MONTHS_THRESHOLD) {
+    return normalizeSource3Assessment({
+      category: "stale",
+      confidence_tier: "medium",
+      confidence_score: 0.55,
+      decision: "include_warn",
+      reasons: [`No recent filing signal (${monthsSinceAccounts} months since last accounts date)`],
+    });
+  }
+
+  return normalizeSource3Assessment({
+    category: "operating",
+    confidence_tier: "low",
+    confidence_score: 0.2,
+    decision: "include",
+    reasons: ["No high-confidence exclusion signal detected"],
+  });
+}
+
+function source3CategoryLabel(category) {
+  if (category === "non_trading") return "non-trading";
+  if (category === "holding_spv") return "holding/SPV";
+  if (category === "stale") return "stale/no recent filing";
+  return "operating";
+}
+
+function formatSource3AutoFilterDetail(assessment) {
+  const label = source3CategoryLabel(assessment.category);
+  const reason = assessment.reasons?.[0] || "high-confidence exclusion signal";
+  return `Source 3 auto-filtered (${label}, high confidence): ${reason}`;
+}
+
+function formatSource3IncludeDetail(segment, assessment) {
+  const label = source3CategoryLabel(assessment.category);
+  if (assessment.decision === "include_warn") {
+    return `Added as ${segment} (included with warning: ${label}, medium confidence)`;
+  }
+  return `Added as ${segment} (fail-open include: low confidence exclusion signals)`;
+}
+
+function buildSource3ImportedCompany(companyNumber, chData, assessment, options = {}) {
+  const importedAt = new Date().toISOString();
+  const normalizedAssessment = normalizeSource3Assessment(assessment, {
+    evaluated_at: importedAt,
+    override: !!options.override,
+    override_reason: options.overrideReason || null,
+  });
+
+  return {
+    id: `ch-${companyNumber}`,
+    name: displayNameForCompanyNumber(companyNumber, chData.name),
+    company_number: companyNumber,
+    industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
+    segment: guessTurnoverSegment(chData.turnover_hint),
+    turnover: chData.turnover_hint || 0,
+    employee_count: chData.employee_hint || 0,
+    latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${companyNumber}/filing-history`,
+    motions: [],
+    product_fit: {},
+    competitors: [],
+    stakeholders: [],
+    cadence_history: [],
+    response_propensity: { score: 0.3, warmth: "cold", signals: ["Imported from CSV - no engagement data"] },
+    source: options.source || chData.source,
+    imported_at: importedAt,
+    source3_assessment: normalizedAssessment,
+    source3_warning: normalizedAssessment.decision === "include_warn",
+  };
+}
+
+app.post("/api/import/source3/override", async (req, res) => {
+  const requestedNumber = normalizeCompanyNumber(req.body?.company_number);
+  if (!requestedNumber) {
+    return res.status(400).json({ error: "company_number is required" });
+  }
+
+  if (isClosedWonCompanyNumber(requestedNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and cannot be imported.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
+
+  const COMPANIES = loadCompanies();
+  const existing = COMPANIES.find((company) => normalizeCompanyNumber(company.company_number) === requestedNumber);
+  if (existing) {
+    return res.status(200).json({
+      success: true,
+      already_exists: true,
+      company: existing,
+    });
+  }
+
+  try {
+    const chData = await lookupCompany(requestedNumber, {
+      include_charges: true,
+      include_ownership: true,
+    });
+    if (chData?.error) {
+      return res.status(chData.status || 502).json({ error: chData.message || "Lookup failed" });
+    }
+
+    const baseAssessment = classifySource3Entity(chData);
+    const overrideReason = String(req.body?.reason || "manual_source3_override").trim();
+    const overrideAssessment = normalizeSource3Assessment(baseAssessment, {
+      decision: "manual_override_include",
+      reasons: [
+        ...(Array.isArray(baseAssessment?.reasons) ? baseAssessment.reasons : []),
+        `Manual override applied (${overrideReason})`,
+      ],
+    });
+
+    const importedCompany = buildSource3ImportedCompany(requestedNumber, chData, overrideAssessment, {
+      source: "source_3_csv_override",
+      override: true,
+      overrideReason,
+    });
+
+    COMPANIES.push(importedCompany);
+    saveCompanies(COMPANIES);
+
+    if (chData.charge_summary) {
+      upsertCompanyChargeSummary(requestedNumber, chData.charge_summary, "companies_house_api");
+    }
+    if (chData.ownership_summary) {
+      setSetting(`ownership_${requestedNumber}`, {
+        ...chData.ownership_summary,
+        source: "companies_house_api",
+      });
+    }
+
+    enqueueCompanyForAnalysis(
+      { company_number: requestedNumber, company_name: importedCompany.name },
+      "csv_import_override"
+    );
+
+    const jobId = String(req.body?.job_id || "").trim();
+    if (jobId && getImportJob(jobId)) {
+      addImportLogEntry(
+        jobId,
+        requestedNumber,
+        importedCompany.name,
+        "imported",
+        `Manual override include (previously ${source3CategoryLabel(baseAssessment.category)} high-confidence filter)`
+      );
+    }
+
+    return res.json({
+      success: true,
+      already_exists: false,
+      company: importedCompany,
+      source3_assessment: overrideAssessment,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 async function processCSVImport(jobId, companyNumbers) {
   let imported = 0, skipped = 0, errors = 0;
+  const source3Stats = {
+    auto_filtered_high_confidence: 0,
+    auto_filtered_non_trading: 0,
+    auto_filtered_holding_spv: 0,
+    included_with_warning: 0,
+    included_without_warning: 0,
+  };
+
+  const importJob = getImportJob(jobId);
+  const jobMetadata = {
+    ...(importJob?.metadata || {}),
+  };
   const COMPANIES = loadCompanies();
-  const existingNumbers = new Set(COMPANIES.map((c) => c.company_number));
+  const existingNumbers = new Set(
+    COMPANIES
+      .map((c) => normalizeCompanyNumber(c.company_number))
+      .filter(Boolean)
+  );
 
   for (let i = 0; i < companyNumbers.length; i++) {
-    const num = companyNumbers[i];
+    const num = normalizeCompanyNumber(companyNumbers[i]);
+    if (!num) {
+      addImportLogEntry(jobId, String(companyNumbers[i] || ""), null, "error", "Invalid company number format");
+      errors++;
+      updateImportJob(jobId, {
+        processed_items: i + 1,
+        imported_items: imported,
+        skipped_items: skipped,
+        error_count: errors,
+      });
+      continue;
+    }
 
     if (isClosedWonCompanyNumber(num)) {
       markCompanyClosedWon(num, "Closed-won registry matched during CSV import");
-      addImportLogEntry(jobId, num, null, "skipped", "Closed-won registry match — suppressed from active pipeline");
+      addImportLogEntry(jobId, num, null, "skipped", "Closed-won registry match - suppressed from active pipeline");
       skipped++;
       updateImportJob(jobId, { processed_items: i + 1, imported_items: imported, skipped_items: skipped, error_count: errors });
       continue;
@@ -2437,41 +3448,67 @@ async function processCSVImport(jobId, companyNumbers) {
     }
 
     try {
-      const chData = await lookupCompany(num, { include_charges: true });
+      const chData = await lookupCompany(num, {
+        include_charges: true,
+        include_ownership: true,
+      });
       if (chData.error) {
         addImportLogEntry(jobId, num, null, "error", chData.message);
         errors++;
-      } else if (chData.status === "dissolved" || chData.status === "liquidation") {
-        addImportLogEntry(jobId, num, chData.name, "skipped", `Status: ${chData.status} (non-trading)`);
-        skipped++;
       } else {
-        const newCompany = {
-          id: `ch-${num}`,
-          name: displayNameForCompanyNumber(num, chData.name),
-          company_number: num,
-          industry: chData.industry_hint || mapSICToIndustry(chData.sic_codes),
-          segment: guessTurnoverSegment(chData.turnover_hint),
-          turnover: chData.turnover_hint || 0,
-          employee_count: chData.employee_hint || 0,
-          latest_annual_report_url: `https://find-and-update.company-information.service.gov.uk/company/${num}/filing-history`,
-          motions: [],
-          product_fit: {},
-          competitors: [],
-          stakeholders: [],
-          cadence_history: [],
-          response_propensity: { score: 0.3, warmth: "cold", signals: ["Imported from CSV — no engagement data"] },
-          source: chData.source,
-          imported_at: new Date().toISOString(),
-        };
+        const source3Assessment = classifySource3Entity(chData);
 
-        COMPANIES.push(newCompany);
-        existingNumbers.add(num);
-        if (chData.charge_summary) {
-          upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
+        if (source3Assessment.decision === "auto_filter") {
+          skipped++;
+          source3Stats.auto_filtered_high_confidence++;
+          if (source3Assessment.category === "non_trading") {
+            source3Stats.auto_filtered_non_trading++;
+          }
+          if (source3Assessment.category === "holding_spv") {
+            source3Stats.auto_filtered_holding_spv++;
+          }
+
+          addImportLogEntry(
+            jobId,
+            num,
+            chData.name,
+            "skipped",
+            formatSource3AutoFilterDetail(source3Assessment)
+          );
+        } else {
+          const newCompany = buildSource3ImportedCompany(num, chData, source3Assessment, {
+            source: chData.source,
+          });
+
+          COMPANIES.push(newCompany);
+          existingNumbers.add(num);
+          if (chData.charge_summary) {
+            upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
+          }
+          if (chData.ownership_summary) {
+            setSetting(`ownership_${num}`, {
+              ...chData.ownership_summary,
+              source: "companies_house_api",
+            });
+          }
+
+          if (source3Assessment.decision === "include_warn") {
+            source3Stats.included_with_warning++;
+          } else {
+            source3Stats.included_without_warning++;
+          }
+
+          addImportLogEntry(
+            jobId,
+            num,
+            newCompany.name,
+            "imported",
+            formatSource3IncludeDetail(newCompany.segment, source3Assessment),
+            newCompany.turnover
+          );
+          enqueueCompanyForAnalysis({ company_number: num, company_name: newCompany.name }, "csv_import");
+          imported++;
         }
-        addImportLogEntry(jobId, num, newCompany.name, "imported", `Added as ${newCompany.segment}`, newCompany.turnover);
-        enqueueCompanyForAnalysis({ company_number: num, company_name: newCompany.name }, "csv_import");
-        imported++;
       }
     } catch (err) {
       addImportLogEntry(jobId, num, null, "error", err.message);
@@ -2494,6 +3531,11 @@ async function processCSVImport(jobId, companyNumbers) {
     imported_items: imported,
     skipped_items: skipped,
     error_count: errors,
+    metadata: JSON.stringify({
+      ...jobMetadata,
+      source3_policy: "fail_open_confidence_tiers",
+      source3: source3Stats,
+    }),
   });
 }
 
@@ -3142,6 +4184,7 @@ app.get("/api/analysis-queue/status", (_req, res) => {
       queue_hard_cap: queueHardCap,
       queue_headroom: Math.max(0, queueSoftCap - queuedCount),
     },
+    tech_enrichment_seed: getTechEnrichmentSeedStatus(),
   });
 });
 
@@ -3332,7 +4375,7 @@ app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
 import { analyseCompany, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
+  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4.1-mini" });
 });
 
 app.get("/api/integrations/status", (_req, res) => {
@@ -3352,6 +4395,7 @@ app.get("/api/integrations/status", (_req, res) => {
       || lower === "change_me";
     return !looksPlaceholder;
   };
+  const hasTemplate = (value) => String(value || "").trim().length > 0;
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
 
@@ -3366,7 +4410,7 @@ app.get("/api/integrations/status", (_req, res) => {
       configured: isLLMConfigured(),
       required: true,
       env_var: "OPENAI_API_KEY",
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       purpose: "Analysis enrichment and advanced email generation",
     },
     news_lookup: {
@@ -3382,6 +4426,50 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "NEWS_API_KEY",
       purpose: "Optional premium news enrichment",
     },
+    endole: {
+      configured: hasConfiguredSecret(process.env.ENDOLE_API_KEY) && hasTemplate(process.env.ENDOLE_URL_TEMPLATE),
+      required: false,
+      env_var: "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE",
+      purpose: "Ownership and corporate relationship enrichment",
+    },
+    opencorporates: {
+      configured: hasConfiguredSecret(process.env.OPENCORPORATES_API_TOKEN) && hasTemplate(process.env.OPENCORPORATES_URL_TEMPLATE),
+      required: false,
+      env_var: "OPENCORPORATES_API_TOKEN, OPENCORPORATES_URL_TEMPLATE",
+      purpose: "Cross-jurisdiction corporate registry enrichment",
+    },
+    similarweb: {
+      configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
+      required: false,
+      env_var: "SIMILARWEB_API_KEY, SIMILARWEB_URL_TEMPLATE",
+      purpose: "Traffic and digital growth enrichment",
+    },
+    builtwith: {
+      configured: hasConfiguredSecret(process.env.BUILTWITH_API_KEY) && hasTemplate(process.env.BUILTWITH_URL_TEMPLATE),
+      required: false,
+      env_var: "BUILTWITH_API_KEY, BUILTWITH_URL_TEMPLATE",
+      purpose: "Third-party website technology signals",
+    },
+    adzuna: {
+      configured: hasConfiguredSecret(process.env.ADZUNA_APP_ID)
+        && hasConfiguredSecret(process.env.ADZUNA_APP_KEY)
+        && hasTemplate(process.env.ADZUNA_URL_TEMPLATE),
+      required: false,
+      env_var: "ADZUNA_APP_ID, ADZUNA_APP_KEY, ADZUNA_URL_TEMPLATE",
+      purpose: "Hiring and vacancy velocity enrichment",
+    },
+    crunchbase: {
+      configured: hasConfiguredSecret(process.env.CRUNCHBASE_API_KEY) && hasTemplate(process.env.CRUNCHBASE_URL_TEMPLATE),
+      required: false,
+      env_var: "CRUNCHBASE_API_KEY, CRUNCHBASE_URL_TEMPLATE",
+      purpose: "Funding and investor event enrichment",
+    },
+    clearbit: {
+      configured: hasConfiguredSecret(process.env.CLEARBIT_API_KEY) && hasTemplate(process.env.CLEARBIT_URL_TEMPLATE),
+      required: false,
+      env_var: "CLEARBIT_API_KEY, CLEARBIT_URL_TEMPLATE",
+      purpose: "Firmographic and domain-level enrichment",
+    },
     lusha: {
       configured: hasConfiguredSecret(process.env.LUSHA_API_KEY),
       required: false,
@@ -3393,6 +4481,19 @@ app.get("/api/integrations/status", (_req, res) => {
       required: false,
       env_var: null,
       purpose: "Search-link generation (no API key required)",
+    },
+    tech_enrichment: {
+      configured: true,
+      required: false,
+      env_var: "TECH_ENRICHMENT_TIMEOUT_MS, TECH_ENRICHMENT_MAX_PAGES, TECH_ENRICHMENT_REFRESH_DAYS, TECH_ENRICHMENT_DEEP_SCAN_MODE, TECH_ENRICHMENT_HIGH_VALUE_TURNOVER",
+      purpose: "Deterministic incumbent stack + website intelligence enrichment",
+      defaults: TECH_ENRICHMENT_RUNTIME,
+    },
+    tech_enrichment_scheduler: {
+      configured: TECH_ENRICHMENT_SEED_ENABLED,
+      required: false,
+      env_var: "TECH_ENRICHMENT_SEED_ENABLED, TECH_ENRICHMENT_SEED_INTERVAL_MS, TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS, TECH_ENRICHMENT_SEED_LIMIT, TECH_ENRICHMENT_SEED_MAX_REFRESH, TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE",
+      purpose: "Background refresh loop for stale/missing enrichment payloads on shortlist companies",
     },
   };
 
@@ -3408,12 +4509,66 @@ app.get("/api/integrations/status", (_req, res) => {
       "COMPANIES_HOUSE_API_KEY=your_companies_house_api_key",
       "# Optional alias supported: CH_API_KEY=your_companies_house_api_key",
       "OPENAI_API_KEY=your_openai_api_key",
-      "OPENAI_MODEL=gpt-4o-mini",
+      "OPENAI_MODEL=gpt-4.1-mini",
       "LUSHA_API_KEY=optional_lusha_key",
       "ENABLE_NEWS_LOOKUP=true",
       "NEWS_API_KEY=optional_newsapi_key",
+      "ENDOLE_API_KEY=optional_endole_key",
+      "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
+      "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
+      "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
+      "SIMILARWEB_API_KEY=optional_similarweb_key",
+      "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
+      "BUILTWITH_API_KEY=optional_builtwith_key",
+      "BUILTWITH_URL_TEMPLATE=https://example.com/builtwith?domain={company_domain}",
+      "ADZUNA_APP_ID=optional_adzuna_app_id",
+      "ADZUNA_APP_KEY=optional_adzuna_app_key",
+      "ADZUNA_URL_TEMPLATE=https://example.com/adzuna?company={company_name_encoded}",
+      "CRUNCHBASE_API_KEY=optional_crunchbase_key",
+      "CRUNCHBASE_URL_TEMPLATE=https://example.com/crunchbase?company={company_name_encoded}",
+      "CLEARBIT_API_KEY=optional_clearbit_key",
+      "CLEARBIT_URL_TEMPLATE=https://example.com/clearbit?domain={company_domain}",
+      "DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC=false",
+      "ANALYSIS_QUEUE_EXTERNAL_SIGNAL_SYNC=false",
+      "TECH_ENRICHMENT_DEEP_SCAN_MODE=auto",
+      "TECH_ENRICHMENT_HIGH_VALUE_TURNOVER=25000000",
+      "TECH_ENRICHMENT_SEED_ENABLED=true",
+      "TECH_ENRICHMENT_SEED_INTERVAL_MS=21600000",
+      "TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS=45000",
+      "TECH_ENRICHMENT_SEED_LIMIT=1200",
+      "TECH_ENRICHMENT_SEED_MAX_REFRESH=60",
+      "TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE=off",
+      "ANALYSIS_QUEUE_ENRICHMENT_DEEP_SCAN_MODE=off",
     ],
   });
+});
+
+app.post("/api/signals/sync/:number", async (req, res) => {
+  const companyNumber = normalizeCompanyNumber(req.params?.number);
+  if (!companyNumber) {
+    return res.status(400).json({ error: "valid company number is required" });
+  }
+
+  const monitored = getMonitoredCompany(companyNumber);
+  const companyName = String(req.body?.company_name || monitored?.company_name || "").trim();
+  const companyDomain = String(req.body?.company_domain || req.body?.domain || "").trim();
+
+  try {
+    const sync = await syncExternalSignals({
+      companyNumber,
+      companyName,
+      companyDomain,
+      timeoutMs: req.body?.timeout_ms,
+    });
+
+    if (!sync.updated && sync.status !== "no_connectors_configured") {
+      return res.status(502).json(sync);
+    }
+
+    return res.json(sync);
+  } catch (err) {
+    return res.status(500).json({ error: "External signal sync failed", detail: err?.message || "unknown_error" });
+  }
 });
 
 app.post("/api/llm/analyse", async (req, res) => {
@@ -3434,14 +4589,60 @@ app.post("/api/llm/analyse", async (req, res) => {
   const monitored = getMonitoredCompany(companyNumber);
   const name = await resolveMonitorName(companyNumber, monitored?.company_name);
   const turnover = monitored?.latest_turnover || null;
+  const runEnrichment = parseBooleanInput(req.body?.run_enrichment, true);
+  const runExternalSignalSync = parseBooleanInput(req.body?.run_external_sync, DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC);
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+  let enrichment = null;
+  let externalSignalSync = null;
 
   try {
+    if (runEnrichment) {
+      try {
+        enrichment = await runCompanyTechEnrichment({
+          companyNumber,
+          companyName: name,
+          companyWebsite: toOptionalString(req.body?.company_website) || toOptionalString(req.body?.website),
+          companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+          turnover,
+          force: parseBooleanInput(req.body?.force_enrichment, false),
+          ...deepScanOptions,
+          maxPages: req.body?.max_pages,
+          refreshWindowDays: req.body?.refresh_window_days,
+        });
+      } catch (enrichmentErr) {
+        enrichment = {
+          status: "error",
+          updated: false,
+          error: enrichmentErr?.message || "enrichment_failed",
+        };
+      }
+    }
+
+    const ownership = await refreshOwnershipEnvelope(companyNumber);
+
+    if (runExternalSignalSync) {
+      externalSignalSync = await syncExternalSignals({
+        companyNumber,
+        companyName: name,
+        companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+        timeoutMs: req.body?.external_signal_timeout_ms,
+      });
+    }
+
     const analysis = await analyseCompany(companyNumber, name, turnover);
     setSetting(`analysis_${companyNumber}`, analysis);
     const baseScore = scoreCompany(companyNumber);
     const score = baseScore ? integrateAnalysis(baseScore, analysis) : null;
     const enrichedAnalysis = enrichAnalysisWithCompetitorSignals(analysis, score);
-    res.json({ company_number: companyNumber, company_name: name, analysis: enrichedAnalysis, score });
+    res.json({
+      company_number: companyNumber,
+      company_name: name,
+      analysis: enrichedAnalysis,
+      score,
+      enrichment,
+      ownership,
+      external_signal_sync: externalSignalSync,
+    });
   } catch (err) {
     res.status(500).json({ error: "Analysis failed", detail: err.message });
   }
@@ -3458,6 +4659,7 @@ app.post("/api/llm/extract", async (req, res) => {
 
   try {
     const name = await resolveMonitorName(companyNumber, monitored?.company_name);
+    await refreshOwnershipEnvelope(companyNumber);
     const analysis = await analyseCompany(companyNumber, name, monitored?.latest_turnover);
     setSetting(`analysis_${companyNumber}`, analysis);
     const baseScore = scoreCompany(companyNumber);
@@ -3754,6 +4956,42 @@ app.get("/api/email/templates", (_req, res) => {
   res.json({ templates, guidance });
 });
 
+app.get("/api/email/style-profile", (_req, res) => {
+  const stored = getStoredEmailStyleProfile();
+  res.json({
+    configured: !!(stored && stored.enabled),
+    profile: stored || {
+      enabled: false,
+      name: null,
+      description: null,
+      style_prompt: null,
+      voice_traits: [],
+      preferred_patterns: [],
+      avoid_patterns: [],
+      examples: [],
+      version: EMAIL_STYLE_PROFILE_VERSION,
+      updated_at: null,
+    },
+  });
+});
+
+app.put("/api/email/style-profile", (req, res) => {
+  const normalized = normalizeEmailStyleProfilePayload(req.body || {}, { allowEmpty: false });
+  if (!normalized) {
+    return res.status(400).json({
+      error: "Invalid style profile payload",
+      detail: "Provide at least one of: style_prompt, voice_traits, preferred_patterns, avoid_patterns, or examples. Set enabled=false to disable.",
+    });
+  }
+
+  setSetting(EMAIL_STYLE_PROFILE_SETTING_KEY, normalized);
+  res.json({
+    saved: true,
+    configured: normalized.enabled === true,
+    profile: normalized,
+  });
+});
+
 app.post("/api/email/generate", async (req, res) => {
   const { company_id, stakeholder_name, stakeholder_role, stakeholder_email, motion } = req.body;
   if (!company_id || !stakeholder_name) {
@@ -3782,6 +5020,7 @@ app.post("/api/email/generate", async (req, res) => {
 
   let analysis = getSetting(`analysis_${companyNumber}`, null);
   const autoMode = !motion || String(motion).toLowerCase() === "holistic narrative";
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {});
 
   if (!analysis || !analysis.level5_extraction) {
     try {
@@ -3805,6 +5044,7 @@ app.post("/api/email/generate", async (req, res) => {
         score,
         motion: null,
         merchantSpend: null,
+        styleProfile,
       });
 
       if (advanced?.needs_enrichment) {
@@ -3834,6 +5074,8 @@ app.post("/api/email/generate", async (req, res) => {
             steps: persisted.steps,
             motion: persisted.motion,
             source: "advanced",
+            style_profile_applied: advanced.style_profile_applied === true,
+            style_profile_name: advanced.style_profile_name || null,
           });
         }
       }
@@ -3985,6 +5227,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
 
   const analysis = getSetting(`analysis_${companyNumber}`, null);
   const score = getSetting(`score_${companyNumber}`, null);
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {});
 
   try {
     const result = await generateFullSequence({
@@ -3994,6 +5237,7 @@ app.post("/api/email/generate-advanced", async (req, res) => {
       score,
       motion: motion || null,
       merchantSpend: merchant_spend || null,
+      styleProfile,
     });
 
     if (result.error) {
@@ -4003,15 +5247,148 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     registerActiveContact(stakeholder_name, stakeholder_email || null, company_id, result.archetype + "-" + Date.now());
     res.json(result);
   } catch (err) {
+    if (err?.preventTemplateFallback || err?.code === "EMAIL_RETRY_NEEDED") {
+      return res.status(503).json({
+        error: "Live email generation is temporarily unavailable. Please retry.",
+        retry_needed: true,
+        source: "advanced",
+        reason: err?.reason || null,
+        detail: err?.message || null,
+      });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/email/generate-advanced/shadow", async (req, res) => {
+  const { company_id, stakeholder_name, stakeholder_role, motion, merchant_spend, preview_steps } = req.body;
+  if (!company_id || !stakeholder_name) {
+    return res.status(400).json({ error: "company_id and stakeholder_name required" });
+  }
+
+  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  if (isClosedWonCompanyNumber(companyNumber)) {
+    return res.status(409).json({
+      error: "Company is in closed-won registry and excluded from outreach sequencing.",
+      suppressed: true,
+      reason: "closed_won_registry",
+    });
+  }
+
+  const styleProfile = resolveEmailStyleProfileForRequest(req.body || {}, { forceStored: true });
+  if (!styleProfile) {
+    return res.status(400).json({
+      error: "No enabled style profile configured",
+      hint: "PUT /api/email/style-profile or provide style_profile in the request payload.",
+    });
+  }
+
+  const COMPANIES = loadCompanies();
+  let company = COMPANIES.find((c) => c.id === company_id);
+
+  if (!company) {
+    const monitored = getMonitoredCompany(companyNumber);
+    if (monitored) {
+      company = {
+        id: company_id,
+        name: formatMonitorName(monitored.company_name, companyNumber),
+        company_number: companyNumber,
+        turnover: monitored.latest_turnover,
+        employee_count: 0,
+        industry: "—",
+        segment: "Mid-Market",
+      };
+    }
+  }
+  if (!company) return res.status(404).json({ error: "Company not found" });
+
+  const analysis = getSetting(`analysis_${companyNumber}`, null);
+  const score = getSetting(`score_${companyNumber}`, null);
+  const preferredCadence = buildShadowPreviewCadence(preview_steps, req.body?.dossier_tier);
+
+  try {
+    const baseline = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: merchant_spend || null,
+      preferredCadence,
+      styleProfile: null,
+    });
+
+    const styled = await generateFullSequence({
+      company,
+      contact: { name: stakeholder_name, role: stakeholder_role || "Director" },
+      analysis,
+      score,
+      motion: motion || null,
+      merchantSpend: merchant_spend || null,
+      preferredCadence,
+      styleProfile,
+    });
+
+    if (baseline?.error || styled?.error) {
+      return res.status(422).json({
+        error: "Unable to generate one or more shadow variants",
+        baseline_error: baseline?.error || null,
+        styled_error: styled?.error || null,
+        baseline,
+        styled,
+      });
+    }
+
+    const comparison = buildShadowSequenceComparison(baseline, styled);
+    res.json({
+      preview: {
+        steps: preferredCadence.steps,
+        dossier_tier: preferredCadence.dossier_tier,
+      },
+      style_profile: {
+        name: styleProfile.name || null,
+        enabled: true,
+      },
+      baseline,
+      styled,
+      comparison,
+    });
+  } catch (err) {
+    if (err?.preventTemplateFallback || err?.code === "EMAIL_RETRY_NEEDED") {
+      return res.status(503).json({
+        error: "Live shadow generation is temporarily unavailable. Please retry.",
+        retry_needed: true,
+        source: "advanced_shadow",
+        reason: err?.reason || null,
+        detail: err?.message || null,
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/email/validate", (req, res) => {
-  const { subject, body, is_initial } = req.body;
+  const {
+    subject,
+    body,
+    is_initial,
+    step_type,
+    followups_last_24h,
+    followups_last_7d,
+    assume_managed_footer,
+  } = req.body;
   if (!body) return res.status(400).json({ error: "body is required" });
 
-  const result = validateEmail({ subject: subject || "", body }, { isInitialOutreach: is_initial !== false });
+  const result = validateEmail(
+    { subject: subject || "", body },
+    {
+      isInitialOutreach: is_initial !== false,
+      stepType: step_type || null,
+      followupsLast24h: Number(followups_last_24h || 0),
+      followupsLast7d: Number(followups_last_7d || 0),
+      assumeManagedFooter: assume_managed_footer !== false,
+    }
+  );
   res.json(result);
 });
 
@@ -4019,7 +5396,7 @@ app.post("/api/email/check-exclusion", (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "company_id required" });
 
-  const companyNumber = company_id.replace("ch-", "");
+  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
   const COMPANIES = loadCompanies();
   let company = COMPANIES.find((c) => c.id === company_id);
 
@@ -4109,6 +5486,8 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   try {
     const context = await getSupplementaryContext({
       companyName,
+      companyWebsite: company?.website || company?.website_url || null,
+      companyDomain: company?.domain || company?.company_domain || null,
       analysis,
       filingText,
     });
@@ -4121,6 +5500,179 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Failed to build supplementary context", detail: err.message });
   }
+});
+
+app.get("/api/company/:id/enrichment", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const includeData = parseBooleanInput(req.query.include_data, false);
+  const snapshot = getCompanyEnrichmentSnapshot(context.company_number, { includeData });
+
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    enrichment: snapshot,
+  });
+});
+
+app.post("/api/company/:id/enrichment/refresh", async (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+
+  try {
+    const result = await runCompanyTechEnrichment({
+      companyNumber: context.company_number,
+      companyName: context.company_name,
+      companyWebsite: context.company_website,
+      companyDomain: context.company_domain,
+      turnover: context.turnover,
+      force: parseBooleanInput(req.body?.force, false),
+      ...deepScanOptions,
+      maxPages: req.body?.max_pages,
+      refreshWindowDays: req.body?.refresh_window_days,
+      timeoutMs: req.body?.timeout_ms,
+    });
+
+    const baseScore = scoreCompany(context.company_number);
+    const storedAnalysis = getSetting(`analysis_${context.company_number}`, null);
+    const score = baseScore
+      ? (storedAnalysis ? integrateAnalysis(baseScore, storedAnalysis) : baseScore)
+      : null;
+
+    const snapshot = getCompanyEnrichmentSnapshot(context.company_number, { includeData: false });
+
+    res.json({
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      company_name: context.company_name,
+      enrichment_run: result,
+      enrichment: snapshot,
+      score,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to refresh enrichment", detail: err.message });
+  }
+});
+
+app.post("/api/enrichment/tech-stack/batch", async (req, res) => {
+  const force = parseBooleanInput(req.body?.force, false);
+  const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
+  const limit = Math.max(1, Math.min(Number.parseInt(String(req.body?.limit || "25"), 10) || 25, 200));
+
+  const requested = Array.isArray(req.body?.companies) ? req.body.companies : null;
+  const targets = [];
+
+  if (requested && requested.length > 0) {
+    for (const item of requested.slice(0, limit)) {
+      const candidate = typeof item === "string"
+        ? { company_number: item }
+        : (item || {});
+      const candidateId = candidate.company_id || candidate.id || candidate.company_number;
+      if (!candidateId) continue;
+
+      const context = resolveCompanyContextForEnrichment(candidateId, candidate);
+      if (!context) {
+        targets.push({
+          company_number: String(candidate.company_number || candidateId),
+          company_name: toOptionalString(candidate.company_name) || null,
+          company_website: toOptionalString(candidate.company_website || candidate.website),
+          company_domain: toOptionalString(candidate.company_domain || candidate.domain),
+          turnover: toOptionalNumber(candidate.turnover),
+          unresolved: true,
+        });
+        continue;
+      }
+      targets.push(context);
+    }
+  } else {
+    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+    for (const company of shortlist) {
+      targets.push({
+        canonical_id: `ch-${company.company_number}`,
+        company_number: company.company_number,
+        company_name: formatMonitorName(company.company_name, company.company_number),
+        company_website: null,
+        company_domain: null,
+        turnover: company.latest_turnover || null,
+        monitored: company,
+      });
+    }
+  }
+
+  const results = [];
+  let updated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const target of targets.slice(0, limit)) {
+    if (target.unresolved) {
+      skipped += 1;
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: "unresolved_company",
+        updated: false,
+      });
+      continue;
+    }
+
+    try {
+      const run = await runCompanyTechEnrichment({
+        companyNumber: target.company_number,
+        companyName: target.company_name,
+        companyWebsite: target.company_website,
+        companyDomain: target.company_domain,
+        turnover: target.turnover,
+        force,
+        ...deepScanOptions,
+        maxPages: req.body?.max_pages,
+        refreshWindowDays: req.body?.refresh_window_days,
+        timeoutMs: req.body?.timeout_ms,
+      });
+
+      if (run.updated) {
+        updated += 1;
+        const baseScore = scoreCompany(target.company_number);
+        const storedAnalysis = getSetting(`analysis_${target.company_number}`, null);
+        if (baseScore && storedAnalysis) {
+          integrateAnalysis(baseScore, storedAnalysis);
+        }
+      } else {
+        skipped += 1;
+      }
+
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: run.status,
+        updated: run.updated === true,
+        technologies: Array.isArray(run.technologies) ? run.technologies.slice(0, 10) : [],
+        site_currencies: Array.isArray(run.site_currencies) ? run.site_currencies.slice(0, 8) : [],
+      });
+    } catch (err) {
+      failed += 1;
+      results.push({
+        company_number: target.company_number,
+        company_name: target.company_name,
+        status: "error",
+        updated: false,
+        error: err.message,
+      });
+    }
+  }
+
+  res.json({
+    requested: requested ? requested.length : targets.length,
+    processed: results.length,
+    updated,
+    skipped,
+    failed,
+    results,
+  });
 });
 
 // --- YAMM Export & Sequence Management ---
@@ -4273,21 +5825,20 @@ if (fs.existsSync(frontendDist)) {
 // --- Weekly Report Auto-Generation (Saturday evenings) ---
 
 function getNextSaturdayEvening() {
-  const now = new Date();
-  const day = now.getDay();
-  const daysUntilSaturday = day === 6 ? 0 : 6 - day;
-  const next = new Date(now);
-  next.setDate(now.getDate() + daysUntilSaturday);
-  next.setHours(18, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 7);
-  return next;
+  return getNextWeeklyZonedRun({
+    timeZone: UK_TIMEZONE,
+    targetWeekday: 6,
+    hour: 18,
+    minute: 0,
+    second: 0,
+  });
 }
 
 function scheduleWeeklyReport() {
   const nextRun = getNextSaturdayEvening();
   const delay = nextRun.getTime() - Date.now();
 
-  console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (in ${Math.round(delay / 3600000)}h)`);
+  console.log(`Weekly report scheduled for: ${nextRun.toISOString()} (${UK_TIMEZONE} Saturday 18:00, in ${Math.round(delay / 3600000)}h)`);
 
   setTimeout(async () => {
     await generateAndSaveWeeklyReport();
@@ -4330,6 +5881,18 @@ app.listen(PORT, () => {
   console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
   console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
   console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
+
+  if (LIGHTWEIGHT_RUNTIME) {
+    console.log("Runtime profile: lightweight (background workers/schedulers disabled)");
+    console.log("Analysis queue: disabled in lightweight runtime");
+    console.log("Analysis auto-seed: disabled in lightweight runtime");
+    console.log("Tech enrichment auto-refresh: disabled in lightweight runtime");
+    console.log("Daily auto-pull: disabled in lightweight runtime");
+    console.log("Stale filing monitor: disabled in lightweight runtime");
+    console.log("Backfill autorun: disabled in lightweight runtime");
+    return;
+  }
+
   const queueStatus = startAnalysisQueueWorker();
   console.log(`Analysis queue: enabled (${queueStatus.batch_size} per batch every ${queueStatus.interval_ms}ms), recovered ${queueStatus.recovered_processing_items} in-flight items`);
 
@@ -4341,12 +5904,21 @@ app.listen(PORT, () => {
   const seederStatus = startShortlistBackgroundSeeder();
   console.log(`Analysis auto-seed: enabled (${seederStatus.max_enqueue} max queued every ${seederStatus.interval_ms}ms, queue soft/hard cap ${seederStatus.queue_soft_cap}/${seederStatus.queue_hard_cap})`);
 
+  const techEnrichmentSeederStatus = startTechEnrichmentSeeder();
+  if (techEnrichmentSeederStatus.enabled) {
+    console.log(
+      `Tech enrichment auto-refresh: enabled (${techEnrichmentSeederStatus.max_refresh} max refresh every ${techEnrichmentSeederStatus.interval_ms}ms, deep scan mode ${techEnrichmentSeederStatus.deep_scan_mode})`
+    );
+  } else {
+    console.log("Tech enrichment auto-refresh: disabled (set TECH_ENRICHMENT_SEED_ENABLED=true to enable)");
+  }
+
   scheduleWeeklyReport();
   startAutoPull();
   startStaleFilingMonitor();
   const backfillAutorun = startBackfillAutorun();
-  console.log(`Daily auto-pull: enabled (checking every 12 hours for new CH files)`);
-  console.log(`Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)`);
+  console.log("Daily auto-pull: enabled (checking every 12 hours for new CH files)");
+  console.log("Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)");
   if (backfillAutorun.enabled) {
     console.log(
       `Backfill autorun: enabled (normal ${backfillAutorun.max_files} file(s) every ${Math.round(backfillAutorun.interval_ms / 60000)}m, catch-up ${backfillAutorun.catchup_max_files} file(s) every ${Math.round(backfillAutorun.catchup_interval_ms / 60000)}m when pending >= ${backfillAutorun.backlog_threshold})`

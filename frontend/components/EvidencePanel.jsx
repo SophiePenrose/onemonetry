@@ -154,6 +154,21 @@ export default function EvidencePanel({ companyId, initialAnalysis, motions }) {
                   <strong>M&A signals:</strong> {supplementary.mna_signals.map((s) => s.signal).join(", ")}
                 </div>
               )}
+              {supplementary.value_nuggets?.length > 0 && (
+                <div style={{ fontSize: 12, color: "#444" }}>
+                  <strong>Value nuggets:</strong>
+                  <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {supplementary.value_nuggets.slice(0, 6).map((item, idx) => (
+                      <div key={`value-nugget-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#374151", background: "#eef2ff", borderRadius: 999, padding: "2px 7px", textTransform: "uppercase" }}>
+                          {item.type || "signal"}
+                        </span>
+                        <span>{item.nugget}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -53,6 +53,155 @@ function parseDate(value) {
   return new Date(ts);
 }
 
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    const normalized = String(value || "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function isCorporatePscKind(kind) {
+  const token = String(kind || "").toLowerCase();
+  return token.includes("corporate-entity") || token.includes("legal-person");
+}
+
+function isSignificantControlNature(nature) {
+  const token = String(nature || "").toLowerCase();
+  if (!token) return false;
+  return token.includes("25-to-50-percent")
+    || token.includes("50-to-75-percent")
+    || token.includes("75-to-100-percent")
+    || token.includes("more-than-25-percent");
+}
+
+function controlWeightFromNature(nature) {
+  const token = String(nature || "").toLowerCase();
+  if (!token) return 0;
+  if (token.includes("75-to-100-percent")) return 1;
+  if (token.includes("50-to-75-percent")) return 0.8;
+  if (token.includes("25-to-50-percent") || token.includes("more-than-25-percent")) return 0.6;
+  return 0;
+}
+
+function getBestControlWeight(natures) {
+  return (natures || []).reduce((max, nature) => {
+    const next = controlWeightFromNature(nature);
+    return next > max ? next : max;
+  }, 0);
+}
+
+function isUkJurisdiction(...values) {
+  const text = values
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ")
+    .replace(/[^a-z\s]/g, " ");
+
+  if (!text.trim()) return false;
+
+  const ukPatterns = [
+    /\bunited\s+kingdom\b/,
+    /\buk\b/,
+    /\bgreat\s+britain\b/,
+    /\bengland\b/,
+    /\bwales\b/,
+    /\bscotland\b/,
+    /\bnorthern\s+ireland\b/,
+    /\benglish\s+law\b/,
+    /\blaws\s+of\s+england\b/,
+    /\blaws\s+of\s+the\s+uk\b/,
+  ];
+
+  return ukPatterns.some((pattern) => pattern.test(text));
+}
+
+function normalizeOwnershipController(pscItem, detail) {
+  const name = String(detail?.name || pscItem?.name || "").trim() || null;
+  const kind = String(detail?.kind || pscItem?.kind || "").trim() || null;
+  const natures = uniqueStrings([
+    ...(Array.isArray(pscItem?.natures_of_control) ? pscItem.natures_of_control : []),
+    ...(Array.isArray(detail?.natures_of_control) ? detail.natures_of_control : []),
+  ]);
+
+  const isSignificantControl = natures.some((nature) => isSignificantControlNature(nature));
+  const controlWeight = getBestControlWeight(natures);
+  const governingLaw = String(
+    detail?.governing_law
+      || detail?.law_governed
+      || pscItem?.governing_law
+      || ""
+  ).trim() || null;
+  const countryRegistered = String(
+    detail?.country_registered
+      || detail?.country_of_residence
+      || pscItem?.country_of_residence
+      || ""
+  ).trim() || null;
+  const legalForm = String(detail?.legal_form || "").trim() || null;
+  const registrationNumber = String(detail?.registration_number || "").trim() || null;
+  const nonUkJurisdiction = isSignificantControl && !isUkJurisdiction(governingLaw, countryRegistered);
+
+  return {
+    name,
+    kind,
+    natures_of_control: natures,
+    is_significant_control: isSignificantControl,
+    control_weight: controlWeight,
+    governing_law: governingLaw,
+    country_registered: countryRegistered,
+    legal_form: legalForm,
+    registration_number: registrationNumber,
+    non_uk_jurisdiction: nonUkJurisdiction,
+    source_link: pscItem?.links?.self || null,
+    notified_on: detail?.notified_on || pscItem?.notified_on || null,
+    ceased_on: detail?.ceased_on || pscItem?.ceased_on || null,
+  };
+}
+
+function summarizeOwnershipControllers(controllers, pscTotalCount) {
+  const corporateControllers = Array.isArray(controllers) ? controllers.filter(Boolean) : [];
+  const significantCorporateControllers = corporateControllers
+    .filter((controller) => controller.is_significant_control)
+    .sort((a, b) => Number(b.control_weight || 0) - Number(a.control_weight || 0));
+  const nonUkSignificantCorporateControllers = significantCorporateControllers
+    .filter((controller) => controller.non_uk_jurisdiction)
+    .sort((a, b) => Number(b.control_weight || 0) - Number(a.control_weight || 0));
+
+  const primaryController = nonUkSignificantCorporateControllers[0]
+    || significantCorporateControllers[0]
+    || corporateControllers[0]
+    || null;
+  const nowIso = new Date().toISOString();
+
+  return {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: "companies_house_psc",
+    structure: nonUkSignificantCorporateControllers.length > 0 ? "foreign_subsidiary" : "unknown",
+    pe_backed: false,
+    parent_company: primaryController?.name || null,
+    parent_country: primaryController?.country_registered || null,
+    psc_total_count: Number(pscTotalCount || 0),
+    corporate_controller_count: corporateControllers.length,
+    significant_corporate_controllers_count: significantCorporateControllers.length,
+    non_uk_significant_corporate_controllers_count: nonUkSignificantCorporateControllers.length,
+    governing_law_non_uk_present: nonUkSignificantCorporateControllers.length > 0,
+    significant_corporate_controllers: significantCorporateControllers.slice(0, 20),
+    non_uk_significant_corporate_controllers: nonUkSignificantCorporateControllers.slice(0, 20),
+    confidence: nonUkSignificantCorporateControllers.length > 0
+      ? "high"
+      : significantCorporateControllers.length > 0
+        ? "medium"
+        : "low",
+  };
+}
+
 export function summarizeCompanyCharges(chargesPayload) {
   const items = Array.isArray(chargesPayload?.items) ? chargesPayload.items : [];
   const total = Number(chargesPayload?.total_count || items.length || 0);
@@ -107,6 +256,58 @@ export function summarizeCompanyCharges(chargesPayload) {
     long_tenure_incumbent: oldestOutstandingAgeYears !== null && oldestOutstandingAgeYears >= 10,
     inferred_credit_dependency: outstandingCount > 0 && bankLenderSet.size > 0,
     fetched_at: new Date().toISOString(),
+  };
+}
+
+export async function lookupCompanyOwnership(companyNumber) {
+  const padded = normalizeCompanyNumber(companyNumber);
+
+  if (!CH_API_KEY) {
+    return {
+      error: true,
+      message: "Companies House API key not set. Configure COMPANIES_HOUSE_API_KEY (or CH_API_KEY) to enable live lookups.",
+    };
+  }
+
+  const pscList = await chFetch(`/company/${padded}/persons-with-significant-control?items_per_page=100`);
+  if (pscList.error) {
+    return {
+      error: true,
+      status: pscList.status,
+      message: pscList.message || "Unable to fetch persons with significant control",
+    };
+  }
+
+  const pscItems = Array.isArray(pscList?.items) ? pscList.items : [];
+  const corporateItems = pscItems.filter((item) => isCorporatePscKind(item?.kind));
+  const controllers = [];
+  const detailErrors = [];
+
+  for (const item of corporateItems) {
+    const selfLink = item?.links?.self || null;
+    let detail = null;
+
+    if (selfLink) {
+      const detailResult = await chFetch(selfLink);
+      if (!detailResult.error) {
+        detail = detailResult;
+      } else {
+        detailErrors.push({
+          link: selfLink,
+          status: detailResult.status || null,
+          message: detailResult.message || "detail_fetch_failed",
+        });
+      }
+    }
+
+    controllers.push(normalizeOwnershipController(item, detail));
+  }
+
+  return {
+    company_number: padded,
+    summary: summarizeOwnershipControllers(controllers, pscList?.total_results || pscItems.length || 0),
+    source: "companies_house_api",
+    errors: detailErrors,
   };
 }
 
@@ -170,8 +371,11 @@ export async function lookupCompany(companyNumber, options = {}) {
 
   const filings = await chFetch(`/company/${padded}/filing-history?category=accounts&items_per_page=5`);
   const includeCharges = !!options?.include_charges;
+  const includeOwnership = !!options?.include_ownership;
   let chargesSummary = null;
   let chargesError = null;
+  let ownershipSummary = null;
+  let ownershipError = null;
 
   if (includeCharges) {
     const charges = await lookupCompanyCharges(padded);
@@ -179,6 +383,15 @@ export async function lookupCompany(companyNumber, options = {}) {
       chargesError = charges.message || "Unable to fetch charges";
     } else {
       chargesSummary = charges.summary || null;
+    }
+  }
+
+  if (includeOwnership) {
+    const ownership = await lookupCompanyOwnership(padded);
+    if (ownership.error) {
+      ownershipError = ownership.message || "Unable to fetch ownership details";
+    } else {
+      ownershipSummary = ownership.summary || null;
     }
   }
 
@@ -216,6 +429,8 @@ export async function lookupCompany(companyNumber, options = {}) {
         })),
     charge_summary: chargesSummary,
     charges_error: chargesError,
+    ownership_summary: ownershipSummary,
+    ownership_error: ownershipError,
     source: "companies_house_api",
   };
 }

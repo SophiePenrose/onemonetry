@@ -1,6 +1,14 @@
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 
+function normalizePersonKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export default function StakeholderPanel({ stakeholders, stakeholderAssessment, companyId, onUpdated, analysisStatus }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", role: "", email: "", linkedin: "", notes: "" });
@@ -16,6 +24,26 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
   const readiness = stakeholderAssessment?.readiness;
   const waitingForAnalysis = analysisStatus === "queued";
   const analysisFailed = analysisStatus === "failed";
+  const supplementaryPeople = supplementary?.people_research || supplementary?.people_targets || [];
+
+  const supplementaryPeopleByName = React.useMemo(() => {
+    const map = new Map();
+    for (const person of supplementaryPeople) {
+      const key = normalizePersonKey(person?.name);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, person);
+    }
+    return map;
+  }, [supplementaryPeople]);
+
+  const automatedStakeholdersWithContacts = React.useMemo(
+    () => automatedStakeholders.map((stakeholder) => {
+      const key = normalizePersonKey(stakeholder?.name);
+      const contact = supplementaryPeopleByName.get(key);
+      return contact ? { ...stakeholder, _supplementaryContact: contact } : stakeholder;
+    }),
+    [automatedStakeholders, supplementaryPeopleByName]
+  );
 
   React.useEffect(() => {
     if (!companyId) return;
@@ -120,18 +148,38 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
 
         {automatedStakeholders.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {automatedStakeholders.slice(0, 4).map((s, idx) => (
-              <div key={`${s.name}-${idx}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, background: "#fff", borderRadius: 6, padding: "8px 10px", border: "1px solid #edf0f3" }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{s.name} <span style={{ color: "#0075EB", fontWeight: 600 }}>({s.role})</span></div>
-                  <div style={{ fontSize: 12, color: "#666" }}>{s.buying_role || "stakeholder"}{s.needs_verification ? " · verify before outreach" : " · ready for outreach"}</div>
+            {automatedStakeholdersWithContacts.slice(0, 4).map((s, idx) => {
+              const supplemental = s._supplementaryContact || null;
+              const contactEmail = supplemental?.contact_email || null;
+              const contactPhone = supplemental?.contact_phone || null;
+              const linkedInUrl = supplemental?.linkedin_profile_url || supplemental?.linkedin_search_url || null;
+              const lushaStatus = supplemental?.lusha_status || null;
+
+              return (
+                <div key={`${s.name}-${idx}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, background: "#fff", borderRadius: 6, padding: "8px 10px", border: "1px solid #edf0f3" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{s.name} <span style={{ color: "#0075EB", fontWeight: 600 }}>({s.role})</span></div>
+                    <div style={{ fontSize: 12, color: "#666" }}>{s.buying_role || "stakeholder"}{s.needs_verification ? " · verify before outreach" : " · ready for outreach"}</div>
+                    {(contactEmail || contactPhone || linkedInUrl) && (
+                      <div style={{ fontSize: 12, color: "#444", marginTop: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {contactEmail && <a href={`mailto:${contactEmail}`} style={{ color: "#0075EB", textDecoration: "none" }}>{contactEmail}</a>}
+                        {contactPhone && <a href={`tel:${contactPhone}`} style={{ color: "#0075EB", textDecoration: "none" }}>{contactPhone}</a>}
+                        {linkedInUrl && <a href={linkedInUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB", textDecoration: "none" }}>LinkedIn</a>}
+                      </div>
+                    )}
+                    {lushaStatus && (
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 3 }}>
+                        Lusha: {String(lushaStatus).replace(/_/g, " ")}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: s.confidence_level === "high" ? "#0a8754" : s.confidence_level === "medium" ? "#c27b00" : "#6b7280" }}>{s.final_score}</div>
+                    <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>{s.confidence_level}</div>
+                  </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: s.confidence_level === "high" ? "#0a8754" : s.confidence_level === "medium" ? "#c27b00" : "#6b7280" }}>{s.final_score}</div>
-                  <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>{s.confidence_level}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "#888" }}>
@@ -150,7 +198,7 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
         {!supplementaryLoading && supplementary && (
           <div>
             <div style={{ fontSize: 12, color: "#555", marginBottom: 4 }}>
-              News: {supplementary.integrations?.news_lookup?.configured ? "configured" : "disabled"} ({supplementary.integrations?.news_lookup?.signals_found || 0} signals) | LinkedIn research: {supplementary.integrations?.linkedin_research?.signals_found || 0} targets | Lusha: {supplementary.integrations?.lusha?.configured ? "configured" : "not configured"}
+              News: {supplementary.integrations?.news_lookup?.configured ? "configured" : "disabled"} ({supplementary.integrations?.news_lookup?.signals_found || 0} signals) | LinkedIn research: {supplementary.integrations?.linkedin_research?.signals_found || 0} targets | Lusha: {supplementary.integrations?.lusha?.configured ? "configured" : "not configured"} ({supplementary.integrations?.lusha?.signals_found || 0} matches)
             </div>
             {supplementary.news_signals?.length > 0 && (
               <div style={{ fontSize: 12, color: "#444", marginBottom: 4 }}>
@@ -160,6 +208,21 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
             {supplementary.mna_signals?.length > 0 && (
               <div style={{ fontSize: 12, color: "#444" }}>
                 <strong>M&A signals:</strong> {supplementary.mna_signals.slice(0, 2).map((s) => s.signal).join(", ")}
+              </div>
+            )}
+            {supplementary.value_nuggets?.length > 0 && (
+              <div style={{ fontSize: 12, color: "#444", marginTop: 6 }}>
+                <strong>Value nuggets:</strong>
+                <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {supplementary.value_nuggets.slice(0, 3).map((item, idx) => (
+                    <div key={`stakeholder-nugget-${idx}`}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#374151", background: "#eef2ff", borderRadius: 999, padding: "2px 7px", textTransform: "uppercase", marginRight: 6 }}>
+                        {item.type || "signal"}
+                      </span>
+                      <span>{item.nugget}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

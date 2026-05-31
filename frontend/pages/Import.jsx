@@ -42,11 +42,22 @@ function formatDateTime(value) {
 
 function source3ReasonBucket(detail) {
   const text = String(detail || "").toLowerCase();
+  if (text.includes("auto-filtered") && (text.includes("non-trading") || text.includes("dormant"))) return "nonTrading";
+  if (text.includes("auto-filtered") && (text.includes("holding") || text.includes("spv"))) return "holdingSpv";
   if (text.includes("non-trading") || text.includes("dormant")) return "nonTrading";
   if (text.includes("holding") || text.includes("spv")) return "holdingSpv";
   if (text.includes("no recent filing") || text.includes("stale")) return "stale";
-  if (text.includes("duplicate") || text.includes("already scored")) return "duplicate";
+  if (text.includes("duplicate") || text.includes("already scored") || text.includes("already exists")) return "duplicate";
   return "other";
+}
+
+function isSource3OverrideCandidate(log) {
+  const action = String(log?.action || "").toLowerCase();
+  const detail = String(log?.detail || "").toLowerCase();
+  return action === "skipped"
+    && detail.includes("auto-filtered")
+    && detail.includes("high confidence")
+    && !!String(log?.company_number || "").trim();
 }
 
 export default function Import() {
@@ -68,6 +79,7 @@ export default function Import() {
   const [dashboardStats, setDashboardStats] = useState(null);
   const [source3Breakdown, setSource3Breakdown] = useState(null);
   const [source3Loading, setSource3Loading] = useState(false);
+  const [source3OverrideBusy, setSource3OverrideBusy] = useState({});
   const [closedWonInput, setClosedWonInput] = useState("");
   const [closedWonBusy, setClosedWonBusy] = useState(false);
   const [closedWonResult, setClosedWonResult] = useState(null);
@@ -115,6 +127,7 @@ export default function Import() {
         stale: 0,
         duplicate: 0,
         otherSkipped: 0,
+        warningIncluded: 0,
         latestJobId: null,
       });
       return;
@@ -144,12 +157,21 @@ export default function Import() {
         stale: 0,
         duplicate: 0,
         otherSkipped: 0,
+        warningIncluded: 0,
       };
 
       logs.forEach((log) => {
-        if (String(log.action || "") !== "skipped") return;
-        const bucket = source3ReasonBucket(log.detail);
-        breakdown[bucket] += 1;
+        const action = String(log.action || "").toLowerCase();
+        const detailText = String(log.detail || "").toLowerCase();
+
+        if (action === "skipped") {
+          const bucket = source3ReasonBucket(log.detail);
+          breakdown[bucket] += 1;
+        }
+
+        if (action === "imported" && detailText.includes("included with warning")) {
+          breakdown.warningIncluded += 1;
+        }
       });
 
       setSource3Breakdown({
@@ -172,6 +194,7 @@ export default function Import() {
         stale: 0,
         duplicate: 0,
         otherSkipped: aggregate.skippedItems,
+        warningIncluded: 0,
       });
     } finally {
       setSource3Loading(false);
@@ -228,6 +251,34 @@ export default function Import() {
       setUploadResult({ success: false, error: err.message });
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleSource3Override(log) {
+    const companyNumber = String(log?.company_number || "").trim();
+    if (!companyNumber) return;
+
+    setSource3OverrideBusy((prev) => ({ ...prev, [companyNumber]: true }));
+    try {
+      const res = await fetch("/api/import/source3/override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_number: companyNumber,
+          job_id: selectedJob,
+          reason: "import_ui_manual_override",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Override failed");
+
+      refreshJobs();
+      if (selectedJob) loadJobDetail(selectedJob);
+      refreshDashboardStats();
+    } catch (err) {
+      alert(err?.message || "Override failed");
+    } finally {
+      setSource3OverrideBusy((prev) => ({ ...prev, [companyNumber]: false }));
     }
   }
 
@@ -397,7 +448,31 @@ export default function Import() {
                       <td style={{ padding: "8px 12px", fontFamily: "monospace", fontSize: 12 }}>{log.company_number || "—"}</td>
                       <td style={{ padding: "8px 12px", textAlign: "center" }}><Badge text={log.action} bg={ac.bg} color={ac.color} /></td>
                       <td style={{ padding: "8px 12px", textAlign: "right" }}>{log.turnover ? `£${(log.turnover / 1e6).toFixed(1)}M` : "—"}</td>
-                      <td style={{ padding: "8px 12px", color: "#888" }}>{log.detail || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: "#888" }}>
+                        <div>{log.detail || "—"}</div>
+                        {isSource3OverrideCandidate(log) && (
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleSource3Override(log);
+                            }}
+                            disabled={!!source3OverrideBusy[String(log.company_number || "").trim()]}
+                            style={{
+                              marginTop: 6,
+                              padding: "3px 8px",
+                              borderRadius: 6,
+                              border: "1px solid #2563eb",
+                              background: "#fff",
+                              color: "#2563eb",
+                              fontSize: 11,
+                              cursor: source3OverrideBusy[String(log.company_number || "").trim()] ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {source3OverrideBusy[String(log.company_number || "").trim()] ? "Overriding..." : "Override include"}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -520,6 +595,7 @@ export default function Import() {
               <tr><td style={{ padding: "2px 0" }}>No recent filing</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.stale || 0}</td></tr>
               <tr><td style={{ padding: "2px 0" }}>Duplicate</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.duplicate || 0}</td></tr>
               <tr><td style={{ padding: "2px 0" }}>Other skipped</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.otherSkipped || 0}</td></tr>
+              <tr><td style={{ padding: "2px 0" }}>Included with warning</td><td style={{ padding: "2px 0", textAlign: "right" }}>{source3Breakdown?.warningIncluded || 0}</td></tr>
             </tbody>
           </table>
 

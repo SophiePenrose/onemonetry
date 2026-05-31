@@ -6,7 +6,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { validateEmail, APPROVED_CLAIMS, isCompanyExcluded } from "./email-qc.js";
+import { validateEmail, APPROVED_CLAIMS, isCompanyExcluded, MANDATORY_OUTREACH_FOOTER } from "./email-qc.js";
 import { detectTriggers, selectArchetype, getPersonaGuidance, getSectorAngle, COMPETITOR_DISPLACEMENT } from "./email-archetypes.js";
 import { SYSTEM_PROMPT, selectInferencePattern, detectAccountHealth } from "./email-system-prompt.js";
 import { getSetting } from "./db.js";
@@ -70,6 +70,9 @@ function resolveConfiguredSecret(value) {
     || lower.includes("replacewith")
     || lower.includes("your_openai")
     || lower.includes("your_api_key")
+    || lower.includes("your-key-here")
+    || lower.includes("placeholder")
+    || lower.startsWith("sk-your-")
     || lower.includes("example")
     || lower === "changeme"
     || lower === "change_me";
@@ -80,6 +83,21 @@ const OPENAI_API_KEY = resolveConfiguredSecret(process.env.OPENAI_API_KEY);
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || "gpt-4o-mini";
+const EMAIL_LLM_MIN_QC_SCORE = Math.max(40, Math.min(95,
+  Number.parseInt(process.env.EMAIL_LLM_MIN_QC_SCORE || "65", 10) || 65
+));
+const EMAIL_LLM_MAX_ATTEMPTS = Math.max(2, Math.min(3,
+  Number.parseInt(process.env.EMAIL_LLM_MAX_ATTEMPTS || "2", 10) || 2
+));
+const EMAIL_LLM_MAX_PROMPT_CHARS = Math.max(7000, Math.min(20000,
+  Number.parseInt(process.env.EMAIL_LLM_MAX_PROMPT_CHARS || "10000", 10) || 10000
+));
+const EMAIL_LLM_MAX_TOKENS = Math.max(450, Math.min(1000,
+  Number.parseInt(process.env.EMAIL_LLM_MAX_TOKENS || "700", 10) || 700
+));
+const EMAIL_LLM_FAIL_CLOSED = ["1", "true", "yes", "on"].includes(
+  String(process.env.EMAIL_LLM_FAIL_CLOSED ?? "true").trim().toLowerCase()
+);
 let openAiAuthDisabled = false;
 let openAiAuthLogged = false;
 
@@ -106,6 +124,23 @@ function createRetryNeededError(reason, message) {
 
 function throwRetryNeeded(reason, message) {
   throw createRetryNeededError(reason, message);
+}
+
+function buildFailOpenFallbackResult(params, senderName, senderTitle, reason, detail) {
+  const fallback = generateFallbackEmail({
+    ...params,
+    senderName,
+    senderTitle,
+  });
+
+  return {
+    ...fallback,
+    source: "fallback_preview_retry_needed",
+    retry_needed: true,
+    preview_low_qc: true,
+    reason: reason || null,
+    detail: detail || null,
+  };
 }
 
 const DEFAULT_SENDER_TITLE = "Account Executive";
@@ -625,6 +660,141 @@ function compactWhitespace(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeStyleList(value, maxItems = 10, maxLength = 180) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(/\r?\n|;/) : []);
+
+  const seen = new Set();
+  const output = [];
+  for (const rawItem of rawItems) {
+    const item = compactWhitespace(rawItem);
+    if (!item) continue;
+    const truncated = item.slice(0, maxLength);
+    const key = truncated.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(truncated);
+    if (output.length >= maxItems) break;
+  }
+
+  return output;
+}
+
+function normalizeStyleExamples(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const output = [];
+
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    const item = raw[idx];
+    const label = compactWhitespace(item?.label || `Example ${idx + 1}`).slice(0, 80);
+    const bodyRaw = typeof item === "string"
+      ? item
+      : (item?.text || item?.body || item?.content || "");
+    const text = compactWhitespace(bodyRaw).slice(0, 800);
+    if (!text) continue;
+    output.push({ label, text });
+    if (output.length >= 3) break;
+  }
+
+  return output;
+}
+
+function normalizeEmailStyleProfile(styleProfile) {
+  if (!styleProfile || typeof styleProfile !== "object") return null;
+
+  const enabled = styleProfile.enabled !== false;
+  const name = compactWhitespace(styleProfile.name || styleProfile.title || "").slice(0, 120);
+  const description = compactWhitespace(styleProfile.description || "").slice(0, 600);
+  const stylePrompt = compactWhitespace(styleProfile.style_prompt || styleProfile.stylePrompt || "").slice(0, 2600);
+  const voiceTraits = normalizeStyleList(styleProfile.voice_traits || styleProfile.voiceTraits, 10, 120);
+  const prioritise = normalizeStyleList(
+    styleProfile.preferred_patterns || styleProfile.preferredPatterns || styleProfile.do,
+    12,
+    220
+  );
+  const avoid = normalizeStyleList(
+    styleProfile.avoid_patterns || styleProfile.avoidPatterns || styleProfile.dont,
+    12,
+    220
+  );
+  const examples = normalizeStyleExamples(styleProfile.examples);
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      name,
+      description,
+      style_prompt: stylePrompt,
+      voice_traits: voiceTraits,
+      preferred_patterns: prioritise,
+      avoid_patterns: avoid,
+      examples,
+    };
+  }
+
+  const hasContent = !!stylePrompt
+    || voiceTraits.length > 0
+    || prioritise.length > 0
+    || avoid.length > 0
+    || examples.length > 0;
+
+  if (!hasContent) return null;
+
+  return {
+    enabled: true,
+    name,
+    description,
+    style_prompt: stylePrompt,
+    voice_traits: voiceTraits,
+    preferred_patterns: prioritise,
+    avoid_patterns: avoid,
+    examples,
+  };
+}
+
+function buildStyleProfilePromptSection(styleProfile) {
+  const normalized = normalizeEmailStyleProfile(styleProfile);
+  if (!normalized || normalized.enabled !== true) return null;
+
+  const lines = [
+    "",
+    "MESSAGE STYLE PROFILE (VOICE/TONE LAYER):",
+    "- Content precedence: use all available dossier evidence first, then apply this profile only to expression (tone/rhythm/wording).",
+    "- Treat this as a style adapter only; do not alter factual grounding requirements.",
+    "- Never copy claims or facts from examples unless independently present in this prospect context.",
+  ];
+
+  if (normalized.name) {
+    lines.push(`- Style profile name: ${normalized.name}`);
+  }
+  if (normalized.description) {
+    lines.push(`- Style intent: ${normalized.description}`);
+  }
+  if (normalized.style_prompt) {
+    lines.push(`- Style brief: ${normalized.style_prompt}`);
+  }
+  if (normalized.voice_traits.length > 0) {
+    lines.push(`- Voice traits to retain: ${normalized.voice_traits.join(" | ")}`);
+  }
+  if (normalized.preferred_patterns.length > 0) {
+    lines.push(`- Patterns to prioritise: ${normalized.preferred_patterns.join(" | ")}`);
+  }
+  if (normalized.avoid_patterns.length > 0) {
+    lines.push(`- Patterns to avoid: ${normalized.avoid_patterns.join(" | ")}`);
+  }
+
+  if (normalized.examples.length > 0) {
+    lines.push("- Style examples for rhythm/voice (do NOT reuse facts):");
+    for (const example of normalized.examples) {
+      lines.push(`  - ${example.label}: ${example.text.slice(0, 320)}`);
+    }
+  }
+
+  lines.push("- If style conflicts with compliance or QC rules, compliance/QC rules always win.");
+  return lines.join("\n");
+}
+
 function stripSignatureAndFooterForYamm(text) {
   const lines = String(text || "")
     .replace(/\r/g, "")
@@ -994,6 +1164,187 @@ function postProcessGeneratedEmail(parsed, context = {}) {
   };
 }
 
+function removeForbiddenThreeItemRhythm(text) {
+  let output = String(text || "");
+  for (let i = 0; i < 3; i += 1) {
+    const next = output.replace(
+      /\b([^,\n]{3,60}),\s+([^,\n]{3,60}),\s+and\s+([^,\n]{3,60})\b/g,
+      "$1 and $2, with $3"
+    );
+    if (next === output) break;
+    output = next;
+  }
+  return output;
+}
+
+function normalizeSentenceOpeners(text) {
+  return String(text || "")
+    .replace(/(^|[.!?]\s+)(?:and|but)\s+/gi, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function buildGate1ResearchAnchor(context = {}) {
+  const company = context.company || {};
+  const analysis = context.analysis || {};
+  const evidenceSegments = [];
+
+  if (Number.isFinite(company.turnover) && company.turnover > 0) {
+    evidenceSegments.push(`your latest filed turnover sat around £${(company.turnover / 1e6).toFixed(1)}M`);
+  }
+
+  if (analysis?.international_exposure?.present) {
+    const currencies = Array.isArray(analysis?.international_exposure?.currencies)
+      ? analysis.international_exposure.currencies.slice(0, 3)
+      : [];
+    if (currencies.length > 0) {
+      evidenceSegments.push(`the filing points to cross-border exposure across ${currencies.join("/")}`);
+    } else {
+      evidenceSegments.push("the filing points to active cross-border operations");
+    }
+  }
+
+  const firstTheme = analysis?.themes?.[0];
+  if (firstTheme?.evidence) {
+    evidenceSegments.push(truncateFallbackLine(firstTheme.evidence, 140));
+  } else if (analysis?.summary) {
+    evidenceSegments.push(truncateFallbackLine(analysis.summary, 140));
+  }
+
+  if (evidenceSegments.length === 0) return "";
+  if (evidenceSegments.length === 1) {
+    return `From your filing, ${evidenceSegments[0]}.`;
+  }
+
+  const head = evidenceSegments.slice(0, -1).join(", ");
+  const tail = evidenceSegments[evidenceSegments.length - 1];
+  return `From your filing, ${head}, and ${tail}.`;
+}
+
+function augmentGate1ResearchDensity(body, context = {}) {
+  const anchorSentence = buildGate1ResearchAnchor(context);
+  if (!anchorSentence) return String(body || "");
+
+  const source = String(body || "").trim();
+  if (!source) return anchorSentence;
+  if (/from\s+your\s+(?:latest\s+)?fil(?:ing|ed\s+accounts)/i.test(source)) return source;
+
+  const greetingMatch = source.match(/^(Hi\s+[^\n]+,\n\n)/i);
+  if (greetingMatch) {
+    return source.replace(greetingMatch[0], `${greetingMatch[0]}${anchorSentence}\n\n`);
+  }
+
+  return `${anchorSentence}\n\n${source}`;
+}
+
+function sanitizeGate2VoicePhrases(text) {
+  let output = String(text || "");
+
+  const phraseReplacements = [
+    [/\bi\s+hope\s+this\s+finds\s+you\s+well[,.!\s]*/gi, ""],
+    [/\bi\s+wanted\s+to\s+reach\s+out\b/gi, "I am writing with one filing-backed observation"],
+    [/\bquick\s+question[:,]?\s*/gi, ""],
+    [/\bjust\s+wanted\s+to\b/gi, "wanted to"],
+    [/\bi\s+came\s+across\b/gi, "from your latest filing"],
+    [/\bi\s+noticed\b/gi, "from your latest filing"],
+    [/\bdelve\b/gi, "review"],
+    [/\bnavigate\b/gi, "manage"],
+    [/\brobust\b/gi, "practical"],
+    [/\bseamless\b/gi, "direct"],
+    [/\bin\s+today'?s\b/gi, "currently"],
+    [/\bin\s+the\s+realm\s+of\b/gi, "in"],
+    [/\bstands\s+as\s+a\s+testament\b/gi, "signals"],
+    [/\bspeaks\s+volumes\b/gi, "is notable"],
+    [/\bit'?s\s+worth\s+noting\b/gi, "notably"],
+  ];
+
+  for (const [pattern, replacement] of phraseReplacements) {
+    output = output.replace(pattern, replacement);
+  }
+
+  output = output
+    .replace(/[—–]/g, ", ")
+    .replace(/--/g, ", ")
+    .replace(/!/g, ".")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  output = removeForbiddenThreeItemRhythm(output);
+  output = normalizeSentenceOpeners(output);
+  return output;
+}
+
+function sanitizeGate3CompliancePhrases(text) {
+  let output = String(text || "");
+  const phraseReplacements = [
+    [/\balways\s+free\b/gi, "cost-effective for this workflow"],
+    [/\bfree\s+forever\b/gi, "cost-effective over time"],
+    [/\bunlimited\b/gi, "scaled"],
+    [/\bbest\b/gi, "strong"],
+    [/\bcheapest\b/gi, "more cost-efficient"],
+    [/\bfastest\b/gi, "faster"],
+    [/\b(last\s+chance|act\s+now|limited\s+time)\b/gi, "if timing is right"],
+    [/(?<!not\s)\bguaranteed\b/gi, "likely"],
+    [/\b100%\b/g, "high-confidence"],
+    [/\baccount\s+manager\b/gi, "contact"],
+    [/\bfinancial\s+advis[oe]r\b/gi, "finance partner"],
+    [/\bwe'?re\s+the\s+best\b/gi, "we focus on measurable execution improvements"],
+    [/\bthe\s+best\b/gi, "a strong"],
+  ];
+
+  for (const [pattern, replacement] of phraseReplacements) {
+    output = output.replace(pattern, replacement);
+  }
+
+  return output.replace(/\s{2,}/g, " ").trim();
+}
+
+function ensureComplianceCaveats(body, qcResult) {
+  let output = String(body || "").trim();
+  const checks = qcResult?.gates?.gate3?.checks || [];
+  const failedIds = new Set(checks.filter((check) => check?.passed === false).map((check) => check.id));
+
+  if (failedIds.has("claims_traceability") && !/based\s+on\s+your\s+filed\s+accounts|we\s+estimate|depends\s+on\s+your\s+current\s+provider/i.test(output)) {
+    output = `${output}\n\nBased on your filed accounts, we estimate this directionally, and the realised impact depends on your current provider rates.`.trim();
+  }
+
+  if (failedIds.has("required_disclaimers") && !/illustrative\s+of\s+savings\s+that\s+could\s+be\s+achieved|during\s+market\s+hours\s+within\s+plan\s+allowance/i.test(output)) {
+    output = `${output}\n\nThis estimate is illustrative of savings that could be achieved, but is not guaranteed.`.trim();
+  }
+
+  return output;
+}
+
+function applyDeterministicQcRemediation(normalizedEmail, qcResult, context = {}) {
+  const stepType = String(context.stepType || "").toLowerCase();
+  if (stepType === "nudge_1" || stepType === "nudge_2" || stepType === "close") {
+    return { changed: false, body: String(normalizedEmail?.body || "") };
+  }
+
+  const hasGate1Failure = qcResult?.gates?.gate1?.pass === false;
+  const hasGate2Failure = qcResult?.gates?.gate2?.pass === false;
+  const hasGate3Failure = qcResult?.gates?.gate3?.pass === false;
+  if (!hasGate1Failure && !hasGate2Failure && !hasGate3Failure) {
+    return { changed: false, body: String(normalizedEmail?.body || "") };
+  }
+
+  let candidate = String(normalizedEmail?.body || "");
+  if (hasGate1Failure) {
+    candidate = augmentGate1ResearchDensity(candidate, context);
+  }
+  if (hasGate2Failure) {
+    candidate = sanitizeGate2VoicePhrases(candidate);
+  }
+  if (hasGate3Failure) {
+    candidate = sanitizeGate3CompliancePhrases(candidate);
+    candidate = ensureComplianceCaveats(candidate, qcResult);
+  }
+
+  candidate = ensureSubstantiveGreeting(candidate, context.stakeholderName);
+  const changed = compactWhitespace(candidate) !== compactWhitespace(normalizedEmail?.body || "");
+  return { changed, body: candidate };
+}
+
 function makeStepSubjectsUnique(steps, companyName) {
   const seen = new Map();
   const suffixFor = {
@@ -1035,6 +1386,7 @@ export async function generateLLMEmail(params) {
     totalSteps,
     stepType,
     priorSteps,
+    styleProfile,
   } = params;
   const resolvedStepType = String(
     stepType || (stepNumber === 1 ? "proof" : stepNumber === totalSteps ? "close" : "depth")
@@ -1059,16 +1411,37 @@ export async function generateLLMEmail(params) {
   const accountHealth = detectAccountHealth(analysis, score);
 
   const enrichedParams = { ...params, inferenceData, accountHealth };
-  const userPrompt = buildUserPrompt({
+  const userPrompt = clampPromptForTokenSafety(buildUserPrompt({
     ...enrichedParams,
     senderName: resolvedSenderName,
     senderTitle: resolvedSenderTitle,
-  }, persona, sector, displacement);
+  }, persona, sector, displacement));
   const modelCandidates = Array.from(new Set([OPENAI_MODEL, OPENAI_MODEL_FALLBACK].filter(Boolean)));
+  let bestLowQcResult = null;
 
   try {
-    const maxAttempts = 2;
+    const maxAttempts = EMAIL_LLM_MAX_ATTEMPTS;
     const retryReasons = [];
+
+    const buildResult = ({ selectedNormalized, selectedQcResult, normalized, attempt, modelName }) => ({
+      subject: selectedNormalized.subject,
+      body: selectedNormalized.body,
+      footer: selectedNormalized.footer,
+      archetype: archetype?.id || "diagnostic_filing",
+      trigger_type: trigger?.type || null,
+      qc_score: selectedQcResult.score,
+      qc_pass: selectedQcResult.pass,
+      qc_issues: selectedQcResult.issues,
+      metrics: selectedQcResult.metrics,
+      quality_gates: selectedQcResult.gates,
+      voice_percent: selectedQcResult.metrics?.voice_percent ?? null,
+      claims_used: selectedNormalized.claims_used,
+      disclaimers_needed: selectedNormalized.disclaimers_needed,
+      source: compactWhitespace(selectedNormalized.body) === compactWhitespace(normalized.body)
+        ? (attempt > 1 ? "llm_rewrite" : "llm")
+        : (attempt > 1 ? "llm_rewrite_remediated" : "llm_remediated"),
+      model: modelName,
+    });
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const attemptPrompt = attempt === 1
@@ -1088,7 +1461,7 @@ export async function generateLLMEmail(params) {
               { role: "user", content: attemptPrompt },
             ],
             temperature: 0.55,
-            max_tokens: 1000,
+            max_tokens: EMAIL_LLM_MAX_TOKENS,
           }),
         });
 
@@ -1110,6 +1483,16 @@ export async function generateLLMEmail(params) {
           }
 
           if (canUseEmailLlm()) {
+            if (!EMAIL_LLM_FAIL_CLOSED) {
+              return buildFailOpenFallbackResult(
+                params,
+                resolvedSenderName,
+                resolvedSenderTitle,
+                `upstream_http_${response.status}`,
+                `Live email generation upstream failure (${response.status}); served deterministic fallback draft.`
+              );
+            }
+
             throwRetryNeeded(
               `upstream_http_${response.status}`,
               `Live email generation upstream failure (${response.status}). Retry required.`
@@ -1157,29 +1540,108 @@ export async function generateLLMEmail(params) {
         })) {
           retryReasons.push("low_specificity_or_generic_language");
           shouldRetryAttempt = true;
-          continue;
+          break;
         }
 
-        const qcResult = validateEmail(
-          { subject: normalized.subject, body: normalized.body },
-          { isInitialOutreach: stepNumber === 1 }
+        const qcMeta = {
+          isInitialOutreach: stepNumber === 1,
+          stepType: resolvedStepType,
+          assumeManagedFooter: true,
+          footerTemplate: MANDATORY_OUTREACH_FOOTER,
+        };
+
+        let selectedNormalized = normalized;
+        let selectedQcResult = validateEmail(
+          { subject: selectedNormalized.subject, body: selectedNormalized.body },
+          qcMeta
         );
 
-        return {
-          subject: normalized.subject,
-          body: normalized.body,
-          footer: normalized.footer,
-          archetype: archetype?.id || "diagnostic_filing",
-          trigger_type: trigger?.type || null,
-          qc_score: qcResult.score,
-          qc_pass: qcResult.pass,
-          qc_issues: qcResult.issues,
-          metrics: qcResult.metrics,
-          claims_used: normalized.claims_used,
-          disclaimers_needed: normalized.disclaimers_needed,
-          source: attempt > 1 ? "llm_rewrite" : "llm",
-          model: modelName,
-        };
+        const remediated = applyDeterministicQcRemediation(selectedNormalized, selectedQcResult, {
+          stepType: resolvedStepType,
+          stakeholderName: contact?.name || "",
+          company,
+          analysis,
+        });
+
+        if (remediated.changed) {
+          const remediatedCandidate = {
+            ...selectedNormalized,
+            body: remediated.body,
+          };
+          const remediatedQcResult = validateEmail(
+            { subject: remediatedCandidate.subject, body: remediatedCandidate.body },
+            qcMeta
+          );
+
+          const baselineScore = Number(selectedQcResult?.score || 0);
+          const remediatedScore = Number(remediatedQcResult?.score || 0);
+          if (remediatedQcResult.pass === true || remediatedScore >= baselineScore) {
+            selectedNormalized = remediatedCandidate;
+            selectedQcResult = remediatedQcResult;
+          }
+        }
+
+        const qcScore = Number(selectedQcResult?.score || 0);
+        const meetsQualityFloor = selectedQcResult.pass === true && qcScore >= EMAIL_LLM_MIN_QC_SCORE;
+        const failedGateNames = Object.entries(selectedQcResult.gates || {})
+          .filter(([, gate]) => gate && gate.pass === false)
+          .map(([name]) => name)
+          .join("+");
+        const qualityReason = selectedQcResult.pass === true ? "quality_floor_failed" : "quality_gates_failed";
+        const qualityDetail = selectedQcResult.pass === true
+          ? `Live email generation quality score ${qcScore} below floor ${EMAIL_LLM_MIN_QC_SCORE}. Retry required.`
+          : `Live email generation failed QC gates (${failedGateNames || "unknown"}) at score ${qcScore}. Retry required.`;
+
+        const candidateResult = buildResult({
+          selectedNormalized,
+          selectedQcResult,
+          normalized,
+          attempt,
+          modelName,
+        });
+        if (!bestLowQcResult || Number(candidateResult.qc_score || 0) > Number(bestLowQcResult.qc_score || 0)) {
+          bestLowQcResult = candidateResult;
+        }
+
+        if (!meetsQualityFloor && attempt < maxAttempts) {
+          const reasonSuffix = failedGateNames || `score_${qcScore}`;
+          retryReasons.push(`${qualityReason}_${reasonSuffix}`);
+          shouldRetryAttempt = true;
+          break;
+        }
+
+        if (!meetsQualityFloor) {
+          if (canUseEmailLlm() && !EMAIL_LLM_FAIL_CLOSED) {
+            if (bestLowQcResult) {
+              return {
+                ...bestLowQcResult,
+                source: `${bestLowQcResult.source}_preview_low_qc`,
+                retry_needed: true,
+                preview_low_qc: true,
+              };
+            }
+
+            return buildFailOpenFallbackResult(
+              params,
+              resolvedSenderName,
+              resolvedSenderTitle,
+              qualityReason,
+              qualityDetail
+            );
+          }
+
+          if (canUseEmailLlm()) {
+            throwRetryNeeded(qualityReason, qualityDetail);
+          }
+
+          return generateFallbackEmail({
+            ...params,
+            senderName: resolvedSenderName,
+            senderTitle: resolvedSenderTitle,
+          });
+        }
+
+        return candidateResult;
       }
 
       if (shouldRetryAttempt && attempt < maxAttempts) {
@@ -1188,6 +1650,25 @@ export async function generateLLMEmail(params) {
     }
 
     if (canUseEmailLlm()) {
+      if (!EMAIL_LLM_FAIL_CLOSED) {
+        if (bestLowQcResult) {
+          return {
+            ...bestLowQcResult,
+            source: `${bestLowQcResult.source}_preview_low_qc`,
+            retry_needed: true,
+            preview_low_qc: true,
+          };
+        }
+
+        return buildFailOpenFallbackResult(
+          params,
+          resolvedSenderName,
+          resolvedSenderTitle,
+          "quality_gate_exhausted",
+          "Live email generation did not meet quality gates after retries; served deterministic fallback draft."
+        );
+      }
+
       throwRetryNeeded(
         "quality_gate_exhausted",
         "Live email generation did not meet quality gates after retries. Retry required."
@@ -1203,10 +1684,48 @@ export async function generateLLMEmail(params) {
     console.error("Email generation LLM error:", err.message);
 
     if (err?.preventTemplateFallback) {
+      if (!EMAIL_LLM_FAIL_CLOSED) {
+        if (bestLowQcResult) {
+          return {
+            ...bestLowQcResult,
+            source: `${bestLowQcResult.source}_preview_low_qc`,
+            retry_needed: true,
+            preview_low_qc: true,
+          };
+        }
+
+        return buildFailOpenFallbackResult(
+          params,
+          resolvedSenderName,
+          resolvedSenderTitle,
+          err?.reason || "llm_retry_needed",
+          err?.message || "Live email generation retry requested; served deterministic fallback draft."
+        );
+      }
+
       throw err;
     }
 
     if (canUseEmailLlm()) {
+      if (!EMAIL_LLM_FAIL_CLOSED) {
+        if (bestLowQcResult) {
+          return {
+            ...bestLowQcResult,
+            source: `${bestLowQcResult.source}_preview_low_qc`,
+            retry_needed: true,
+            preview_low_qc: true,
+          };
+        }
+
+        return buildFailOpenFallbackResult(
+          params,
+          resolvedSenderName,
+          resolvedSenderTitle,
+          "llm_runtime_error",
+          "Live email generation failed due to an upstream/runtime error; served deterministic fallback draft."
+        );
+      }
+
       throwRetryNeeded("llm_runtime_error", "Live email generation failed due to an upstream/runtime error. Retry required.");
     }
 
@@ -1233,6 +1752,7 @@ function buildUserPrompt(params, persona, sector, displacement) {
     dossierTier,
     sendCondition,
     priorSteps,
+    styleProfile,
   } = params;
   const level5 = analysis?.level5_extraction || null;
   const resolvedStepType = stepType
@@ -1275,6 +1795,11 @@ The "proof of research" principle: the prospect should think "how do they know t
 - Do NOT lead with these unless evidence is explicit and urgent: ${INTERNAL_DO_NOT_LEAD_WITH.join(", ")}.
 - If multiple opportunities exist, choose one primary motion for this step and keep the email single-threaded.`);
 
+  const styleProfileBlock = buildStyleProfilePromptSection(styleProfile);
+  if (styleProfileBlock) {
+    parts.push(styleProfileBlock);
+  }
+
   parts.push(`\nCOMPANY FACTS (USE THESE SPECIFICALLY — do not generalise):
 - Company name: ${company.name}
 - Annual turnover: £${company.turnover ? (company.turnover / 1e6).toFixed(1) + "M" : "Unknown"}
@@ -1283,11 +1808,13 @@ The "proof of research" principle: the prospect should think "how do they know t
 - Segment: ${company.segment || "Mid-Market"}`);
 
   if (analysis?.summary) {
-    parts.push(`- LLM summary: "${analysis.summary}"`);
+    parts.push(`- LLM summary: "${truncateFallbackLine(analysis.summary, 340)}"`);
   }
 
   if (analysis?.international_exposure?.present) {
-    parts.push(`- International operations: ${analysis.international_exposure.details}`);
+    const intlDetails = truncateFallbackLine(analysis.international_exposure.details, 320)
+      || "International operations signal present";
+    parts.push(`- International operations: ${intlDetails}`);
     if (analysis.international_exposure.currencies?.length) {
       parts.push(`- Currencies traded: ${analysis.international_exposure.currencies.join(", ")}`);
       const vol = company.turnover * (analysis.international_exposure.currencies.length > 2 ? 0.5 : 0.3);
@@ -1298,41 +1825,50 @@ The "proof of research" principle: the prospect should think "how do they know t
   }
 
   if (analysis?.turnover_trend) {
-    parts.push(`- Revenue trend: ${analysis.turnover_trend}${score?.growth?.rate ? ` (${(score.growth.rate * 100).toFixed(0)}% YoY)` : ""}`);
+    parts.push(`- Revenue trend: ${truncateFallbackLine(analysis.turnover_trend, 180)}${score?.growth?.rate ? ` (${(score.growth.rate * 100).toFixed(0)}% YoY)` : ""}`);
   }
 
   if (analysis?.themes?.length > 0) {
     parts.push(`\nKEY THEMES FROM FILING (reference at least one):`);
-    for (const t of analysis.themes) {
-      parts.push(`- ${t.theme}: "${t.evidence}"`);
+    for (const t of analysis.themes.slice(0, 6)) {
+      const theme = truncateFallbackLine(t?.theme || "Theme", 120);
+      const evidence = truncateFallbackLine(t?.evidence || "", 220);
+      parts.push(`- ${theme}: "${evidence}"`);
     }
   }
 
   if (analysis?.pain_indicators?.length > 0) {
     parts.push(`\nSPECIFIC PAIN POINTS (weave one into the email):`);
-    for (const p of analysis.pain_indicators) {
-      parts.push(`- [${p.severity}] ${p.pain}: "${p.evidence}"`);
+    for (const p of analysis.pain_indicators.slice(0, 6)) {
+      const pain = truncateFallbackLine(p?.pain || "Pain", 160);
+      const evidence = truncateFallbackLine(p?.evidence || "", 220);
+      parts.push(`- [${p?.severity || "medium"}] ${pain}: "${evidence}"`);
     }
   }
 
   if (analysis?.opportunities?.length > 0) {
     parts.push(`\nPRODUCT OPPORTUNITIES IDENTIFIED:`);
-    for (const o of analysis.opportunities) {
-      parts.push(`- ${o.product} [${o.confidence} confidence]: "${o.rationale}"`);
+    for (const o of analysis.opportunities.slice(0, 6)) {
+      const rationale = truncateFallbackLine(o?.rationale || "", 220);
+      parts.push(`- ${o?.product || "Product"} [${o?.confidence || "medium"} confidence]: "${rationale}"`);
     }
   }
 
   if (analysis?.competitors_detected?.length > 0) {
     parts.push(`\nCOMPETITORS DETECTED IN THEIR SETUP:`);
-    for (const c of analysis.competitors_detected) {
+    for (const c of analysis.competitors_detected.slice(0, 5)) {
       const disp = COMPETITOR_DISPLACEMENT[c.name];
-      parts.push(`- ${c.name} (${c.product}): weakness = "${disp?.weakness || c.displacement_angle}"`);
-      if (disp) parts.push(`  Approved angle: "${disp.angle}"`);
+      parts.push(`- ${c?.name || "Competitor"} (${c?.product || "Unknown"}): weakness = "${truncateFallbackLine(disp?.weakness || c?.displacement_angle || "", 180)}"`);
+      if (disp) parts.push(`  Approved angle: "${truncateFallbackLine(disp.angle, 180)}"`);
     }
   }
 
   if (analysis?.key_people?.length > 0) {
-    parts.push(`\nKEY PEOPLE FROM FILING: ${analysis.key_people.map(p => `${p.name} (${p.role})`).join(", ")}`);
+    const keyPeople = analysis.key_people
+      .slice(0, 8)
+      .map((p) => `${truncateFallbackLine(p?.name || "Unknown", 80)} (${truncateFallbackLine(p?.role || "Role", 80)})`)
+      .join(", ");
+    parts.push(`\nKEY PEOPLE FROM FILING: ${keyPeople}`);
   }
 
   if (level5) {
@@ -1343,30 +1879,34 @@ The "proof of research" principle: the prospect should think "how do they know t
 
     parts.push(`\nLEVEL 5 EXTRACTION (PRIORITISE THESE SIGNALS):
 - Segment fit: ${snapshot.segment_fit || company.segment || "Mid-Market"}
-- Operating model: ${snapshot.operating_model || analysis?.summary || "Unknown"}
-- International profile: ${snapshot.international_profile || analysis?.international_exposure?.details || "Unknown"}
-- Now trigger: ${sequenceInputs.now_trigger || "Latest filing context"}
-- Quantified hook: ${sequenceInputs.quantified_hook || "Validate with provider-rate review"}
-- Operations hook: ${sequenceInputs.operations_hook || "Operational scale signal available"}
-- Governance hook: ${sequenceInputs.governance_hook || "Current setup constraints to validate"}
-- Objection to pre-empt: ${sequenceInputs.objection_to_preempt || "Can run in parallel with existing credit/facility setup"}`);
+  - Operating model: ${truncateFallbackLine(snapshot.operating_model || analysis?.summary || "Unknown", 220)}
+  - International profile: ${truncateFallbackLine(snapshot.international_profile || analysis?.international_exposure?.details || "Unknown", 220)}
+  - Now trigger: ${truncateFallbackLine(sequenceInputs.now_trigger || "Latest filing context", 220)}
+  - Quantified hook: ${truncateFallbackLine(sequenceInputs.quantified_hook || "Validate with provider-rate review", 220)}
+  - Operations hook: ${truncateFallbackLine(sequenceInputs.operations_hook || "Operational scale signal available", 220)}
+  - Governance hook: ${truncateFallbackLine(sequenceInputs.governance_hook || "Current setup constraints to validate", 220)}
+  - Objection to pre-empt: ${truncateFallbackLine(sequenceInputs.objection_to_preempt || "Can run in parallel with existing credit/facility setup", 220)}`);
 
     if (topPains.length > 0) {
       parts.push("\nLEVEL 5 PAIN REGISTER (use evidence + inference):");
       for (const item of topPains) {
-        parts.push(`- ${item.area} [${item.severity}]: evidence="${item.evidence}" | inferred="${item.inferred_problem}"`);
+        parts.push(`- ${truncateFallbackLine(item?.area || "Pain area", 120)} [${item?.severity || "medium"}]: evidence="${truncateFallbackLine(item?.evidence || "", 180)}" | inferred="${truncateFallbackLine(item?.inferred_problem || "", 180)}"`);
       }
     }
 
     if (useCases.length > 0) {
       parts.push("\nLEVEL 5 PRIORITISED USE CASES:");
       for (const item of useCases) {
-        parts.push(`- ${item.product} (${item.priority}): ${item.why_fit} Example: ${item.example_use_case}`);
+        parts.push(`- ${truncateFallbackLine(item?.product || "Use case", 100)} (${item?.priority || "medium"}): ${truncateFallbackLine(item?.why_fit || "", 180)} Example: ${truncateFallbackLine(item?.example_use_case || "", 180)}`);
       }
     }
 
     if (Array.isArray(sequenceInputs.directors_language) && sequenceInputs.directors_language.length > 0) {
-      parts.push(`\nDIRECTORS LANGUAGE TO MIRROR: ${sequenceInputs.directors_language.slice(0, 2).join(" | ")}`);
+      const directorsLanguage = sequenceInputs.directors_language
+        .slice(0, 2)
+        .map((item) => truncateFallbackLine(item, 120))
+        .join(" | ");
+      parts.push(`\nDIRECTORS LANGUAGE TO MIRROR: ${directorsLanguage}`);
     }
   }
 
@@ -1430,7 +1970,9 @@ The "proof of research" principle: the prospect should think "how do they know t
     parts.push(`\nEMAIL TYPE: Proof email
 - Target 120-200 words for Tier A/B, 100-150 words for Tier C
 - Open with a specific filing-backed observation and strategic interpretation
+- Lead with business outcome language (cash, control, speed) before product mechanics
 - Include one quantified lens with explicit caveat language
+- Include one concise Revolut credibility anchor before the CTA
 - Mirror one directors-language phrase if available
 - End with a soft open question in Sophie's style`);
   } else if (resolvedStepType === "nudge_1" || resolvedStepType === "nudge_2") {
@@ -1444,6 +1986,7 @@ The "proof of research" principle: the prospect should think "how do they know t
 - 130-200 words
 - Add a second insight dimension not used in Email 1
 - Keep to one conviction angle, no multi-pitching
+- Keep outcome-first phrasing and connect one operational metric to impact
 - Open with this exact scaffold: "A second layer worth pressure-testing is this: ..."
 - CTA should ask whether your read matches internal reality`);
   } else if (resolvedStepType === "provocation") {
@@ -1496,12 +2039,166 @@ Adjust your tone accordingly. ${params.accountHealth === "loss_making" ? "Be sen
   return parts.join("\n");
 }
 
+function clampPromptForTokenSafety(prompt) {
+  const text = String(prompt || "");
+  if (!text) return text;
+  if (text.length <= EMAIL_LLM_MAX_PROMPT_CHARS) return text;
+
+  const headBudget = Math.floor(EMAIL_LLM_MAX_PROMPT_CHARS * 0.76);
+  const tailBudget = Math.max(900, EMAIL_LLM_MAX_PROMPT_CHARS - headBudget - 160);
+  const head = text.slice(0, headBudget).trimEnd();
+  const tail = text.slice(-tailBudget).trimStart();
+
+  return `${head}\n\n[Context truncated for prompt size safety]\n\n${tail}`;
+}
+
+function truncateFallbackLine(value, maxLength = 220) {
+  const normalized = compactWhitespace(value);
+  if (!normalized) return "";
+  if (normalized.length <= maxLength) return normalized;
+
+  const sliced = normalized.slice(0, maxLength);
+  const boundary = sliced.lastIndexOf(" ");
+  const trimmed = (boundary > 60 ? sliced.slice(0, boundary) : sliced).trim();
+  return `${trimmed}...`;
+}
+
+function firstNonEmptyText(...values) {
+  for (const value of values) {
+    const token = compactWhitespace(value);
+    if (token) return token;
+  }
+  return "";
+}
+
+function productOutcomeHint(product) {
+  const label = compactWhitespace(product).toLowerCase();
+  if (!label) return "reduce controllable cost and workflow friction in treasury execution";
+  if (label.includes("fx forwards") || label.includes("fx forward")) {
+    return "lock procurement rates in advance and reduce P&L volatility";
+  }
+  if (label === "fx" || label.includes(" fx") || label.startsWith("fx")) {
+    return "reduce spread leakage on cross-currency flows and improve rate transparency";
+  }
+  if (label.includes("merchant") || label.includes("revolut pay")) {
+    return "lower acceptance cost and accelerate settlement on customer receipts";
+  }
+  if (label.includes("cards") || label.includes("spend")) {
+    return "tighten spend controls while reducing reconciliation lag across sites";
+  }
+  if (label.includes("api")) {
+    return "automate treasury and reconciliation workflows across entities";
+  }
+  return "reduce controllable cost and workflow friction in treasury execution";
+}
+
+function deriveFallbackSignals(analysis = {}, company = {}, trigger = null) {
+  const sequenceInputs = analysis?.level5_extraction?.sequence_inputs || {};
+  const firstTheme = (analysis?.themes || [])[0] || {};
+  const firstPainIndicator = (analysis?.pain_indicators || [])[0] || {};
+  const firstPainRegister = (analysis?.level5_extraction?.pain_register || [])[0] || {};
+  const primaryUseCase = pickPrimaryUseCase(analysis);
+  const useCaseProduct = compactWhitespace(primaryUseCase?.product || trigger?.type || "");
+
+  const observationRaw = firstNonEmptyText(
+    sequenceInputs.now_trigger,
+    firstTheme.evidence,
+    firstTheme.theme,
+    analysis?.international_exposure?.details,
+    analysis?.summary
+  );
+
+  const observation = ensureSentence(
+    truncateFallbackLine(observationRaw, 240),
+    `${company.name || "This business"} appears to be balancing growth with tighter execution requirements in the latest filing`
+  );
+
+  const painRaw = firstNonEmptyText(
+    firstPainRegister.inferred_problem,
+    firstPainIndicator.pain,
+    firstPainIndicator.evidence,
+    sequenceInputs.operations_hook
+  );
+
+  const pain = ensureSentence(
+    truncateFallbackLine(painRaw, 240),
+    "That usually creates avoidable cost, delay, or reconciliation drag for the finance team"
+  );
+
+  const turnover = Number(company?.turnover || 0);
+  const fallbackQuantified = turnover > 0
+    ? `With turnover around ${formatPounds(turnover)}, even modest basis-point leakage on payments or FX execution can compound quickly`
+    : "";
+  const quantifiedHookRaw = firstNonEmptyText(sequenceInputs.quantified_hook, fallbackQuantified);
+  const quantifiedHook = quantifiedHookRaw
+    ? `${ensureSentence(truncateFallbackLine(quantifiedHookRaw, 230))} (inference from filed data; exact impact depends on current provider economics).`
+    : "";
+
+  const valueReason = firstNonEmptyText(primaryUseCase?.why_fit, primaryUseCase?.example_use_case);
+  const valuePath = ensureSentence(
+    truncateFallbackLine(
+      useCaseProduct
+        ? `${useCaseProduct} looks highest-leverage here because ${valueReason || productOutcomeHint(useCaseProduct)}`
+        : `A scoped first step here could ${productOutcomeHint(useCaseProduct)}`,
+      250
+    ),
+    "A scoped first step can usually run in parallel with your current setup before broader change"
+  );
+
+  const operationsHook = ensureSentence(
+    truncateFallbackLine(
+      firstNonEmptyText(sequenceInputs.operations_hook, firstPainRegister.evidence, firstPainIndicator.evidence),
+      220
+    ),
+    "Execution consistency across entities and banking lanes is often where hidden cost appears"
+  );
+
+  const governanceHook = ensureSentence(
+    truncateFallbackLine(firstNonEmptyText(sequenceInputs.governance_hook, firstTheme.evidence), 220),
+    "Strategy intent and day-to-day treasury execution can drift as organisations scale"
+  );
+
+  const directorsLanguage = Array.isArray(sequenceInputs.directors_language)
+    ? truncateFallbackLine(sequenceInputs.directors_language[0], 150)
+    : "";
+
+  return {
+    observation,
+    pain,
+    quantifiedHook,
+    valuePath,
+    operationsHook,
+    governanceHook,
+    directorsLanguage,
+    useCaseProduct,
+  };
+}
+
+function fallbackQuestionForContext(stepType, signals = {}) {
+  const product = compactWhitespace(signals.useCaseProduct || "this lane").toLowerCase();
+
+  if (stepType === "proof") {
+    return `Would it be useful to benchmark ${product} economics against your current setup?`;
+  }
+  if (stepType === "depth") {
+    return "Does this match what your team is seeing internally, or is the bottleneck elsewhere?";
+  }
+  if (stepType === "provocation") {
+    return "Is that read directionally fair, or am I missing something material?";
+  }
+  if (stepType === "peer_benchmark") {
+    return "Would a one-page benchmark be useful to pressure-test this against peers?";
+  }
+  return "Would it help if I shared the assumptions behind that view?";
+}
+
 function generateFallbackEmail(params) {
   const {
     company,
     contact,
     archetype,
     analysis,
+    trigger,
     stepNumber,
     totalSteps,
     stepType,
@@ -1515,20 +2212,26 @@ function generateFallbackEmail(params) {
   const resolvedStepType = stepType
     || (stepNumber === 1 ? "proof" : stepNumber === totalSteps ? "close" : "depth");
 
+  const signals = deriveFallbackSignals(analysis, company, trigger);
+  const industryLabel = compactWhitespace(company?.industry || "mid-market").toLowerCase();
+  const mirrorsDirectorsLanguage = signals.directorsLanguage
+    ? `Using directors' own language, \"${signals.directorsLanguage}\", the execution risk usually sits in consistency rather than intent.`
+    : "Execution risk usually sits in consistency rather than intent once operations scale.";
+
   if (resolvedStepType === "nudge_1") {
-    body = `Hi ${firstName}, any thoughts on the note below? Best,`;
+    body = `Hi ${firstName}, should I send the one-page benchmark? Best,`;
   } else if (resolvedStepType === "nudge_2") {
-    body = `Hi ${firstName}, quick follow-up on the note below. Best,`;
+    body = `Hi ${firstName}, close this out, or send assumptions? Best,`;
   } else if (resolvedStepType === "proof") {
-    body = `Hi ${firstName},\n\nReading through ${company.name}'s latest filing, what stood out was the operating pressure underneath current scale rather than the headline turnover alone. Usually, when a business reaches this stage, the challenge shifts from straightforward execution to managing treasury and operational friction across payment corridors.\n\nIf helpful, I can share the assumptions we use for similar teams before any platform discussion.`;
+    body = `Hi ${firstName},\n\nReading your latest filing, ${signals.observation.charAt(0).toLowerCase()}${signals.observation.slice(1)}\n\n${signals.pain} ${signals.quantifiedHook}\n\n${signals.valuePath}\n\n${fallbackQuestionForContext("proof", signals)}`;
   } else if (resolvedStepType === "depth") {
-    body = `Hi ${firstName},\n\nA second layer worth pressure-testing is execution consistency across entities and banking lanes. Usually, when operations span multiple desks, the same nominal process can carry different implicit FX and reconciliation costs depending on where execution sits.\n\nDoes this match what you're seeing internally, or is the picture different?`;
+    body = `Hi ${firstName},\n\nA second layer worth pressure-testing is this: ${signals.operationsHook.charAt(0).toLowerCase()}${signals.operationsHook.slice(1)}\n\n${mirrorsDirectorsLanguage}\n\n${signals.valuePath}\n\n${fallbackQuestionForContext("depth", signals)}`;
   } else if (resolvedStepType === "provocation") {
-    body = `Hi ${firstName},\n\nBased on the filing context and operating shape, my read is that a material share of cross-currency flow is still being managed in a way that introduces avoidable FX and operational friction. If that read is wrong, I would value the correction because teams at this scale usually see the same pattern.\n\nWould it be useful to pressure-test that assumption quickly?`;
+    body = `Hi ${firstName},\n\nOne hypothesis I may be wrong about: ${signals.governanceHook.charAt(0).toLowerCase()}${signals.governanceHook.slice(1)}\n\nIf that read is materially off, I value the correction.\n\n${fallbackQuestionForContext("provocation", signals)}`;
   } else if (resolvedStepType === "peer_benchmark") {
-    body = `Hi ${firstName},\n\nAcross comparable mid-market teams, the common pattern is to separate credit relationships from execution pricing so treasury policy can stay stable while FX and workflow cost improve. Usually, that shift is where the first measurable gain appears.\n\nCurious whether that aligns with the team's current approach, or if something else is in play.`;
+    body = `Hi ${firstName},\n\nAcross comparable ${industryLabel} teams, the pattern is to hold core banking relationships in place while isolating high-friction payment and FX lanes for cost and control improvements.\n\n${signals.valuePath}\n\n${fallbackQuestionForContext("peer_benchmark", signals)}`;
   } else {
-    body = `Hi ${firstName},\n\nI'll leave it there for now. If this becomes a priority in the coming planning cycle, I am happy to share a short benchmark note and assumptions pack.\n\nBest,\nSophie Louise Penrose`;
+    body = `Hi ${firstName},\n\nI'll leave it there for now. If this becomes a priority this quarter, I can share a short benchmark note focused on ${signals.useCaseProduct || "the highest-friction treasury lane"} and the assumptions behind it.\n\nBest,\nSophie Louise Penrose`;
   }
 
   const isNudgeStep = resolvedStepType === "nudge_1" || resolvedStepType === "nudge_2";
@@ -1543,7 +2246,15 @@ function generateFallbackEmail(params) {
     });
   }
 
-  const qcResult = validateEmail({ subject, body }, { isInitialOutreach: stepNumber === 1 });
+  const qcResult = validateEmail(
+    { subject, body },
+    {
+      isInitialOutreach: stepNumber === 1,
+      stepType: resolvedStepType,
+      assumeManagedFooter: true,
+      footerTemplate: MANDATORY_OUTREACH_FOOTER,
+    }
+  );
 
   return {
     subject,
@@ -1555,6 +2266,8 @@ function generateFallbackEmail(params) {
     qc_pass: qcResult.pass,
     qc_issues: qcResult.issues,
     metrics: qcResult.metrics,
+    quality_gates: qcResult.gates,
+    voice_percent: qcResult.metrics?.voice_percent ?? null,
     claims_used: [],
     disclaimers_needed: [2],
     source: "fallback",
@@ -1564,7 +2277,17 @@ function generateFallbackEmail(params) {
 }
 
 export async function generateFullSequence(params) {
-  const { company, contact, analysis, score, motion, merchantSpend, preferredCadence } = params;
+  const {
+    company,
+    contact,
+    analysis,
+    score,
+    motion,
+    merchantSpend,
+    preferredCadence,
+    styleProfile,
+  } = params;
+  const normalizedStyleProfile = normalizeEmailStyleProfile(styleProfile);
 
   const exclusion = isCompanyExcluded(company, analysis);
   if (exclusion.excluded) {
@@ -1612,6 +2335,7 @@ export async function generateFullSequence(params) {
       stepType: plan.stepType,
       sendCondition: plan.sendCondition,
       dossierTier: cadence.dossier_tier,
+      styleProfile: normalizedStyleProfile,
       priorSteps: steps.map((s) => ({
         step_number: s.step_number,
         step_type: s.step_type,
@@ -1645,6 +2369,8 @@ export async function generateFullSequence(params) {
     triggers,
     cadence,
     dossier_tier: cadence.dossier_tier,
+    style_profile_applied: !!(normalizedStyleProfile && normalizedStyleProfile.enabled),
+    style_profile_name: normalizedStyleProfile?.name || null,
     steps: stepsWithHeader,
     exclusion_check: { excluded: false },
     merchant_spend_included: false,

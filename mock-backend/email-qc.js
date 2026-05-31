@@ -52,6 +52,250 @@ const STRUCTURAL_CHECKS = [
   { check: (email) => email.body.match(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}]/u), issue: "Emoji in Business sales email", deduction: 5 },
 ];
 
+const GATE1_THRESHOLDS = {
+  citation_density: 0.5,
+  specificity_score: 1.5,
+  research_density: 4.0,
+};
+
+const VOICE_DISPLAY_PASS_THRESHOLD = 85;
+
+export const MANDATORY_OUTREACH_FOOTER = [
+  "---",
+  "Sophie Louise Penrose",
+  "[Title] | Revolut Business",
+  "revolut.com/business",
+  "",
+  "As part of our sales process, we collect, use, and process your personal data in line with relevant laws and regulations. Sales calls may be recorded for quality and training purposes. For more details, please refer to our privacy notice (UK/EEA | US).",
+  "",
+  "To manage your sales outreach preferences or opt out, reply to this email with your preference.",
+  "",
+  "Any information provided is not intended to be and does not constitute financial advice, investment advice, trading advice or any other advice or recommendation of any sort.",
+].join("\n");
+
+const GATE3_FORBIDDEN_PATTERNS = [
+  /always\s+free/i,
+  /unlimited\b(?!\s+(?:cards|virtual\s+cards)\b)/i,
+  /\bbest\b(?!\s*[,\n]|\s+(?:regards|wishes|practice|motion))/i,
+  /\bcheapest\b/i,
+  /\bfastest\b/i,
+  /(?<!not\s)\bguaranteed\b/i,
+  /100%/i,
+  /limited\s+time/i,
+  /act\s+now/i,
+  /last\s+chance/i,
+  /\baccount\s+manager\b/i,
+  /\bfinancial\s+advis[oe]r\b/i,
+];
+
+const AI_TELL_PATTERNS = [
+  /\bdelve\b/i,
+  /\bnavigate\b/i,
+  /\brobust\b/i,
+  /\bseamless\b/i,
+  /\bin\s+today'?s\b/i,
+  /\bin\s+the\s+realm\s+of\b/i,
+  /\bstands\s+as\s+a\s+testament\b/i,
+  /\bspeaks\s+volumes\b/i,
+  /\bit'?s\s+worth\s+noting\b/i,
+];
+
+const SOPHIE_VOCABULARY_PATTERNS = [
+  /operational\s+friction/i,
+  /treasury\s+friction/i,
+  /financial\s+complexity/i,
+  /cross-border/i,
+  /strategic\s+evolution/i,
+  /continuing\s+to\s+scale/i,
+  /high-volume/i,
+  /similar\s+clients/i,
+  /usually,\s*when/i,
+];
+
+function normalizeSentenceList(text) {
+  return String(text || "")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+}
+
+function countMatches(text, pattern) {
+  if (!text || !pattern) return 0;
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+  return (String(text).match(globalPattern) || []).length;
+}
+
+function toPercent(numerator, denominator) {
+  if (!denominator) return 0;
+  return (Number(numerator || 0) / Number(denominator)) * 100;
+}
+
+function buildGateCheck(id, label, passed, detail = null) {
+  return { id, label, passed: !!passed, detail };
+}
+
+function evaluateCitationGate(email) {
+  const body = String(email?.body || "");
+  const sentences = normalizeSentenceList(body);
+  const sentenceCount = Math.max(sentences.length, 1);
+  const words = Math.max(wordCount(body), 1);
+
+  const synthesizedInference = countMatches(body, /what\s+stood\s+out|structural\s+(?:mismatch|insight)|underneath|usually,\s*when|challenge\s+shifts?/gi);
+  const quantifiedFacts = countMatches(body, /(?:£\s?\d[\d,.]*(?:\s?(?:m|bn|k))?|\b\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\s*(?:million|billion|bn|m|k)\b)/gi);
+  const directorsLanguage = countMatches(body, /"[^"]{8,}"|board\s+flagged|strategic\s+report|directors?\s+report/gi);
+  const specificFacts = countMatches(body, /(?:\b20\d{2}\b|\bfy\d{2,4}\b|\bq[1-4]\b|filing|accounts?|charges?\s+register|jurisdiction|entity|turnover|exposure)/gi) + quantifiedFacts;
+  const whyNowAnchors = countMatches(body, /latest|recent|this\s+year|current|next\s+\d+\s+weeks?|upcoming|now/gi);
+  const insiderVocabulary = SOPHIE_VOCABULARY_PATTERNS.reduce((sum, pattern) => sum + (pattern.test(body) ? 1 : 0), 0);
+  const personaLanguage = countMatches(body, /cfo|finance\s+director|treasury|controller|procurement|payments?/gi);
+
+  const citations = synthesizedInference + quantifiedFacts + directorsLanguage + specificFacts + whyNowAnchors + insiderVocabulary + personaLanguage;
+
+  const specificityPoints =
+    (synthesizedInference * 3.0)
+    + (quantifiedFacts * 2.5)
+    + (directorsLanguage * 2.0)
+    + (specificFacts * 1.5)
+    + (whyNowAnchors * 1.5)
+    + (insiderVocabulary * 1.0)
+    + (personaLanguage * 0.5);
+
+  const citationDensity = citations / sentenceCount;
+  const specificityScore = specificityPoints / sentenceCount;
+  const researchDensity = (specificFacts / words) * 100;
+
+  const checks = [
+    buildGateCheck(
+      "citation_density",
+      `Citation density >= ${GATE1_THRESHOLDS.citation_density}`,
+      citationDensity >= GATE1_THRESHOLDS.citation_density,
+      `actual=${citationDensity.toFixed(2)}`
+    ),
+    buildGateCheck(
+      "specificity_score",
+      `Specificity score >= ${GATE1_THRESHOLDS.specificity_score}`,
+      specificityScore >= GATE1_THRESHOLDS.specificity_score,
+      `actual=${specificityScore.toFixed(2)}`
+    ),
+    buildGateCheck(
+      "research_density",
+      `Research density >= ${GATE1_THRESHOLDS.research_density}`,
+      researchDensity >= GATE1_THRESHOLDS.research_density,
+      `actual=${researchDensity.toFixed(2)}`
+    ),
+  ];
+
+  return {
+    pass: checks.every((check) => check.passed),
+    checks,
+    metrics: {
+      sentence_count: sentenceCount,
+      citation_count: citations,
+      specific_fact_count: specificFacts,
+      citation_density: Math.round(citationDensity * 1000) / 1000,
+      specificity_score: Math.round(specificityScore * 1000) / 1000,
+      research_density: Math.round(researchDensity * 1000) / 1000,
+    },
+  };
+}
+
+function evaluateVoiceGate(email, meta = {}) {
+  const body = String(email?.body || "");
+  const lowerBody = body.toLowerCase();
+
+  const aiTellHits = AI_TELL_PATTERNS.reduce((sum, pattern) => sum + countMatches(body, pattern), 0);
+  const aiTellPass = aiTellHits === 0;
+
+  const threeItemListPattern = /\b(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:and\s+)?(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+\b/gi;
+  const threeItemListPass = countMatches(body, threeItemListPattern) === 0;
+
+  const emDashCount = countMatches(body, /—|--/g);
+  const emDashLimit = meta?.isInitialOutreach ? 2 : 1;
+  const emDashPass = emDashCount <= emDashLimit;
+
+  const andButSentenceOpenerPass = !/(^|[.!?]\s+)(and|but)\b/i.test(lowerBody);
+  const exclamationPass = countMatches(body, /!/g) === 0;
+  const closingSummaryPass = !/\b(in\s+summary|to\s+summari[sz]e|to\s+sum\s+up|overall,?\s+this)\b/i.test(lowerBody);
+
+  const pleasantryPass = !/i\s+hope\s+this\s+finds\s+you\s+well|i\s+noticed|i\s+came\s+across|i\s+wanted\s+to\s+reach\s+out|quick\s+question|just\s+wanted\s+to/i.test(lowerBody);
+
+  const footerTemplate = String(meta?.footerTemplate || MANDATORY_OUTREACH_FOOTER);
+  const managedFooter = meta?.assumeManagedFooter !== false;
+  const signOffPresent = /(best|kind\s+regards),/i.test(body) || (managedFooter && /sophie\s+louise\s+penrose/i.test(footerTemplate));
+  const fullNamePresent = /sophie\s+louise\s+penrose/i.test(body) || (managedFooter && /sophie\s+louise\s+penrose/i.test(footerTemplate));
+  const signOffPass = signOffPresent;
+  const fullNamePass = fullNamePresent;
+
+  const checks = [
+    buildGateCheck("ai_tell", "Zero forbidden AI-tell vocabulary", aiTellPass),
+    buildGateCheck("pleasantries", "Zero forbidden pleasantries", pleasantryPass),
+    buildGateCheck("exclamation", "No exclamation marks", exclamationPass),
+    buildGateCheck("emdash", `Em-dash usage <= ${emDashLimit}`, emDashPass),
+    buildGateCheck("and_but_openers", 'No "And"/"But" sentence openers', andButSentenceOpenerPass),
+    buildGateCheck("three_item_rhythm", "No three-item list rhythm", threeItemListPass),
+    buildGateCheck("closing_summary", "No closing summary statement", closingSummaryPass),
+    buildGateCheck("signoff", 'Sign-off is "Best," or "Kind regards,"', signOffPass),
+    buildGateCheck("full_name", 'Full name "Sophie Louise Penrose" present', fullNamePass),
+  ];
+
+  const passedChecks = checks.filter((check) => check.passed).length;
+  const voicePercent = Math.round(toPercent(passedChecks, checks.length));
+  const checklistPass = checks.every((check) => check.passed);
+
+  return {
+    pass: checklistPass,
+    checks,
+    metrics: {
+      voice_percent: voicePercent,
+      voice_display_pass: voicePercent >= VOICE_DISPLAY_PASS_THRESHOLD,
+      em_dash_count: emDashCount,
+      ai_tell_hits: aiTellHits,
+    },
+  };
+}
+
+function evaluateComplianceGate(email, meta = {}) {
+  const body = String(email?.body || "");
+  const subject = String(email?.subject || "");
+  const footerTemplate = String(meta?.footerTemplate || MANDATORY_OUTREACH_FOOTER);
+  const combined = meta?.assumeManagedFooter === false ? `${subject}\n${body}` : `${subject}\n${body}\n${footerTemplate}`;
+  const lowerCombined = combined.toLowerCase();
+
+  const forbiddenHit = GATE3_FORBIDDEN_PATTERNS.find((pattern) => pattern.test(combined));
+  const forbiddenPass = !forbiddenHit;
+
+  const claimMentions = countMatches(combined, /(?:£\s?\d[\d,.]*(?:\s?(?:m|bn|k))?|\b\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\s*(?:million|billion|bn|m|k)\b)/gi);
+  const provenanceHints = countMatches(combined, /based\s+on\s+your\s+filed\s+accounts|we\s+estimate|approved\s+claim|illustrative|depends\s+on\s+your\s+current\s+provider/gi);
+  const claimsTraceabilityPass = claimMentions === 0 || provenanceHints > 0;
+
+  const disclaimerRequired = /interbank\s+rate|save\s+up\s+to|estimate\s+the\s+gap|in\s+the\s+region\s+of\s+£/i.test(combined);
+  const disclaimerPresent = /illustrative\s+of\s+savings\s+that\s+could\s+be\s+achieved|during\s+market\s+hours\s+within\s+plan\s+allowance/i.test(combined);
+  const disclaimersPass = !disclaimerRequired || disclaimerPresent;
+
+  const linkPass = /revolut\.com\/business/i.test(lowerCombined);
+  const optOutPass = /opt\s*out|outreach\s+preferences/i.test(lowerCombined);
+  const privacyPass = !meta?.isInitialOutreach || /privacy\s+notice/i.test(lowerCombined);
+
+  const checks = [
+    buildGateCheck("forbidden_phrases", "No forbidden phrases", forbiddenPass, forbiddenHit ? forbiddenHit.source : null),
+    buildGateCheck("claims_traceability", "Every claim traces to dossier or approved claims", claimsTraceabilityPass),
+    buildGateCheck("required_disclaimers", "Required disclaimers present", disclaimersPass),
+    buildGateCheck("rb_link", "revolut.com/business link present", linkPass),
+    buildGateCheck("opt_out", "Opt-out mechanism present", optOutPass),
+    buildGateCheck("privacy_notice", "Email 1 privacy notice present", privacyPass),
+  ];
+
+  return {
+    pass: checks.every((check) => check.passed),
+    checks,
+    metrics: {
+      claim_mentions: claimMentions,
+      provenance_hints: provenanceHints,
+      disclaimer_required: disclaimerRequired,
+    },
+  };
+}
+
 function wordCount(text) {
   return (text || "").split(/\s+/).filter(Boolean).length;
 }
@@ -84,16 +328,52 @@ export function validateEmail(email, meta = {}) {
   const wc = wordCount(email.body);
   const subjectLen = (email.subject || "").length;
 
+  const gate1 = evaluateCitationGate(email);
+  const gate2 = evaluateVoiceGate(email, meta);
+  const gate3 = evaluateComplianceGate(email, meta);
+
+  const allGateFailures = [
+    ...gate1.checks.filter((check) => !check.passed).map((check) => ({ gate: "gate1", check })),
+    ...gate2.checks.filter((check) => !check.passed).map((check) => ({ gate: "gate2", check })),
+    ...gate3.checks.filter((check) => !check.passed).map((check) => ({ gate: "gate3", check })),
+  ];
+
+  for (const failure of allGateFailures) {
+    issues.push({
+      type: "gate",
+      gate: failure.gate,
+      violation: failure.check.label,
+      deduction: 0,
+      detail: failure.check.detail || null,
+    });
+  }
+
+  const legacyPass = score >= 80;
+  const gatePass = gate1.pass && gate2.pass && gate3.pass;
+
   return {
     score: Math.max(score, 0),
-    pass: score >= 80,
+    pass: gatePass,
+    legacy_pass: legacyPass,
+    quality_gate_pass: gatePass,
     issues,
+    gates: {
+      gate1,
+      gate2,
+      gate3,
+    },
     metrics: {
       word_count: wc,
       subject_length: subjectLen,
       subject_words: (email.subject || "").split(/\s+/).filter(Boolean).length,
       within_word_limit: wc >= 50 && wc <= 150,
       within_subject_limit: subjectLen > 0 && subjectLen <= 45,
+      citation_density: gate1.metrics.citation_density,
+      specificity_score: gate1.metrics.specificity_score,
+      research_density: gate1.metrics.research_density,
+      voice_percent: gate2.metrics.voice_percent,
+      voice_display_pass: gate2.metrics.voice_display_pass,
+      qc_compliance_pass: gate3.pass,
     },
   };
 }

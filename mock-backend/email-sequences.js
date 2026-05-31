@@ -29,6 +29,12 @@ db.exec(`
     reviewed_at TEXT,
     edited_at TEXT,
     edit_count INTEGER NOT NULL DEFAULT 0,
+    qc_score REAL,
+    qc_pass INTEGER,
+    qc_issues_json TEXT,
+    qc_metrics_json TEXT,
+    quality_gates_json TEXT,
+    voice_percent REAL,
     sent_at TEXT,
     opened_at TEXT,
     replied_at TEXT,
@@ -65,6 +71,24 @@ function ensureEmailStepsSchema() {
   }
   if (!names.has("edit_count")) {
     db.exec("ALTER TABLE email_steps ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.has("qc_score")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_score REAL");
+  }
+  if (!names.has("qc_pass")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_pass INTEGER");
+  }
+  if (!names.has("qc_issues_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_issues_json TEXT");
+  }
+  if (!names.has("qc_metrics_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN qc_metrics_json TEXT");
+  }
+  if (!names.has("quality_gates_json")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN quality_gates_json TEXT");
+  }
+  if (!names.has("voice_percent")) {
+    db.exec("ALTER TABLE email_steps ADD COLUMN voice_percent REAL");
   }
 }
 
@@ -586,6 +610,9 @@ function normalizeSteps(steps, options = {}) {
       const footer = stripSignatureAndFooterForYamm(String(step.footer || "").trim());
       const mergedBody = [safeBody, footer].filter(Boolean).join("\n\n").trim();
       const editCount = Number.parseInt(String(step.edit_count || 0), 10);
+      const qcScore = Number(step.qc_score);
+      const voicePercent = Number(step.voice_percent ?? step.metrics?.voice_percent);
+      const qcPassValue = step.qc_pass;
       return {
         step_number: Number.isFinite(stepNumber) && stepNumber > 0 ? stepNumber : idx + 1,
         subject: String(step.subject || "").trim() || `Step ${idx + 1}`,
@@ -599,6 +626,12 @@ function normalizeSteps(steps, options = {}) {
         reviewed_at: step.reviewed_at || null,
         edited_at: step.edited_at || null,
         edit_count: Number.isFinite(editCount) && editCount >= 0 ? editCount : 0,
+        qc_score: Number.isFinite(qcScore) ? qcScore : null,
+        qc_pass: qcPassValue === 1 || qcPassValue === true ? 1 : qcPassValue === 0 || qcPassValue === false ? 0 : null,
+        qc_issues: Array.isArray(step.qc_issues) ? step.qc_issues : [],
+        qc_metrics: step.metrics && typeof step.metrics === "object" ? step.metrics : {},
+        quality_gates: step.quality_gates && typeof step.quality_gates === "object" ? step.quality_gates : null,
+        voice_percent: Number.isFinite(voicePercent) ? voicePercent : null,
       };
     })
     .sort((a, b) => a.step_number - b.step_number);
@@ -655,9 +688,15 @@ export function saveGeneratedSequence(params) {
         review_status,
         reviewed_at,
         edited_at,
-        edit_count
+        edit_count,
+        qc_score,
+        qc_pass,
+        qc_issues_json,
+        qc_metrics_json,
+        quality_gates_json,
+        voice_percent
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sequenceId,
       step.step_number,
@@ -671,7 +710,13 @@ export function saveGeneratedSequence(params) {
       step.review_status || "pending",
       step.reviewed_at || null,
       step.edited_at || null,
-      step.edit_count || 0
+      step.edit_count || 0,
+      step.qc_score,
+      step.qc_pass,
+      JSON.stringify(step.qc_issues || []),
+      JSON.stringify(step.qc_metrics || {}),
+      JSON.stringify(step.quality_gates || null),
+      step.voice_percent
     );
   }
 
@@ -775,6 +820,11 @@ export function getSequencesForCompany(companyId) {
     ...seq,
     steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
       ...step,
+      qc_issues: safeJsonParse(step.qc_issues_json, []),
+      metrics: safeJsonParse(step.qc_metrics_json, {}),
+      quality_gates: safeJsonParse(step.quality_gates_json, null),
+      qc_pass: step.qc_pass === null || step.qc_pass === undefined ? null : Number(step.qc_pass) === 1,
+      voice_percent: Number.isFinite(Number(step.voice_percent)) ? Number(step.voice_percent) : null,
       body: normalizeEmailBodyForOutbound(step.body, {
         stakeholderName: seq.stakeholder_name,
         stepType: step.step_type,
@@ -790,6 +840,11 @@ export function getSequence(sequenceId) {
     ...seq,
     steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
       ...step,
+      qc_issues: safeJsonParse(step.qc_issues_json, []),
+      metrics: safeJsonParse(step.qc_metrics_json, {}),
+      quality_gates: safeJsonParse(step.quality_gates_json, null),
+      qc_pass: step.qc_pass === null || step.qc_pass === undefined ? null : Number(step.qc_pass) === 1,
+      voice_percent: Number.isFinite(Number(step.voice_percent)) ? Number(step.voice_percent) : null,
       body: normalizeEmailBodyForOutbound(step.body, {
         stakeholderName: seq.stakeholder_name,
         stepType: step.step_type,
@@ -818,9 +873,24 @@ export function updateStepContent(sequenceId, stepNumber, subject, body) {
         edited_at = ?,
         edit_count = COALESCE(edit_count, 0) + 1,
         review_status = 'pending',
-        reviewed_at = NULL
+        reviewed_at = NULL,
+        qc_score = NULL,
+        qc_pass = NULL,
+        qc_issues_json = NULL,
+        qc_metrics_json = NULL,
+        quality_gates_json = NULL,
+        voice_percent = NULL
     WHERE sequence_id = ? AND step_number = ?
   `).run(subject, body, editedAt, sequenceId, stepNumber);
+}
+
+function safeJsonParse(raw, fallback) {
+  if (raw === null || raw === undefined || raw === "") return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }
 
 export function markStepReviewed(sequenceId, stepNumber) {

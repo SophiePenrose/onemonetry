@@ -16,8 +16,9 @@
 
 import db from "./db.js";
 import { normalizeEmailBodyForOutbound } from "./email-sequences.js";
+import { MANDATORY_OUTREACH_FOOTER } from "./email-qc.js";
 
-const COMPLIANCE_FOOTER = "To manage your sales outreach preferences or opt out, reply with your preference.\nAny information provided does not constitute financial, investment, or trading advice.";
+const COMPLIANCE_FOOTER = MANDATORY_OUTREACH_FOOTER;
 
 function stripSignatureAndLegacyFooter(text) {
   const lines = String(text || "")
@@ -25,7 +26,7 @@ function stripSignatureAndLegacyFooter(text) {
     .split("\n")
     .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
 
-  const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
+  const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided is not intended to be|As part of our sales process|For more details, please refer to our privacy notice|revolut\.com\/business|\[Title\]\s*\|\s*Revolut Business|Sophie Louise Penrose|---)/i.test(line.trim());
   const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
     || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
 
@@ -257,7 +258,7 @@ export function exportSequenceForYAMM(sequenceId, options = {}) {
       stakeholderName: seq.stakeholder_name,
       stepType: step.step_type,
     });
-    if (includeComplianceFooter && !/To manage your sales outreach preferences/i.test(body)) {
+    if (includeComplianceFooter && !/As part of our sales process/i.test(body)) {
       body = `${body}\n\n${COMPLIANCE_FOOTER}`;
     }
 

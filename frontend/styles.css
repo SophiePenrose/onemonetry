@@ -132,6 +132,70 @@ body {
   backdrop-filter: blur(8px);
 }
 
+.app-status-banner {
+  max-width: 1240px;
+  margin: 12px auto 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-status-banner-warning {
+  background: #fff8e9;
+  border-color: #f2d89a;
+  color: #6a4a00;
+}
+
+.app-status-banner-error {
+  background: #fff1f1;
+  border-color: #f3b0b0;
+  color: #8b1c1c;
+}
+
+.app-status-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-status-banner-copy strong {
+  font-size: 0.88rem;
+  letter-spacing: 0.01em;
+}
+
+.app-status-banner-copy span {
+  font-size: 0.79rem;
+  line-height: 1.4;
+}
+
+.app-status-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-status-banner-actions button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.95;
+}
+
+.app-status-banner-actions button:hover {
+  opacity: 1;
+}
+
 .app-nav {
   max-width: 1240px;
   margin: 0 auto;
@@ -295,6 +359,20 @@ button {
 
   .app-nav {
     padding: 8px 12px;
+  }
+
+  .app-status-banner {
+    margin: 10px 12px 0;
+    align-items: flex-start;
+  }
+
+  .app-status-banner-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app-status-banner-actions button {
+    width: 100%;
   }
 
   .app-main {

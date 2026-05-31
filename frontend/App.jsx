@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Home from "./pages/Home";
 import Shortlist from "./pages/Shortlist";
 import CompanyDetail from "./pages/CompanyDetail";
@@ -11,6 +11,43 @@ export default function App() {
   const [view, setView] = useState("shortlist");
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [returnView, setReturnView] = useState(null);
+  const [runtimeStatus, setRuntimeStatus] = useState({
+    loading: true,
+    backendReachable: true,
+    openaiConfigured: true,
+    openaiModel: null,
+  });
+
+  async function loadRuntimeStatus() {
+    try {
+      const response = await fetch("/api/integrations/status");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const openai = payload?.integrations?.openai || {};
+      setRuntimeStatus({
+        loading: false,
+        backendReachable: true,
+        openaiConfigured: openai.configured === true,
+        openaiModel: openai.model || null,
+      });
+    } catch {
+      setRuntimeStatus((current) => ({
+        ...current,
+        loading: false,
+        backendReachable: false,
+      }));
+    }
+  }
+
+  useEffect(() => {
+    loadRuntimeStatus();
+    const timer = window.setInterval(() => {
+      loadRuntimeStatus();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   function navigateHome() {
     setView("home");
@@ -70,6 +107,8 @@ export default function App() {
     { id: "reports", label: "Performance", action: navigateReports },
     { id: "import", label: "Data Pipeline", action: navigateImport },
   ];
+  const showRuntimeBanner = !runtimeStatus.loading && (!runtimeStatus.backendReachable || !runtimeStatus.openaiConfigured);
+  const runtimeBannerTone = runtimeStatus.backendReachable ? "warning" : "error";
 
   return (
     <div className="app-shell">
@@ -97,6 +136,29 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {showRuntimeBanner && (
+        <section
+          className={`app-status-banner app-status-banner-${runtimeBannerTone}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="app-status-banner-copy">
+            <strong>
+              {runtimeStatus.backendReachable ? "LLM Mode Is Off" : "Backend Unreachable"}
+            </strong>
+            <span>
+              {runtimeStatus.backendReachable
+                ? `OPENAI_API_KEY is not configured, so generation is running in fallback mode. Configure the key in Settings for true LLM output${runtimeStatus.openaiModel ? ` (${runtimeStatus.openaiModel})` : ""}.`
+                : "The frontend cannot reach the backend API right now, so data and LLM generation are unavailable until it reconnects."}
+            </span>
+          </div>
+          <div className="app-status-banner-actions">
+            <button type="button" onClick={loadRuntimeStatus}>Recheck</button>
+            <button type="button" onClick={navigateSettings}>Open Settings</button>
+          </div>
+        </section>
+      )}
 
       <div className="app-nav-wrap">
         <nav className="app-nav" aria-label="Primary">
