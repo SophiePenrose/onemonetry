@@ -1,5 +1,7 @@
 # Revolut Mid-Market Prospecting App
 
+[![CI](https://github.com/SophiePenrose/onemonetry/actions/workflows/ci.yml/badge.svg)](https://github.com/SophiePenrose/onemonetry/actions/workflows/ci.yml)
+
 This repository contains the design context for a prospecting app that helps a Revolut Business Mid-Market account executive identify, score, and prioritise the best companies to contact each week.
 
 ## What this project is for
