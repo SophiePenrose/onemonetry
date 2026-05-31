@@ -191,6 +191,38 @@ function meetsSendCondition(step, allSteps) {
   return true;
 }
 
+const COMPLIANCE_FOOTER = "To manage your sales outreach preferences or opt out, reply with your preference.\nAny information provided does not constitute financial, investment, or trading advice.";
+
+function stripSignatureAndLegacyFooter(text) {
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
+
+  const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+    || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
+
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
+    lines.pop();
+  }
+
+  let removedSignatureMarkers = false;
+  while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isSignatureLine(lines[lines.length - 1]))) {
+    if (isSignatureLine(lines[lines.length - 1])) removedSignatureMarkers = true;
+    lines.pop();
+  }
+
+  if (removedSignatureMarkers && lines.length > 0) {
+    const candidate = lines[lines.length - 1].trim();
+    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+      lines.pop();
+    }
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function exportSequenceForYAMM(sequenceId, options = {}) {
   const seq = db.prepare("SELECT * FROM email_sequences WHERE id = ?").get(sequenceId);
   if (!seq) return null;

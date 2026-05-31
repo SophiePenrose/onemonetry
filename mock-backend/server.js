@@ -4191,6 +4191,11 @@ app.post("/api/import/bulk/process", async (req, res) => {
       await processAnalysisQueueBatch({ batchSize: 3 });
     }
 
+    const queued = enqueueCompaniesForAnalysis(result.companies, `bulk_import:${filename}`);
+    if (queued.queued > 0) {
+      await processAnalysisQueueBatch({ batchSize: 3 });
+    }
+
     updateImportJob(jobId, {
       status: "completed",
       completed_at: new Date().toISOString(),
@@ -4670,6 +4675,87 @@ app.post("/api/signals/sync/:number", async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: "External signal sync failed", detail: err?.message || "unknown_error" });
   }
+});
+
+app.get("/api/integrations/status", (_req, res) => {
+  const hasConfiguredSecret = (value) => {
+    const key = String(value || "").trim();
+    if (!key) return false;
+    const lower = key.toLowerCase();
+    const looksPlaceholder = lower.startsWith("replace_")
+      || lower.startsWith("replace-")
+      || lower.startsWith("replace")
+      || lower.includes("replace_with")
+      || lower.includes("replacewith")
+      || lower.includes("your_api_key")
+      || lower.includes("optional_")
+      || lower.includes("example")
+      || lower === "changeme"
+      || lower === "change_me";
+    return !looksPlaceholder;
+  };
+
+  const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
+
+  const integrations = {
+    companies_house: {
+      configured: isCompaniesHouseConfigured(),
+      required: true,
+      env_var: "COMPANIES_HOUSE_API_KEY or CH_API_KEY",
+      purpose: "Company lookups and filing-monitor refresh",
+    },
+    openai: {
+      configured: isLLMConfigured(),
+      required: true,
+      env_var: "OPENAI_API_KEY",
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      purpose: "Analysis enrichment and advanced email generation",
+    },
+    news_lookup: {
+      configured: newsLookupEnabled,
+      required: false,
+      env_var: "ENABLE_NEWS_LOOKUP",
+      purpose: "Supplementary momentum/news context",
+      default: "true",
+    },
+    news_api: {
+      configured: hasConfiguredSecret(process.env.NEWS_API_KEY),
+      required: false,
+      env_var: "NEWS_API_KEY",
+      purpose: "Optional premium news enrichment",
+    },
+    lusha: {
+      configured: hasConfiguredSecret(process.env.LUSHA_API_KEY),
+      required: false,
+      env_var: "LUSHA_API_KEY",
+      purpose: "Optional contact enrichment",
+    },
+    linkedin_research: {
+      configured: true,
+      required: false,
+      env_var: null,
+      purpose: "Search-link generation (no API key required)",
+    },
+  };
+
+  const missingRequired = Object.entries(integrations)
+    .filter(([, cfg]) => cfg.required && !cfg.configured)
+    .map(([name]) => name);
+
+  res.json({
+    integrations,
+    missing_required: missingRequired,
+    ready_for_production: missingRequired.length === 0,
+    env_template: [
+      "COMPANIES_HOUSE_API_KEY=your_companies_house_api_key",
+      "# Optional alias supported: CH_API_KEY=your_companies_house_api_key",
+      "OPENAI_API_KEY=your_openai_api_key",
+      "OPENAI_MODEL=gpt-4o-mini",
+      "LUSHA_API_KEY=optional_lusha_key",
+      "ENABLE_NEWS_LOOKUP=true",
+      "NEWS_API_KEY=optional_newsapi_key",
+    ],
+  });
 });
 
 app.post("/api/llm/analyse", async (req, res) => {

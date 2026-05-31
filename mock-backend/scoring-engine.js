@@ -2471,6 +2471,17 @@ export function scoreCompany(companyNumber) {
   });
   const volatility = deriveScoreVolatility(previousStored, { composite_score: compositeScore }, dataFingerprint);
 
+  const gpPotentialScore = computeGpPotential(productFitScore, commercialValue, bestMotionScore);
+  const confidenceInterval = buildConfidenceInterval(compositeScore, evidenceConfidence, filingRecency, textLength, motionScores);
+  const dataFingerprint = computeDataFingerprint({
+    latest_filing_date: latestFilingDate,
+    text_length: textLength,
+    filing_count: filings.length,
+    turnover,
+    charge_marker: chargeSummary?.latest_charge_created_on || chargeSummary?.fetched_at || "none",
+  });
+  const volatility = deriveScoreVolatility(previousStored, { composite_score: compositeScore }, dataFingerprint);
+
   const eligibleMotions = Object.entries(motionScores)
     .filter(([, v]) => v.score >= 0.25)
     .sort(([, a], [, b]) => b.weighted - a.weighted)

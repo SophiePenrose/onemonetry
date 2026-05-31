@@ -1910,6 +1910,41 @@ The "proof of research" principle: the prospect should think "how do they know t
     }
   }
 
+  if (level5) {
+    const snapshot = level5.company_snapshot || {};
+    const topPains = (level5.pain_register || []).slice(0, 3);
+    const useCases = (level5.revolut_opportunity?.recommended_use_cases || []).slice(0, 3);
+    const sequenceInputs = level5.sequence_inputs || {};
+
+    parts.push(`\nLEVEL 5 EXTRACTION (PRIORITISE THESE SIGNALS):
+- Segment fit: ${snapshot.segment_fit || company.segment || "Mid-Market"}
+- Operating model: ${snapshot.operating_model || analysis?.summary || "Unknown"}
+- International profile: ${snapshot.international_profile || analysis?.international_exposure?.details || "Unknown"}
+- Now trigger: ${sequenceInputs.now_trigger || "Latest filing context"}
+- Quantified hook: ${sequenceInputs.quantified_hook || "Validate with provider-rate review"}
+- Operations hook: ${sequenceInputs.operations_hook || "Operational scale signal available"}
+- Governance hook: ${sequenceInputs.governance_hook || "Current setup constraints to validate"}
+- Objection to pre-empt: ${sequenceInputs.objection_to_preempt || "Can run in parallel with existing credit/facility setup"}`);
+
+    if (topPains.length > 0) {
+      parts.push("\nLEVEL 5 PAIN REGISTER (use evidence + inference):");
+      for (const item of topPains) {
+        parts.push(`- ${item.area} [${item.severity}]: evidence="${item.evidence}" | inferred="${item.inferred_problem}"`);
+      }
+    }
+
+    if (useCases.length > 0) {
+      parts.push("\nLEVEL 5 PRIORITISED USE CASES:");
+      for (const item of useCases) {
+        parts.push(`- ${item.product} (${item.priority}): ${item.why_fit} Example: ${item.example_use_case}`);
+      }
+    }
+
+    if (Array.isArray(sequenceInputs.directors_language) && sequenceInputs.directors_language.length > 0) {
+      parts.push(`\nDIRECTORS LANGUAGE TO MIRROR: ${sequenceInputs.directors_language.slice(0, 2).join(" | ")}`);
+    }
+  }
+
   if (merchantSpend) {
     parts.push(`\nREVOLUT USER SPEND DATA (B2C insight — use carefully):
 - Revolut users spent £${(merchantSpend.monthly_volume / 1000).toFixed(0)}K/month at this company

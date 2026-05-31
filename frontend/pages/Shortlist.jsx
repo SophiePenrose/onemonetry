@@ -267,6 +267,13 @@ function trimSentence(value, max = 170) {
   return `${text.slice(0, max - 3)}...`;
 }
 
+const ANALYSIS_META = {
+  ready: { label: "Ready", color: "#0a8754" },
+  queued: { label: "Queued", color: "#d97706" },
+  failed: { label: "Failed", color: "#c0392b" },
+  none: { label: "Pending", color: "#6b7280" },
+};
+
 function Badge({ text, bg }) {
   return (
     <span
