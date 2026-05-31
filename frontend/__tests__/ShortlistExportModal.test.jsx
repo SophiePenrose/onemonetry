@@ -149,4 +149,37 @@ describe("Shortlist export modal", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/email\/export\/json\/seq-1\?/));
   });
+
+  it("skip mode excludes missing-email rows from YAMM/Sheets but keeps missing-email CSV enabled", async () => {
+    render(<Shortlist />);
+
+    await screen.findByText("Acme Imports Ltd");
+
+    fireEvent.click(screen.getByLabelText("Select all visible"));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export" }));
+
+    await screen.findByText("Batch Export for This Week");
+
+    // Skip mode is the default, but set it explicitly to make test intent clear.
+    fireEvent.change(screen.getByLabelText("Missing email handling"), {
+      target: { value: "skip" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export file" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Generated 0 rows from 1 companies/)).toBeInTheDocument();
+    });
+
+    const summaryText = screen.getByText((content) =>
+      content.includes("Needs email: 1")
+      && content.includes("missing contacts: 1")
+      && content.includes("skipped missing-email rows: 1")
+    );
+    expect(summaryText).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Download YAMM CSV" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Sheets JSON" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Missing-Email CSV" })).toBeEnabled();
+  });
 });
