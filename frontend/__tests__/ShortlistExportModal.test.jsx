@@ -14,8 +14,26 @@ function jsonResponse(data, status = 200) {
 
 describe("Shortlist export modal", () => {
   let fetchMock;
+  let exportRows;
 
   beforeEach(() => {
+    exportRows = [
+      {
+        to: "",
+        subject: "Treasury friction spotted",
+        body: "Your filing suggests avoidable cashflow drag.",
+        scheduled_date: "2026-06-02",
+        scheduled_time: "08:37",
+        step_number: 1,
+        step_type: "proof",
+        send_condition: "always",
+        stakeholder_name: "Alex Brown",
+        status: "pending",
+        needs_email: true,
+        needs_review: false,
+      },
+    ];
+
     fetchMock = vi.fn(async (input) => {
       const url = String(input || "");
 
@@ -88,22 +106,7 @@ describe("Shortlist export modal", () => {
 
       if (url.startsWith("/api/email/export/json/seq-1")) {
         return jsonResponse({
-          raw_rows: [
-            {
-              to: "",
-              subject: "Treasury friction spotted",
-              body: "Your filing suggests avoidable cashflow drag.",
-              scheduled_date: "2026-06-02",
-              scheduled_time: "08:37",
-              step_number: 1,
-              step_type: "proof",
-              send_condition: "always",
-              stakeholder_name: "Alex Brown",
-              status: "pending",
-              needs_email: true,
-              needs_review: false,
-            },
-          ],
+          raw_rows: exportRows,
         });
       }
 
@@ -180,6 +183,69 @@ describe("Shortlist export modal", () => {
 
     expect(screen.getByRole("button", { name: "Download YAMM CSV" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Download Sheets JSON" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Missing-Email CSV" })).toBeEnabled();
+  });
+
+  it("skip mode exports valid rows while still generating missing-email artifact", async () => {
+    exportRows = [
+      {
+        to: "alex.brown@example.com",
+        subject: "Treasury friction spotted",
+        body: "Your filing suggests avoidable cashflow drag.",
+        scheduled_date: "2026-06-02",
+        scheduled_time: "08:37",
+        step_number: 1,
+        step_type: "proof",
+        send_condition: "always",
+        stakeholder_name: "Alex Brown",
+        status: "pending",
+        needs_email: false,
+        needs_review: false,
+      },
+      {
+        to: "",
+        subject: "Treasury friction spotted",
+        body: "Your filing suggests avoidable cashflow drag.",
+        scheduled_date: "2026-06-03",
+        scheduled_time: "08:37",
+        step_number: 2,
+        step_type: "nudge_1",
+        send_condition: "always",
+        stakeholder_name: "Alex Brown",
+        status: "pending",
+        needs_email: true,
+        needs_review: false,
+      },
+    ];
+
+    render(<Shortlist />);
+
+    await screen.findByText("Acme Imports Ltd");
+
+    fireEvent.click(screen.getByLabelText("Select all visible"));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export" }));
+
+    await screen.findByText("Batch Export for This Week");
+
+    fireEvent.change(screen.getByLabelText("Missing email handling"), {
+      target: { value: "skip" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export file" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Generated 1 rows from 1 companies/)).toBeInTheDocument();
+    });
+
+    const summaryText = screen.getByText((content) =>
+      content.includes("Needs email: 1")
+      && content.includes("missing contacts: 1")
+      && content.includes("skipped missing-email rows: 1")
+    );
+    expect(summaryText).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Download YAMM CSV" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download Sheets JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Download Missing-Email CSV" })).toBeEnabled();
   });
 });
