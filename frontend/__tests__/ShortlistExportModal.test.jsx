@@ -248,4 +248,97 @@ describe("Shortlist export modal", () => {
     expect(screen.getByRole("button", { name: "Download Sheets JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Download Missing-Email CSV" })).toBeEnabled();
   });
+
+  it("applies post-export workflow transition when rows are exportable", async () => {
+    exportRows = [
+      {
+        to: "alex.brown@example.com",
+        subject: "Treasury friction spotted",
+        body: "Your filing suggests avoidable cashflow drag.",
+        scheduled_date: "2026-06-02",
+        scheduled_time: "08:37",
+        step_number: 1,
+        step_type: "proof",
+        send_condition: "always",
+        stakeholder_name: "Alex Brown",
+        status: "pending",
+        needs_email: false,
+        needs_review: false,
+      },
+    ];
+
+    render(<Shortlist />);
+
+    await screen.findByText("Acme Imports Ltd");
+
+    fireEvent.click(screen.getByLabelText("Select all visible"));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export" }));
+
+    await screen.findByText("Batch Export for This Week");
+
+    fireEvent.change(screen.getByLabelText("Post-export workflow update"), {
+      target: { value: "in_cadence" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export file" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Workflow updated: 1 companies\./)).toBeInTheDocument();
+    });
+
+    const transitionCalls = fetchMock.mock.calls.filter(
+      ([url, options]) => String(url).startsWith("/api/company/c1/state") && options?.method === "PATCH"
+    );
+
+    expect(transitionCalls).toHaveLength(1);
+    const payload = JSON.parse(transitionCalls[0][1].body);
+    expect(payload.new_state).toBe("in_cadence");
+  });
+
+  it("skips post-export workflow transition when skip mode leaves zero exportable rows", async () => {
+    exportRows = [
+      {
+        to: "",
+        subject: "Treasury friction spotted",
+        body: "Your filing suggests avoidable cashflow drag.",
+        scheduled_date: "2026-06-02",
+        scheduled_time: "08:37",
+        step_number: 1,
+        step_type: "proof",
+        send_condition: "always",
+        stakeholder_name: "Alex Brown",
+        status: "pending",
+        needs_email: true,
+        needs_review: false,
+      },
+    ];
+
+    render(<Shortlist />);
+
+    await screen.findByText("Acme Imports Ltd");
+
+    fireEvent.click(screen.getByLabelText("Select all visible"));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export" }));
+
+    await screen.findByText("Batch Export for This Week");
+
+    fireEvent.change(screen.getByLabelText("Missing email handling"), {
+      target: { value: "skip" },
+    });
+    fireEvent.change(screen.getByLabelText("Post-export workflow update"), {
+      target: { value: "in_cadence" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare export file" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Generated 0 rows from 1 companies/)).toBeInTheDocument();
+    });
+
+    const transitionCalls = fetchMock.mock.calls.filter(
+      ([url, options]) => String(url).startsWith("/api/company/c1/state") && options?.method === "PATCH"
+    );
+
+    expect(transitionCalls).toHaveLength(0);
+  });
 });
