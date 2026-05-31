@@ -1,0 +1,61 @@
+{
+  "page": {
+    "id": "pg_status_001",
+    "name": "Payments Platform Status",
+    "url": "https://status.native-statuspage.co.uk"
+  },
+  "components": [
+    {
+      "id": "component_cards",
+      "name": "Card Processing",
+      "status": "degraded_performance"
+    },
+    {
+      "id": "component_api",
+      "name": "Public API",
+      "status": "operational"
+    }
+  ],
+  "incidents": [
+    {
+      "id": "incident_1",
+      "name": "Card payment authorization delays",
+      "status": "investigating",
+      "impact": "major",
+      "created_at": "2099-02-10T09:00:00Z",
+      "updated_at": "2099-02-10T09:15:00Z",
+      "incident_updates": [
+        {
+          "body": "Some payment transactions are timing out at checkout for card customers."
+        }
+      ]
+    },
+    {
+      "id": "incident_2",
+      "name": "Checkout API latency",
+      "status": "identified",
+      "impact": "minor",
+      "created_at": "2099-02-11T12:10:00Z",
+      "updated_at": "2099-02-11T12:25:00Z",
+      "incident_updates": [
+        {
+          "body": "Hosted checkout pages are returning elevated latency."
+        }
+      ]
+    },
+    {
+      "id": "incident_3",
+      "name": "Merchant dashboard reporting issue",
+      "status": "resolved",
+      "impact": "minor",
+      "created_at": "2099-02-07T10:00:00Z",
+      "updated_at": "2099-02-07T11:00:00Z",
+      "resolved_at": "2099-02-07T11:05:00Z",
+      "incident_updates": [
+        {
+          "body": "Issue resolved for merchant reporting views."
+        }
+      ]
+    }
+  ]
+}

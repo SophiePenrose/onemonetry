@@ -7,6 +7,32 @@ const RELEVANCE_COLORS = {
   low: { bg: "#f3f4f6", color: "#6b7280" },
 };
 
+const STATUS_HEALTH_META = {
+  low: { label: "Status stable", color: "#0f766e", text: "#065f46", background: "#ecfdf5" },
+  medium: { label: "Status watch", color: "#d97706", text: "#92400e", background: "#fffbeb" },
+  high: { label: "Status risk", color: "#b91c1c", text: "#991b1b", background: "#fef2f2" },
+  unknown: { label: "Status unknown", color: "#475569", text: "#475569", background: "#f8fafc" },
+};
+
+function normalizeStatusBand(value) {
+  const band = String(value || "").trim().toLowerCase();
+  if (band === "low" || band === "medium" || band === "high") return band;
+  return "unknown";
+}
+
+function formatStatusPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(Math.max(0, Math.min(num, 1)) * 100)}%`;
+}
+
+function formatStatusAge(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days)) return null;
+  if (days < 1) return "<1 day";
+  return `${Math.round(days)} days`;
+}
+
 function SnippetGroup({ title, items }) {
   if (!items || items.length === 0) return null;
   return (
@@ -35,7 +61,7 @@ SnippetGroup.propTypes = {
   items: PropTypes.array,
 };
 
-export default function EvidencePanel({ companyId, initialAnalysis, motions }) {
+export default function EvidencePanel({ companyId, initialAnalysis, motions, statusSignals }) {
   const [analysis, setAnalysis] = useState(initialAnalysis || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -67,6 +93,21 @@ export default function EvidencePanel({ companyId, initialAnalysis, motions }) {
   const snippets = analysis?.evidence_snippets || {};
   const narrative = analysis?.outreach_narrative || null;
   const supplementary = analysis?.supplementary_context || null;
+  const statusBand = normalizeStatusBand(statusSignals?.status_health_band);
+  const statusMeta = STATUS_HEALTH_META[statusBand] || STATUS_HEALTH_META.unknown;
+  const statusSeverity = formatStatusPercent(statusSignals?.status_incident_severity_score);
+  const statusRecencyMultiplier = formatStatusPercent(statusSignals?.status_incident_recency_multiplier);
+  const statusIncidentAge = formatStatusAge(statusSignals?.status_recent_incident_age_days);
+  const statusOpenIncidents = Math.max(0, Number(statusSignals?.status_incidents_open || 0));
+  const statusMajorIncidents = Math.max(0, Number(statusSignals?.status_major_incidents_open || 0));
+  const statusDegradedComponents = Math.max(0, Number(statusSignals?.status_degraded_components || 0));
+  const hasStatusSignals = statusBand !== "unknown"
+    || statusSeverity
+    || statusRecencyMultiplier
+    || statusIncidentAge
+    || statusOpenIncidents > 0
+    || statusMajorIncidents > 0
+    || statusDegradedComponents > 0;
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
@@ -92,6 +133,25 @@ export default function EvidencePanel({ companyId, initialAnalysis, motions }) {
       </div>
 
       {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+      {hasStatusSignals && (
+        <div style={{ marginBottom: 14, background: statusMeta.background, border: `1px solid ${statusMeta.color}33`, borderRadius: 8, padding: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 8 }}>Status Health Evidence</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: statusMeta.color, borderRadius: 999, padding: "2px 8px" }}>
+              {statusMeta.label}
+            </span>
+            {statusSeverity && <span style={{ fontSize: 12, color: statusMeta.text }}>Severity: {statusSeverity}</span>}
+            {statusIncidentAge && <span style={{ fontSize: 12, color: statusMeta.text }}>Recent incident: {statusIncidentAge} ago</span>}
+            {statusRecencyMultiplier && <span style={{ fontSize: 12, color: statusMeta.text }}>Recency multiplier: {statusRecencyMultiplier}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: "#334155" }}>
+            Open incidents: {statusOpenIncidents}
+            {statusMajorIncidents > 0 ? ` (${statusMajorIncidents} major)` : ""}
+            {statusDegradedComponents > 0 ? ` · Degraded components: ${statusDegradedComponents}` : ""}
+          </div>
+        </div>
+      )}
 
       {!analysis && !loading && !error && (
         <div style={{ color: "#888", fontSize: 13, textAlign: "center", padding: 16 }}>
@@ -181,4 +241,5 @@ EvidencePanel.propTypes = {
   companyId: PropTypes.string.isRequired,
   initialAnalysis: PropTypes.object,
   motions: PropTypes.array,
+  statusSignals: PropTypes.object,
 };

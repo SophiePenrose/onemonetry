@@ -247,6 +247,7 @@ export default function CompanyDetail({ companyId }) {
         companyId={companyId}
         initialAnalysis={company.analysis}
         motions={company.all_motion_scores || []}
+        statusSignals={company.reputation_signals || null}
       />
 
       <EmailSequencePanel

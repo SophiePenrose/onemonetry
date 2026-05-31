@@ -17,6 +17,7 @@ const CONNECTOR_DEFINITIONS = [
   {
     id: "opencorporates",
     keyEnvs: ["OPENCORPORATES_API_TOKEN"],
+    keysOptional: true,
     urlTemplateEnv: "OPENCORPORATES_URL_TEMPLATE",
     authHeaderEnv: "OPENCORPORATES_AUTH_HEADER",
     authSchemeEnv: "OPENCORPORATES_AUTH_SCHEME",
@@ -62,6 +63,42 @@ const CONNECTOR_DEFINITIONS = [
     authSchemeEnv: "CLEARBIT_AUTH_SCHEME",
     purpose: "firmographic_domain_enrichment",
   },
+  {
+    id: "statuspage",
+    keyEnvs: [],
+    urlTemplateEnv: "STATUSPAGE_URL_TEMPLATE",
+    discoveryType: "statuspage",
+    purpose: "free_public_incident_and_uptime_signals",
+  },
+  {
+    id: "status_feed",
+    keyEnvs: [],
+    urlTemplateEnv: "STATUS_FEED_URL_TEMPLATE",
+    discoveryType: "status_feed",
+    acceptHeader: "application/rss+xml, application/atom+xml, application/xml, text/xml, application/json;q=0.9, */*;q=0.8",
+    purpose: "free_public_status_rss_atom_signals",
+  },
+  {
+    id: "status_api",
+    keyEnvs: [],
+    urlTemplateEnv: "STATUS_API_URL_TEMPLATE",
+    discoveryType: "status_api",
+    purpose: "free_public_status_json_signals",
+  },
+  {
+    id: "status_instatus",
+    keyEnvs: [],
+    urlTemplateEnv: "STATUS_INSTATUS_URL_TEMPLATE",
+    discoveryType: "status_instatus",
+    purpose: "free_public_instatus_summary_signals",
+  },
+  {
+    id: "status_cachet",
+    keyEnvs: [],
+    urlTemplateEnv: "STATUS_CACHET_URL_TEMPLATE",
+    discoveryType: "status_cachet",
+    purpose: "free_public_cachet_incident_signals",
+  },
 ];
 
 function hasConfiguredSecret(value) {
@@ -78,6 +115,14 @@ function hasConfiguredSecret(value) {
   return !looksPlaceholder;
 }
 
+function parseBooleanFlag(value, fallback = false) {
+  const token = String(value ?? "").trim().toLowerCase();
+  if (!token) return fallback;
+  if (["1", "true", "yes", "on"].includes(token)) return true;
+  if (["0", "false", "no", "off"].includes(token)) return false;
+  return fallback;
+}
+
 function normalizeCompanyNumber(value) {
   const raw = String(value || "").trim().toUpperCase();
   if (!raw) return null;
@@ -90,6 +135,165 @@ function normalizeCompanyNumber(value) {
 function toFiniteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp01(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  if (parsed <= 0) return 0;
+  if (parsed >= 1) return 1;
+  return parsed;
+}
+
+const STATUS_RESOLVED_PATTERN = /\b(resolved|restored|fixed|completed|closed|monitoring|postmortem)\b/i;
+const STATUS_OPEN_PATTERN = /\b(open|investigating|identified|degraded|outage|incident|issue|disruption|latency|partial|critical|major|unavailable|ongoing|active|down|disrupt|impacted)\b/i;
+const STATUS_MAJOR_PATTERN = /\b(critical|major|sev[-\s]?1|outage|severe|down)\b/i;
+const STATUS_NUMERIC_TOKEN_MAP = {
+  "0": "scheduled",
+  "1": "investigating",
+  "2": "identified",
+  "3": "monitoring",
+  "4": "resolved",
+};
+
+function normalizeIncidentStatusToken(value) {
+  const token = String(value ?? "").trim().toLowerCase();
+  if (!token) return "";
+  return STATUS_NUMERIC_TOKEN_MAP[token] || token;
+}
+
+function parseIsoTimestamp(value) {
+  const token = String(value || "").trim();
+  if (!token) return null;
+  const millis = Date.parse(token);
+  if (!Number.isFinite(millis)) return null;
+  return new Date(millis).toISOString();
+}
+
+function latestIsoTimestamp(values = []) {
+  let latestMs = null;
+  let latestIso = null;
+
+  for (const value of values || []) {
+    const iso = parseIsoTimestamp(value);
+    if (!iso) continue;
+    const millis = Date.parse(iso);
+    if (!Number.isFinite(millis)) continue;
+    if (latestMs === null || millis > latestMs) {
+      latestMs = millis;
+      latestIso = iso;
+    }
+  }
+
+  return latestIso;
+}
+
+function incidentAgeDaysFromIso(iso, nowMs = Date.now()) {
+  if (!iso) return null;
+  const millis = Date.parse(iso);
+  if (!Number.isFinite(millis)) return null;
+  const days = (nowMs - millis) / 86400000;
+  if (!Number.isFinite(days)) return null;
+  return Math.max(0, Math.round(days * 10) / 10);
+}
+
+function statusIncidentRecencyMultiplier(daysOld) {
+  const age = Number(daysOld);
+  if (!Number.isFinite(age)) return 1;
+  if (age <= 3) return 1;
+  if (age <= 14) return 0.95;
+  if (age <= 30) return 0.8;
+  if (age <= 60) return 0.65;
+  if (age <= 120) return 0.5;
+  return 0.35;
+}
+
+function statusHealthBandFromScore(value) {
+  const score = clamp01(value);
+  if (score >= 0.7) return "critical";
+  if (score >= 0.35) return "degraded";
+  return "stable";
+}
+
+function normalizeStatusHealthMetrics(input = {}) {
+  const recentOpenIncidentAt = latestIsoTimestamp([
+    input.status_recent_open_incident_at,
+    input.recent_open_incident_at,
+  ]);
+  const recentIncidentAt = latestIsoTimestamp([
+    input.status_recent_incident_at,
+    input.recent_incident_at,
+    recentOpenIncidentAt,
+  ]);
+
+  const explicitRecentAgeDays = Number(input.status_recent_incident_age_days);
+  const computedRecentAgeDays = incidentAgeDaysFromIso(recentOpenIncidentAt || recentIncidentAt);
+  const recentIncidentAgeDays = Number.isFinite(explicitRecentAgeDays)
+    ? Math.max(0, explicitRecentAgeDays)
+    : computedRecentAgeDays;
+
+  const providedRecencyMultiplier = Number(input.status_incident_recency_multiplier);
+  const recencyMultiplier = Number.isFinite(providedRecencyMultiplier)
+    ? clamp01(providedRecencyMultiplier)
+    : statusIncidentRecencyMultiplier(recentIncidentAgeDays);
+
+  const totalIncidents = Math.max(0, toFiniteNumber(input.status_incidents_total, 0));
+  const openIncidents = Math.max(0, toFiniteNumber(input.status_incidents_open, 0));
+  const majorOpenIncidents = Math.max(0, Math.min(openIncidents, toFiniteNumber(input.status_major_incidents_open, 0)));
+  const degradedComponents = Math.max(0, toFiniteNumber(input.status_degraded_components, 0));
+
+  const computedWeightedOpen = openIncidents + (majorOpenIncidents * 1.5) + (degradedComponents * 0.75);
+  const weightedOpen = Math.max(0, toFiniteNumber(input.status_incident_weighted_open, computedWeightedOpen));
+
+  const hasCountInputs = [
+    input.status_incidents_total,
+    input.status_incidents_open,
+    input.status_major_incidents_open,
+    input.status_degraded_components,
+    input.status_incident_weighted_open,
+  ].some((value) => Number.isFinite(Number(value)));
+
+  const providedSeverity = Number(input.status_incident_severity_score);
+  const denominator = Math.max(4, totalIncidents + degradedComponents + 2);
+  const computedSeverity = weightedOpen > 0 ? clamp01(weightedOpen / denominator) : 0;
+  const baseSeverity = hasCountInputs
+    ? computedSeverity
+    : (Number.isFinite(providedSeverity) ? clamp01(providedSeverity) : 0);
+  const severity = clamp01(baseSeverity * recencyMultiplier);
+  const roundedSeverity = Math.round(severity * 100) / 100;
+
+  return {
+    status_incident_weighted_open: Math.round(weightedOpen * 100) / 100,
+    status_incident_severity_score: roundedSeverity,
+    status_health_band: statusHealthBandFromScore(roundedSeverity),
+    status_recent_open_incident_at: recentOpenIncidentAt || null,
+    status_recent_incident_at: recentIncidentAt || null,
+    status_recent_incident_age_days: Number.isFinite(recentIncidentAgeDays)
+      ? Math.round(recentIncidentAgeDays * 10) / 10
+      : null,
+    status_incident_recency_multiplier: Math.round(recencyMultiplier * 100) / 100,
+  };
+}
+
+function evaluateStatusIncident({ statusToken = "", impactToken = "", text = "", resolvedAt = null } = {}) {
+  const normalizedStatus = normalizeIncidentStatusToken(statusToken);
+  const combined = `${normalizedStatus} ${impactToken} ${text}`.trim().toLowerCase();
+  const resolved = Boolean(resolvedAt) || STATUS_RESOLVED_PATTERN.test(combined);
+  const isOpen = !resolved && STATUS_OPEN_PATTERN.test(combined);
+  const isMajor = !resolved && STATUS_MAJOR_PATTERN.test(combined);
+  return {
+    resolved,
+    is_open: isOpen,
+    is_major: isMajor,
+  };
+}
+
+function applyStatusHealthNormalization(envelope = {}) {
+  const normalized = normalizeStatusHealthMetrics(envelope);
+  return {
+    ...envelope,
+    ...normalized,
+  };
 }
 
 function uniqueStrings(values) {
@@ -127,6 +331,128 @@ function connectorUrlTemplate(definition) {
   return String(process.env[definition.urlTemplateEnv] || "").trim();
 }
 
+function normalizeCompanyDomain(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+
+  const withoutScheme = raw.replace(/^https?:\/\//, "");
+  const withoutWww = withoutScheme.replace(/^www\./, "");
+  return withoutWww.split("/")[0].trim();
+}
+
+function isValidHttpUrl(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildStatusDiscoveryCandidates(discoveryType, context) {
+  const domain = normalizeCompanyDomain(context?.company_domain);
+  if (!domain) return [];
+
+  const hostCandidates = uniqueStrings([
+    `status.${domain}`,
+    `${domain}.statuspage.io`,
+    `statuspage.${domain}`,
+  ]);
+
+  const urls = [];
+  if (discoveryType === "statuspage") {
+    for (const host of hostCandidates) {
+      urls.push(`https://${host}/api/v2/summary.json`);
+    }
+  }
+
+  if (discoveryType === "status_feed") {
+    const feedPaths = [
+      "history.rss",
+      "history.atom",
+      "rss",
+      "atom",
+      "feed",
+      "status.rss",
+      "status.atom",
+    ];
+
+    for (const host of hostCandidates) {
+      for (const path of feedPaths) {
+        urls.push(`https://${host}/${path}`);
+      }
+    }
+  }
+
+  if (discoveryType === "status_api") {
+    const apiPaths = [
+      "api/v1/incidents",
+      "api/incidents",
+      "incidents.json",
+      "api/v1/status",
+      "api/status",
+      "api/v1/summary",
+      "api/summary",
+    ];
+
+    for (const host of hostCandidates) {
+      for (const path of apiPaths) {
+        urls.push(`https://${host}/${path}`);
+      }
+    }
+  }
+
+  if (discoveryType === "status_instatus") {
+    const summaryPaths = [
+      "summary.json",
+      "api/v1/summary",
+      "api/summary",
+      "summary",
+    ];
+
+    for (const host of hostCandidates) {
+      for (const path of summaryPaths) {
+        urls.push(`https://${host}/${path}`);
+      }
+    }
+  }
+
+  if (discoveryType === "status_cachet") {
+    const cachetPaths = [
+      "api/v1/incidents",
+      "api/v1/incidents?sort=id&order=desc",
+      "api/v1/status",
+    ];
+
+    for (const host of hostCandidates) {
+      for (const path of cachetPaths) {
+        urls.push(`https://${host}/${path}`);
+      }
+    }
+  }
+
+  return uniqueStrings(urls).filter((url) => isValidHttpUrl(url));
+}
+
+function buildConnectorRequestUrls(definition, context, options = {}) {
+  const urls = [];
+  const template = connectorUrlTemplate(definition);
+
+  if (template) {
+    const interpolated = interpolateTemplate(template, context);
+    if (isValidHttpUrl(interpolated)) {
+      urls.push(interpolated);
+    }
+  }
+
+  const discoveryEnabled = options.enableStatusDiscovery === true;
+  if (discoveryEnabled && definition.discoveryType) {
+    urls.push(...buildStatusDiscoveryCandidates(definition.discoveryType, context));
+  }
+
+  return uniqueStrings(urls);
+}
+
 function buildConnectorHeaders(definition) {
   const secrets = connectorSecretValues(definition);
   if (secrets.length === 0) return {};
@@ -143,16 +469,19 @@ function buildConnectorHeaders(definition) {
 }
 
 function buildConnectorStatus(definition) {
-  const keyStatus = (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]));
+  const keysOptional = definition.keysOptional === true;
+  const keyStatus = keysOptional || (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]));
   const urlTemplate = connectorUrlTemplate(definition);
 
   return {
     id: definition.id,
     configured: keyStatus && !!urlTemplate,
     has_keys: keyStatus,
+    keys_optional: keysOptional,
     has_url_template: !!urlTemplate,
     key_envs: definition.keyEnvs,
     url_template_env: definition.urlTemplateEnv,
+    supports_discovery: !!definition.discoveryType,
     purpose: definition.purpose,
   };
 }
@@ -161,9 +490,27 @@ export function getExternalSignalConnectorStatus() {
   return CONNECTOR_DEFINITIONS.map((definition) => buildConnectorStatus(definition));
 }
 
-async function fetchConnectorPayload(definition, context, timeoutMs) {
-  const template = connectorUrlTemplate(definition);
-  if (!template) {
+function buildConnectorRuntimeStatus(definition, context, options = {}) {
+  const base = buildConnectorStatus(definition);
+  const requestUrls = buildConnectorRequestUrls(definition, context, options);
+  const templateConfigured = !!connectorUrlTemplate(definition);
+  const autoDiscoveryActive = options.enableStatusDiscovery === true
+    && !!definition.discoveryType
+    && !templateConfigured
+    && requestUrls.length > 0;
+
+  return {
+    ...base,
+    configured: base.has_keys && requestUrls.length > 0,
+    request_candidate_count: requestUrls.length,
+    auto_discovery_active: autoDiscoveryActive,
+    request_urls: requestUrls,
+  };
+}
+
+async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
+  const urls = Array.isArray(requestUrls) ? requestUrls.filter(Boolean) : [];
+  if (urls.length === 0) {
     return {
       ok: false,
       status: null,
@@ -171,65 +518,73 @@ async function fetchConnectorPayload(definition, context, timeoutMs) {
     };
   }
 
-  const url = interpolateTemplate(template, context);
-  if (!url) {
-    return {
-      ok: false,
-      status: null,
-      error: "empty_request_url",
-    };
-  }
+  const attemptedUrls = [];
+  let lastError = {
+    ok: false,
+    status: null,
+    error: "request_failed",
+    request_url: urls[0],
+  };
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  for (const url of urls) {
+    attemptedUrls.push(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        ...buildConnectorHeaders(definition),
-      },
-      signal: controller.signal,
-    });
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: String(definition.acceptHeader || "application/json"),
+          ...buildConnectorHeaders(definition),
+        },
+        signal: controller.signal,
+      });
 
-    const rawText = await response.text();
-    let payload = null;
+      const rawText = await response.text();
+      let payload = null;
 
-    if (rawText) {
-      try {
-        payload = JSON.parse(rawText);
-      } catch {
-        payload = { raw_text: rawText };
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText);
+        } catch {
+          payload = { raw_text: rawText };
+        }
       }
-    }
 
-    if (!response.ok) {
+      if (!response.ok) {
+        lastError = {
+          ok: false,
+          status: response.status,
+          error: payload?.error || payload?.message || `http_${response.status}`,
+          request_url: url,
+          payload,
+          attempted_urls: attemptedUrls,
+        };
+        continue;
+      }
+
       return {
-        ok: false,
+        ok: true,
         status: response.status,
-        error: payload?.error || payload?.message || `http_${response.status}`,
         request_url: url,
+        attempted_urls: attemptedUrls,
         payload,
       };
+    } catch (err) {
+      lastError = {
+        ok: false,
+        status: null,
+        error: err?.name === "AbortError" ? "request_timeout" : (err?.message || "request_failed"),
+        request_url: url,
+        attempted_urls: attemptedUrls,
+      };
+    } finally {
+      clearTimeout(timer);
     }
-
-    return {
-      ok: true,
-      status: response.status,
-      request_url: url,
-      payload,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      status: null,
-      error: err?.name === "AbortError" ? "request_timeout" : (err?.message || "request_failed"),
-      request_url: url,
-    };
-  } finally {
-    clearTimeout(timer);
   }
+
+  return lastError;
 }
 
 function asObjectArray(value) {
@@ -561,18 +916,45 @@ function parseReputationEnvelope(payload, sourceId) {
   const reviewCount = readNumericField(payload || {}, ["review_count", "reviews", "trustpilot_review_count"]);
   const paymentComplaints = readNumericField(payload || {}, ["payment_related_complaints", "payment_complaints"]);
   const checkoutComplaints = readNumericField(payload || {}, ["checkout_related_complaints", "checkout_complaints"]);
+  const statusIncidentsTotal = readNumericField(payload || {}, ["status_incidents_total", "incidents_total", "incident_count"]);
+  const statusIncidentsOpen = readNumericField(payload || {}, ["status_incidents_open", "open_incidents", "incidents_open"]);
+  const statusMajorIncidentsOpen = readNumericField(payload || {}, ["status_major_incidents_open", "major_open_incidents", "major_incidents_open"]);
+  const statusDegradedComponents = readNumericField(payload || {}, ["status_degraded_components", "degraded_components"]);
+  const statusIncidentWeightedOpen = readNumericField(payload || {}, ["status_incident_weighted_open", "incident_weighted_open"]);
+  const statusIncidentSeverity = readNumericField(payload || {}, ["status_incident_severity_score", "incident_severity_score"]);
+  const statusRecentIncidentAt = readStringField(payload || {}, ["status_recent_incident_at", "recent_incident_at", "latest_incident_at"]);
+  const statusRecentOpenIncidentAt = readStringField(payload || {}, ["status_recent_open_incident_at", "recent_open_incident_at", "latest_open_incident_at"]);
+  const statusRecentIncidentAgeDays = readNumericField(payload || {}, ["status_recent_incident_age_days", "recent_incident_age_days"]);
+  const statusIncidentRecencyMultiplier = readNumericField(payload || {}, ["status_incident_recency_multiplier", "incident_recency_multiplier"]);
+
+  const hasStatusMetrics = [
+    statusIncidentsTotal,
+    statusIncidentsOpen,
+    statusMajorIncidentsOpen,
+    statusDegradedComponents,
+    statusIncidentWeightedOpen,
+    statusIncidentSeverity,
+  ].some((value) => value !== null);
+  const hasStatusCountMetrics = [
+    statusIncidentsTotal,
+    statusIncidentsOpen,
+    statusMajorIncidentsOpen,
+    statusDegradedComponents,
+    statusIncidentWeightedOpen,
+  ].some((value) => value !== null);
 
   if (
     reviewCount === null
     && paymentComplaints === null
     && checkoutComplaints === null
+    && !hasStatusMetrics
   ) {
     return null;
   }
 
   const nowIso = new Date().toISOString();
 
-  return {
+  const envelope = {
     updated_at: nowIso,
     fetched_at: nowIso,
     source: `${sourceId}_api`,
@@ -583,6 +965,36 @@ function parseReputationEnvelope(payload, sourceId) {
     confidence: "medium",
     confidence_score: 0.55,
   };
+
+  if (hasStatusMetrics) {
+    if (hasStatusCountMetrics) {
+      envelope.status_incidents_total = Math.max(0, toFiniteNumber(statusIncidentsTotal, 0));
+      envelope.status_incidents_open = Math.max(0, toFiniteNumber(statusIncidentsOpen, 0));
+      envelope.status_major_incidents_open = Math.max(0, toFiniteNumber(statusMajorIncidentsOpen, 0));
+      envelope.status_degraded_components = Math.max(0, toFiniteNumber(statusDegradedComponents, 0));
+    }
+    if (statusIncidentWeightedOpen !== null && hasStatusCountMetrics) {
+      envelope.status_incident_weighted_open = Math.max(0, toFiniteNumber(statusIncidentWeightedOpen, 0));
+    }
+    if (statusIncidentSeverity !== null) {
+      envelope.status_incident_severity_score = clamp01(statusIncidentSeverity);
+    }
+    if (statusRecentIncidentAt) {
+      envelope.status_recent_incident_at = statusRecentIncidentAt;
+    }
+    if (statusRecentOpenIncidentAt) {
+      envelope.status_recent_open_incident_at = statusRecentOpenIncidentAt;
+    }
+    if (statusRecentIncidentAgeDays !== null) {
+      envelope.status_recent_incident_age_days = Math.max(0, toFiniteNumber(statusRecentIncidentAgeDays, 0));
+    }
+    if (statusIncidentRecencyMultiplier !== null) {
+      envelope.status_incident_recency_multiplier = clamp01(statusIncidentRecencyMultiplier);
+    }
+    return applyStatusHealthNormalization(envelope);
+  }
+
+  return envelope;
 }
 
 function parseMarketingEnvelope(payload, sourceId) {
@@ -914,6 +1326,525 @@ function parseClearbitSpecificEnvelopes(payload, sourceId) {
   };
 }
 
+function decodeXmlEntities(value) {
+  const text = String(value || "");
+  const replacedNamed = text
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'");
+
+  return replacedNamed
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number.parseInt(code, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+
+function normalizeXmlNamespaces(value) {
+  return String(value || "").replace(/<(\/?)(([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]+))/g, "<$1$4");
+}
+
+function stripXmlMarkup(value) {
+  const text = String(value || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+  return decodeXmlEntities(text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function collectXmlBlocks(xml, tagName) {
+  const blocks = [];
+  const pattern = new RegExp(`<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}>`, "gi");
+  let match = pattern.exec(xml);
+  while (match) {
+    blocks.push(match[0]);
+    match = pattern.exec(xml);
+  }
+  return blocks;
+}
+
+function readXmlTagValue(xml, tagNames) {
+  for (const tagName of tagNames || []) {
+    const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i");
+    const match = pattern.exec(xml);
+    if (match?.[1]) {
+      const normalized = stripXmlMarkup(match[1]);
+      if (normalized) return normalized;
+    }
+  }
+  return null;
+}
+
+function readXmlLinkValue(xml) {
+  const hrefMatch = /<link\b[^>]*\bhref=["']([^"']+)["'][^>]*\/?>(?:<\/link>)?/i.exec(xml);
+  if (hrefMatch?.[1]) {
+    const normalized = String(hrefMatch[1] || "").trim();
+    if (normalized) return normalized;
+  }
+  return readXmlTagValue(xml, ["link"]);
+}
+
+function parseStatusFeedEntriesFromRawText(rawText) {
+  const xml = normalizeXmlNamespaces(rawText);
+  const channelBlock = collectXmlBlocks(xml, "channel")[0] || xml;
+  const itemBlocks = collectXmlBlocks(xml, "item");
+  const entryBlocks = collectXmlBlocks(xml, "entry");
+  const rows = itemBlocks.length > 0 ? itemBlocks : entryBlocks;
+
+  const entries = rows.map((row) => ({
+    title: readXmlTagValue(row, ["title"]),
+    summary: readXmlTagValue(row, ["description", "summary", "content", "encoded"]),
+    published_at: readXmlTagValue(row, ["pubDate", "published", "updated", "created"]),
+    link: readXmlLinkValue(row),
+  })).filter((entry) => entry.title || entry.summary);
+
+  return {
+    feed_title: readXmlTagValue(channelBlock, ["title", "generator"]),
+    feed_url: readXmlLinkValue(channelBlock),
+    entries,
+  };
+}
+
+function classifyStatusFeedEntry(text, statusToken = "", resolvedAt = null) {
+  return evaluateStatusIncident({
+    statusToken,
+    text,
+    resolvedAt,
+  });
+}
+
+function parseStatusFeedSpecificEnvelopes(payload, sourceId) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const objectEntries = asObjectArray(getFirstArrayByPaths(root, ["entries", "items", "feed.entries", "feed.items"])).map((entry) => ({
+    title: readStringField(entry, ["title", "name"]),
+    summary: readStringField(entry, ["summary", "description", "content", "body"]),
+    status: readStringField(entry, ["status", "state", "severity", "impact"]),
+    resolved_at: readStringField(entry, ["resolved_at", "resolvedAt", "resolved"]),
+    published_at: readStringField(entry, ["published_at", "published", "updated", "created_at", "pubDate"]),
+    link: readStringField(entry, ["url", "link"]),
+  })).filter((entry) => entry.title || entry.summary);
+
+  const rawText = readStringField(payload || {}, ["raw_text"]) || readStringField(root || {}, ["raw_text"]);
+  const parsedXml = rawText ? parseStatusFeedEntriesFromRawText(rawText) : { feed_title: null, feed_url: null, entries: [] };
+
+  const entries = objectEntries.length > 0 ? objectEntries : parsedXml.entries;
+  if (entries.length === 0) {
+    return {
+      ownership: null,
+      hiring: null,
+      reputation: null,
+      marketing: null,
+      tech: null,
+    };
+  }
+
+  const feedTitle = readStringField(root || {}, ["title", "feed_title", "name"]) || parsedXml.feed_title;
+  const feedUrl = readStringField(root || {}, ["url", "feed_url", "link"]) || parsedXml.feed_url;
+
+  const paymentPattern = /\b(payment|payments|merchant|acquir|gateway|processor|psp|card|transaction|settlement|payout)\b/i;
+  const checkoutPattern = /\b(checkout|cart|basket|3ds|3-d\s*secure|authoris|hosted\s*payment\s*page)\b/i;
+
+  let openEntries = 0;
+  let majorOpenEntries = 0;
+  let paymentEntryCount = 0;
+  let checkoutEntryCount = 0;
+  let recentIncidentAt = null;
+  let recentOpenIncidentAt = null;
+
+  for (const entry of entries) {
+    const text = `${entry?.title || ""} ${entry?.summary || ""}`.trim();
+    if (!text) continue;
+
+    const incidentAt = latestIsoTimestamp([
+      entry?.published_at,
+      entry?.updated_at,
+      entry?.created_at,
+    ]);
+    recentIncidentAt = latestIsoTimestamp([recentIncidentAt, incidentAt]);
+
+    const classification = classifyStatusFeedEntry(text, entry?.status || "", entry?.resolved_at || null);
+    if (classification.is_open) {
+      openEntries += 1;
+      recentOpenIncidentAt = latestIsoTimestamp([recentOpenIncidentAt, incidentAt]);
+    }
+    if (classification.is_major) majorOpenEntries += 1;
+    if (paymentPattern.test(text)) paymentEntryCount += 1;
+    if (checkoutPattern.test(text)) checkoutEntryCount += 1;
+  }
+
+  const nowIso = new Date().toISOString();
+  const evidence = [];
+  evidence.push(`Status feed entries parsed: ${entries.length}`);
+  if (openEntries > 0) {
+    evidence.push(`${openEntries} potentially open incident update${openEntries === 1 ? "" : "s"}`);
+  }
+  if (majorOpenEntries > 0) {
+    evidence.push(`${majorOpenEntries} major/critical status update${majorOpenEntries === 1 ? "" : "s"}`);
+  }
+
+  const sampleTitles = entries
+    .map((entry) => String(entry?.title || "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  if (sampleTitles.length > 0) {
+    evidence.push(`Feed sample: ${sampleTitles.join("; ")}`);
+  }
+
+  let reputationEnvelope = {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: `${sourceId}_api`,
+    status_feed_name: feedTitle || null,
+    status_feed_url: feedUrl || null,
+    status_feed_entries_total: entries.length,
+    status_feed_entries_open: openEntries,
+    status_feed_entries_major: majorOpenEntries,
+    status_incidents_total: entries.length,
+    status_incidents_open: openEntries,
+    status_major_incidents_open: majorOpenEntries,
+    status_degraded_components: 0,
+    status_recent_incident_at: recentIncidentAt,
+    status_recent_open_incident_at: recentOpenIncidentAt,
+    evidence,
+    confidence: openEntries > 0 ? "high" : "medium",
+    confidence_score: Math.round(Math.min(0.3 + (entries.length * 0.03) + (openEntries * 0.08), 0.85) * 100) / 100,
+  };
+  reputationEnvelope = applyStatusHealthNormalization(reputationEnvelope);
+
+  if (paymentEntryCount > 0) {
+    reputationEnvelope.payment_related_complaints = paymentEntryCount;
+  }
+  if (checkoutEntryCount > 0) {
+    reputationEnvelope.checkout_related_complaints = checkoutEntryCount;
+  }
+
+  return {
+    ownership: null,
+    hiring: null,
+    reputation: reputationEnvelope,
+    marketing: null,
+    tech: null,
+  };
+}
+
+function parseStatusApiSpecificEnvelopes(payload, sourceId) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const incidentRows = asObjectArray(collectArraysFromPaths(root, [
+    "incidents",
+    "active_incidents",
+    "activeIncidents",
+    "events",
+    "issues",
+    "outages",
+    "data.incidents",
+    "data.active_incidents",
+    "data.activeIncidents",
+    "data.events",
+    "summary.incidents",
+    "summary.active_incidents",
+    "summary.activeIncidents",
+    "status.incidents",
+    "status.active_incidents",
+    "status.activeIncidents",
+  ]));
+  const componentRows = asObjectArray(collectArraysFromPaths(root, [
+    "components",
+    "page.components",
+    "services",
+    "systems",
+    "data.components",
+    "summary.components",
+    "status.components",
+  ]));
+
+  if (incidentRows.length === 0 && componentRows.length === 0) {
+    return {
+      ownership: null,
+      hiring: null,
+      reputation: null,
+      marketing: null,
+      tech: null,
+    };
+  }
+
+  const paymentPattern = /\b(payment|payments|merchant|acquir|gateway|processor|psp|card|transaction|settlement|payout)\b/i;
+  const checkoutPattern = /\b(checkout|cart|basket|3ds|3-d\s*secure|authoris|hosted\s*payment\s*page)\b/i;
+
+  let openIncidents = 0;
+  let majorOpenIncidents = 0;
+  let paymentIncidentCount = 0;
+  let checkoutIncidentCount = 0;
+  let recentIncidentAt = null;
+  let recentOpenIncidentAt = null;
+
+  for (const incident of incidentRows) {
+    const title = readStringField(incident, ["name", "title", "summary", "message", "incident_name"]) || "";
+    const body = readStringField(incident, ["description", "body", "content", "detail", "message"]) || "";
+    const statusToken = readStringField(incident, ["status", "state", "phase", "current_status", "incident_status", "human_status", "status_name"]) || "";
+    const impactToken = readStringField(incident, ["severity", "impact", "priority", "level", "impact_level", "status_name", "human_status"]) || "";
+    const incidentAt = latestIsoTimestamp([
+      readStringField(incident, ["updated_at", "updatedAt", "occurred_at", "occurredAt", "created_at", "createdAt", "started_at", "startedAt", "published_at", "published", "pubDate"]),
+    ]);
+    recentIncidentAt = latestIsoTimestamp([recentIncidentAt, incidentAt]);
+    const text = `${title} ${body} ${statusToken}`.trim();
+    if (!text) continue;
+
+    const classification = evaluateStatusIncident({
+      statusToken,
+      impactToken,
+      text,
+      resolvedAt: readStringField(incident, ["resolved_at", "resolvedAt", "resolved", "ended_at", "fixed_at"]),
+    });
+
+    if (classification.is_open) {
+      openIncidents += 1;
+      recentOpenIncidentAt = latestIsoTimestamp([recentOpenIncidentAt, incidentAt]);
+    }
+    if (classification.is_major) majorOpenIncidents += 1;
+    if (paymentPattern.test(text)) paymentIncidentCount += 1;
+    if (checkoutPattern.test(text)) checkoutIncidentCount += 1;
+  }
+
+  const degradedComponents = componentRows.filter((component) => {
+    const statusToken = String(
+      readStringField(component, ["status", "state", "health", "level", "indicator"]) || ""
+    ).toLowerCase();
+    if (!statusToken) return false;
+
+    const degraded = /\b(degraded|partial|major|outage|down|critical|incident|disrupt|unhealthy|red)\b/i.test(statusToken);
+    const healthy = /\b(operational|up|healthy|ok|available|normal|green)\b/i.test(statusToken);
+    return degraded || !healthy;
+  });
+
+  const nowIso = new Date().toISOString();
+  const pageMetadata = getByPath(root, "page") || {};
+  const evidence = [];
+  evidence.push(`Status API incidents parsed: ${incidentRows.length}`);
+  if (openIncidents > 0) {
+    evidence.push(`${openIncidents} potentially open incident${openIncidents === 1 ? "" : "s"}`);
+  }
+  if (majorOpenIncidents > 0) {
+    evidence.push(`${majorOpenIncidents} major/critical incident${majorOpenIncidents === 1 ? "" : "s"}`);
+  }
+  if (degradedComponents.length > 0) {
+    evidence.push(`${degradedComponents.length} degraded component${degradedComponents.length === 1 ? "" : "s"}`);
+  }
+
+  const sampleTitles = incidentRows
+    .map((incident) => readStringField(incident, ["name", "title", "summary"]))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (sampleTitles.length > 0) {
+    evidence.push(`Incident sample: ${sampleTitles.join("; ")}`);
+  }
+
+  let reputationEnvelope = {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: `${sourceId}_api`,
+    status_api_name: readStringField(root || {}, ["name", "title", "service_name", "status_page_name"]) || readStringField(pageMetadata, ["name", "title"]) || null,
+    status_api_url: readStringField(root || {}, ["url", "status_url", "status_page_url", "link"]) || readStringField(pageMetadata, ["url", "link"]) || null,
+    status_incidents_total: incidentRows.length,
+    status_incidents_open: openIncidents,
+    status_major_incidents_open: majorOpenIncidents,
+    status_degraded_components: degradedComponents.length,
+    status_recent_incident_at: recentIncidentAt,
+    status_recent_open_incident_at: recentOpenIncidentAt,
+    evidence,
+    confidence: openIncidents > 0 ? "high" : "medium",
+    confidence_score: Math.round(Math.min(0.32 + (incidentRows.length * 0.03) + (openIncidents * 0.08), 0.85) * 100) / 100,
+  };
+  reputationEnvelope = applyStatusHealthNormalization(reputationEnvelope);
+
+  if (paymentIncidentCount > 0) {
+    reputationEnvelope.payment_related_complaints = paymentIncidentCount;
+  }
+  if (checkoutIncidentCount > 0) {
+    reputationEnvelope.checkout_related_complaints = checkoutIncidentCount;
+  }
+
+  return {
+    ownership: null,
+    hiring: null,
+    reputation: reputationEnvelope,
+    marketing: null,
+    tech: null,
+  };
+}
+
+function parseStatusInstatusSpecificEnvelopes(payload, sourceId) {
+  return parseStatusApiSpecificEnvelopes(payload, sourceId);
+}
+
+function parseStatusCachetSpecificEnvelopes(payload, sourceId) {
+  const sourcePayload = payload && typeof payload === "object" ? payload : {};
+  const root = normalizeConnectorPayloadRoot(sourcePayload);
+
+  const topLevelDataRows = Array.isArray(sourcePayload?.data) ? sourcePayload.data : [];
+  const nestedRows = asObjectArray(getFirstArrayByPaths(root, ["incidents", "results", "rows"]));
+  const cachetRows = topLevelDataRows.length > 0 ? asObjectArray(topLevelDataRows) : nestedRows;
+
+  const normalizedIncidents = cachetRows.map((row) => ({
+    title: readStringField(row, ["name", "title", "message"]),
+    description: readStringField(row, ["message", "description", "human_status", "status_name"]),
+    status: readStringField(row, ["human_status", "status_name", "status", "state"]),
+    severity: readStringField(row, ["severity", "impact", "priority", "status_name", "human_status"]),
+    resolved_at: readStringField(row, ["resolved_at", "resolvedAt", "fixed_at", "ended_at"]),
+    created_at: readStringField(row, ["created_at", "createdAt", "created"]),
+    updated_at: readStringField(row, ["updated_at", "updatedAt", "updated"]),
+  })).filter((row) => row.title || row.description);
+
+  if (normalizedIncidents.length === 0) {
+    return parseStatusApiSpecificEnvelopes(payload, sourceId);
+  }
+
+  const normalizedPayload = {
+    name: readStringField(sourcePayload, ["name", "title", "service_name"]) || readStringField(sourcePayload?.page || {}, ["name", "title"]) || null,
+    url: readStringField(sourcePayload, ["url", "link", "status_url"]) || readStringField(sourcePayload?.page || {}, ["url", "link"]) || null,
+    incidents: normalizedIncidents,
+    components: asObjectArray(getFirstArrayByPaths(sourcePayload, ["components", "page.components"])),
+  };
+
+  return parseStatusApiSpecificEnvelopes(normalizedPayload, sourceId);
+}
+
+function extractStatuspageIncidentText(incident) {
+  const parts = [];
+  const name = readStringField(incident, ["name", "title"]);
+  if (name) parts.push(name);
+
+  const updateRows = getFirstArrayByPaths(incident, ["incident_updates", "updates"]);
+  for (const row of updateRows) {
+    const body = readStringField(row, ["body", "text", "message"]);
+    if (body) parts.push(body);
+  }
+
+  const componentRows = getFirstArrayByPaths(incident, ["components"]);
+  for (const row of componentRows) {
+    const componentName = readStringField(row, ["name"]);
+    if (componentName) parts.push(componentName);
+  }
+
+  return parts.join(" ").trim();
+}
+
+function parseStatuspageSpecificEnvelopes(payload, sourceId) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const incidents = asObjectArray(getFirstArrayByPaths(root, ["incidents", "data.incidents", "summary.incidents"]));
+  const components = asObjectArray(getFirstArrayByPaths(root, ["components", "data.components", "summary.components"]));
+
+  if (incidents.length === 0 && components.length === 0) {
+    return {
+      ownership: null,
+      hiring: null,
+      reputation: null,
+      marketing: null,
+      tech: null,
+    };
+  }
+
+  const classifiedIncidents = incidents.map((incident) => {
+    const text = extractStatuspageIncidentText(incident);
+    const incidentAt = latestIsoTimestamp([
+      readStringField(incident, ["updated_at", "updatedAt", "created_at", "createdAt", "started_at", "startedAt"]),
+    ]);
+    const classification = evaluateStatusIncident({
+      statusToken: readStringField(incident, ["status", "state", "phase"]),
+      impactToken: readStringField(incident, ["impact", "severity", "priority", "level"]),
+      text,
+      resolvedAt: incident?.resolved_at,
+    });
+    return { incident, text, classification, incident_at: incidentAt };
+  });
+
+  const recentIncidentAt = latestIsoTimestamp(classifiedIncidents.map((row) => row.incident_at));
+  const recentOpenIncidentAt = latestIsoTimestamp(
+    classifiedIncidents
+      .filter((row) => row.classification.is_open)
+      .map((row) => row.incident_at)
+  );
+
+  const openIncidents = classifiedIncidents
+    .filter((row) => row.classification.is_open)
+    .map((row) => row.incident);
+
+  const majorOpenIncidents = classifiedIncidents
+    .filter((row) => row.classification.is_major)
+    .map((row) => row.incident);
+
+  const degradedComponents = components.filter((component) => {
+    const status = String(component?.status || "").toLowerCase();
+    return !!status && status !== "operational";
+  });
+
+  const paymentPattern = /\b(payment|payments|merchant|acquir|gateway|processor|psp|card|transaction|settlement|payout)\b/i;
+  const checkoutPattern = /\b(checkout|cart|basket|3ds|3-d\s*secure|authoris|hosted\s*payment\s*page)\b/i;
+
+  let paymentIncidentCount = 0;
+  let checkoutIncidentCount = 0;
+
+  for (const row of classifiedIncidents) {
+    const text = row.text;
+    if (!text) continue;
+    if (paymentPattern.test(text)) paymentIncidentCount += 1;
+    if (checkoutPattern.test(text)) checkoutIncidentCount += 1;
+  }
+
+  const nowIso = new Date().toISOString();
+  const evidence = [];
+  if (openIncidents.length > 0) {
+    evidence.push(`${openIncidents.length} open incident${openIncidents.length === 1 ? "" : "s"} on status page`);
+  }
+  if (majorOpenIncidents.length > 0) {
+    evidence.push(`${majorOpenIncidents.length} major/critical incident${majorOpenIncidents.length === 1 ? "" : "s"} currently open`);
+  }
+  if (degradedComponents.length > 0) {
+    evidence.push(`${degradedComponents.length} degraded component${degradedComponents.length === 1 ? "" : "s"}`);
+  }
+  if (incidents.length > 0) {
+    const names = incidents
+      .map((incident) => readStringField(incident, ["name", "title"]))
+      .filter(Boolean)
+      .slice(0, 3);
+    if (names.length > 0) {
+      evidence.push(`Incident sample: ${names.join("; ")}`);
+    }
+  }
+  if (evidence.length === 0) {
+    evidence.push("Status page ingested successfully");
+  }
+
+  let reputationEnvelope = {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: `${sourceId}_api`,
+    status_page_name: readStringField(getByPath(root, "page") || {}, ["name"]) || null,
+    status_page_url: readStringField(getByPath(root, "page") || {}, ["url"]) || null,
+    status_incidents_total: incidents.length,
+    status_incidents_open: openIncidents.length,
+    status_major_incidents_open: majorOpenIncidents.length,
+    status_degraded_components: degradedComponents.length,
+    status_recent_incident_at: recentIncidentAt,
+    status_recent_open_incident_at: recentOpenIncidentAt,
+    evidence,
+    confidence: openIncidents.length > 0 ? "high" : "medium",
+    confidence_score: Math.round(Math.min(0.35 + (incidents.length * 0.04) + (openIncidents.length * 0.08), 0.85) * 100) / 100,
+  };
+  reputationEnvelope = applyStatusHealthNormalization(reputationEnvelope);
+
+  if (paymentIncidentCount > 0) {
+    reputationEnvelope.payment_related_complaints = paymentIncidentCount;
+  }
+  if (checkoutIncidentCount > 0) {
+    reputationEnvelope.checkout_related_complaints = checkoutIncidentCount;
+  }
+
+  return {
+    ownership: null,
+    hiring: null,
+    reputation: reputationEnvelope,
+    marketing: null,
+    tech: null,
+  };
+}
+
 function parseSpecificConnectorEnvelopes(sourceId, payload) {
   switch (String(sourceId || "").toLowerCase()) {
     case "endole":
@@ -930,6 +1861,16 @@ function parseSpecificConnectorEnvelopes(sourceId, payload) {
       return parseCrunchbaseSpecificEnvelopes(payload, sourceId);
     case "clearbit":
       return parseClearbitSpecificEnvelopes(payload, sourceId);
+    case "statuspage":
+      return parseStatuspageSpecificEnvelopes(payload, sourceId);
+    case "status_feed":
+      return parseStatusFeedSpecificEnvelopes(payload, sourceId);
+    case "status_api":
+      return parseStatusApiSpecificEnvelopes(payload, sourceId);
+    case "status_instatus":
+      return parseStatusInstatusSpecificEnvelopes(payload, sourceId);
+    case "status_cachet":
+      return parseStatusCachetSpecificEnvelopes(payload, sourceId);
     default:
       return {
         ownership: null,
@@ -1052,6 +1993,106 @@ function mergeEnvelopeWithEvidence(existing, incoming, options = {}) {
     result.evidence = uniqueStrings([...(existing.evidence || []), ...(incoming.evidence || [])]).slice(0, 30);
   }
 
+  const hasStatusMetrics = [
+    existing?.status_incidents_total,
+    existing?.status_incidents_open,
+    existing?.status_major_incidents_open,
+    existing?.status_degraded_components,
+    existing?.status_incident_weighted_open,
+    existing?.status_incident_severity_score,
+    existing?.status_recent_incident_at,
+    existing?.status_recent_open_incident_at,
+    existing?.status_recent_incident_age_days,
+    existing?.status_incident_recency_multiplier,
+    incoming?.status_incidents_total,
+    incoming?.status_incidents_open,
+    incoming?.status_major_incidents_open,
+    incoming?.status_degraded_components,
+    incoming?.status_incident_weighted_open,
+    incoming?.status_incident_severity_score,
+    incoming?.status_recent_incident_at,
+    incoming?.status_recent_open_incident_at,
+    incoming?.status_recent_incident_age_days,
+    incoming?.status_incident_recency_multiplier,
+  ].some((value) => value !== undefined && value !== null);
+
+  if (hasStatusMetrics) {
+    const severityMax = Math.max(
+      toFiniteNumber(existing?.status_incident_severity_score, 0),
+      toFiniteNumber(incoming?.status_incident_severity_score, 0)
+    );
+
+    const recentIncidentAt = latestIsoTimestamp([
+      existing?.status_recent_incident_at,
+      incoming?.status_recent_incident_at,
+    ]);
+    const recentOpenIncidentAt = latestIsoTimestamp([
+      existing?.status_recent_open_incident_at,
+      incoming?.status_recent_open_incident_at,
+    ]);
+
+    const existingAgeDays = Number(existing?.status_recent_incident_age_days);
+    const incomingAgeDays = Number(incoming?.status_recent_incident_age_days);
+    const recentIncidentAgeDays = Number.isFinite(existingAgeDays) && Number.isFinite(incomingAgeDays)
+      ? Math.min(existingAgeDays, incomingAgeDays)
+      : Number.isFinite(existingAgeDays)
+        ? existingAgeDays
+        : Number.isFinite(incomingAgeDays)
+          ? incomingAgeDays
+          : null;
+
+    const normalized = normalizeStatusHealthMetrics({
+      status_incidents_total: Math.max(
+        toFiniteNumber(existing?.status_incidents_total, 0),
+        toFiniteNumber(incoming?.status_incidents_total, 0)
+      ),
+      status_incidents_open: Math.max(
+        toFiniteNumber(existing?.status_incidents_open, 0),
+        toFiniteNumber(incoming?.status_incidents_open, 0)
+      ),
+      status_major_incidents_open: Math.max(
+        toFiniteNumber(existing?.status_major_incidents_open, 0),
+        toFiniteNumber(incoming?.status_major_incidents_open, 0)
+      ),
+      status_degraded_components: Math.max(
+        toFiniteNumber(existing?.status_degraded_components, 0),
+        toFiniteNumber(incoming?.status_degraded_components, 0)
+      ),
+      status_incident_weighted_open: Math.max(
+        toFiniteNumber(existing?.status_incident_weighted_open, 0),
+        toFiniteNumber(incoming?.status_incident_weighted_open, 0)
+      ),
+      status_incident_severity_score: severityMax,
+      status_recent_incident_at: recentIncidentAt,
+      status_recent_open_incident_at: recentOpenIncidentAt,
+      status_recent_incident_age_days: recentIncidentAgeDays,
+    });
+
+    result.status_incidents_total = Math.max(
+      toFiniteNumber(existing?.status_incidents_total, 0),
+      toFiniteNumber(incoming?.status_incidents_total, 0)
+    );
+    result.status_incidents_open = Math.max(
+      toFiniteNumber(existing?.status_incidents_open, 0),
+      toFiniteNumber(incoming?.status_incidents_open, 0)
+    );
+    result.status_major_incidents_open = Math.max(
+      toFiniteNumber(existing?.status_major_incidents_open, 0),
+      toFiniteNumber(incoming?.status_major_incidents_open, 0)
+    );
+    result.status_degraded_components = Math.max(
+      toFiniteNumber(existing?.status_degraded_components, 0),
+      toFiniteNumber(incoming?.status_degraded_components, 0)
+    );
+    result.status_incident_weighted_open = normalized.status_incident_weighted_open;
+    result.status_incident_severity_score = normalized.status_incident_severity_score;
+    result.status_health_band = normalized.status_health_band;
+    result.status_recent_incident_at = normalized.status_recent_incident_at;
+    result.status_recent_open_incident_at = normalized.status_recent_open_incident_at;
+    result.status_recent_incident_age_days = normalized.status_recent_incident_age_days;
+    result.status_incident_recency_multiplier = normalized.status_incident_recency_multiplier;
+  }
+
   return result;
 }
 
@@ -1106,6 +2147,10 @@ export async function syncExternalSignals(input = {}) {
   const companyName = String(input.companyName || input.company_name || "").trim();
   const companyDomain = String(input.companyDomain || input.company_domain || "").trim().toLowerCase();
   const timeoutMs = Math.max(1000, Number.parseInt(String(input.timeoutMs || DEFAULT_TIMEOUT_MS), 10) || DEFAULT_TIMEOUT_MS);
+  const enableStatusDiscovery = parseBooleanFlag(
+    input.enableStatusDiscovery ?? input.enable_status_discovery,
+    parseBooleanFlag(process.env.ENABLE_STATUS_URL_DISCOVERY, false)
+  );
 
   const context = {
     company_number: companyNumber,
@@ -1115,8 +2160,18 @@ export async function syncExternalSignals(input = {}) {
     company_domain_encoded: encodeURIComponent(companyDomain),
   };
 
-  const statuses = getExternalSignalConnectorStatus();
-  const enabled = statuses.filter((status) => status.configured);
+  const runtimeStatuses = [];
+  const enabled = [];
+
+  for (const definition of CONNECTOR_DEFINITIONS) {
+    const status = buildConnectorRuntimeStatus(definition, context, {
+      enableStatusDiscovery,
+    });
+    runtimeStatuses.push(status);
+    if (status.configured) {
+      enabled.push(status);
+    }
+  }
 
   if (enabled.length === 0) {
     return {
@@ -1126,7 +2181,8 @@ export async function syncExternalSignals(input = {}) {
       attempted: 0,
       succeeded: 0,
       failed: 0,
-      connectors: statuses,
+      status_url_discovery_enabled: enableStatusDiscovery,
+      connectors: runtimeStatuses,
     };
   }
 
@@ -1139,16 +2195,18 @@ export async function syncExternalSignals(input = {}) {
     const definition = CONNECTOR_DEFINITIONS.find((entry) => entry.id === status.id);
     if (!definition) continue;
 
-    const fetched = await fetchConnectorPayload(definition, context, timeoutMs);
+    const fetched = await fetchConnectorPayload(definition, status.request_urls, timeoutMs);
 
     if (!fetched.ok) {
       failed += 1;
       connectorResults.push({
         id: status.id,
         ok: false,
+        auto_discovery_active: status.auto_discovery_active === true,
         status: fetched.status,
         error: fetched.error,
         request_url: fetched.request_url || null,
+        attempted_urls: fetched.attempted_urls || [],
       });
       continue;
     }
@@ -1160,6 +2218,7 @@ export async function syncExternalSignals(input = {}) {
       updated_at: new Date().toISOString(),
       source: `${status.id}_api_raw`,
       request_url: fetched.request_url || null,
+      attempted_urls: fetched.attempted_urls || [],
       payload,
     });
     keysUpdated.add(`external_signal_${status.id}_${companyNumber}`);
@@ -1190,8 +2249,10 @@ export async function syncExternalSignals(input = {}) {
     connectorResults.push({
       id: status.id,
       ok: true,
+      auto_discovery_active: status.auto_discovery_active === true,
       status: fetched.status,
       request_url: fetched.request_url || null,
+      attempted_urls: fetched.attempted_urls || [],
       ownership_updated: !!ownershipEnvelope,
       hiring_updated: !!hiringEnvelope,
       reputation_updated: !!reputationEnvelope,
@@ -1205,6 +2266,7 @@ export async function syncExternalSignals(input = {}) {
     company_number: companyNumber,
     company_name: companyName || null,
     company_domain: companyDomain || null,
+    status_url_discovery_enabled: enableStatusDiscovery,
     attempted: enabled.length,
     succeeded,
     failed,

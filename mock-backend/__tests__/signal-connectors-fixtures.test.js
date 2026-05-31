@@ -40,6 +40,12 @@ const allEnvKeys = [
   "CLEARBIT_URL_TEMPLATE",
   "CLEARBIT_AUTH_HEADER",
   "CLEARBIT_AUTH_SCHEME",
+  "STATUSPAGE_URL_TEMPLATE",
+  "STATUS_FEED_URL_TEMPLATE",
+  "STATUS_API_URL_TEMPLATE",
+  "STATUS_INSTATUS_URL_TEMPLATE",
+  "STATUS_CACHET_URL_TEMPLATE",
+  "ENABLE_STATUS_URL_DISCOVERY",
 ];
 
 const originalEnv = Object.fromEntries(allEnvKeys.map((key) => [key, process.env[key]]));
@@ -58,6 +64,7 @@ function resetConnectorEnv() {
 
 function configureSingleConnector(connectorId) {
   resetConnectorEnv();
+  process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
 
   const id = String(connectorId || "").toLowerCase();
   if (id === "endole") {
@@ -94,6 +101,26 @@ function configureSingleConnector(connectorId) {
   if (id === "clearbit") {
     process.env.CLEARBIT_API_KEY = "test-clearbit-key";
     process.env.CLEARBIT_URL_TEMPLATE = "https://fixtures.example.test/clearbit/{company_domain}";
+    return;
+  }
+  if (id === "statuspage") {
+    process.env.STATUSPAGE_URL_TEMPLATE = "https://fixtures.example.test/statuspage/{company_number}";
+    return;
+  }
+  if (id === "status_feed") {
+    process.env.STATUS_FEED_URL_TEMPLATE = "https://fixtures.example.test/status-feed/{company_number}";
+    return;
+  }
+  if (id === "status_api") {
+    process.env.STATUS_API_URL_TEMPLATE = "https://fixtures.example.test/status-api/{company_number}";
+    return;
+  }
+  if (id === "status_instatus") {
+    process.env.STATUS_INSTATUS_URL_TEMPLATE = "https://fixtures.example.test/status-instatus/{company_number}";
+    return;
+  }
+  if (id === "status_cachet") {
+    process.env.STATUS_CACHET_URL_TEMPLATE = "https://fixtures.example.test/status-cachet/{company_number}";
     return;
   }
 
@@ -187,6 +214,25 @@ describe("external signal connector native fixtures", () => {
     assert.match(String(ownership.parent_company || ""), /Euro HoldCo/i);
   });
 
+  it("maps OpenCorporates fixture when only URL template is configured", async () => {
+    resetConnectorEnv();
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+    process.env.OPENCORPORATES_URL_TEMPLATE = "https://fixtures.example.test/opencorporates/{company_number}";
+    global.fetch = makeFetchWithFixture("opencorporates", "opencorporates");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220009",
+      companyName: "Native OpenCorp Free Co",
+      companyDomain: "native-opencorp-free.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.succeeded, 1);
+
+    const ownership = db.getSetting("ownership_99220009", null);
+    assert.equal(ownership.non_uk_significant_corporate_controllers_count >= 1, true);
+  });
+
   it("maps Similarweb native fixture to marketing traffic and geography", async () => {
     configureSingleConnector("similarweb");
     global.fetch = makeFetchWithFixture("similarweb", "similarweb");
@@ -274,5 +320,118 @@ describe("external signal connector native fixtures", () => {
     assert.equal(hiring.total_open_roles >= 9, true);
     assert.equal(marketing.monthly_web_traffic, 190000);
     assert.ok((tech.technologies || []).includes("HubSpot"));
+  });
+
+  it("maps Statuspage native fixture to reputation envelope without API key", async () => {
+    configureSingleConnector("statuspage");
+    global.fetch = makeFetchWithFixture("statuspage", "statuspage");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220008",
+      companyName: "Native Statuspage Co",
+      companyDomain: "native-statuspage.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    const reputation = db.getSetting("reputation_99220008", null);
+
+    assert.equal(reputation.status_incidents_total, 3);
+    assert.equal(reputation.status_incidents_open, 2);
+    assert.equal(reputation.status_major_incidents_open, 1);
+    assert.equal(reputation.status_degraded_components, 1);
+    assert.equal(reputation.status_incident_severity_score >= 0.6, true);
+    assert.equal(typeof reputation.status_health_band, "string");
+    assert.equal(reputation.payment_related_complaints >= 1, true);
+    assert.equal(reputation.checkout_related_complaints >= 1, true);
+  });
+
+  it("maps Status Feed native fixture to reputation envelope without API key", async () => {
+    configureSingleConnector("status_feed");
+    global.fetch = makeFetchWithFixture("status-feed", "status-feed");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220010",
+      companyName: "Native Status Feed Co",
+      companyDomain: "native-status-feed.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    const reputation = db.getSetting("reputation_99220010", null);
+
+    assert.equal(reputation.status_feed_entries_total, 3);
+    assert.equal(reputation.status_incidents_open >= 1, true);
+    assert.equal(reputation.status_major_incidents_open >= 1, true);
+    assert.equal(reputation.status_incident_severity_score >= 0.6, true);
+    assert.equal(typeof reputation.status_health_band, "string");
+    assert.equal(reputation.payment_related_complaints >= 1, true);
+    assert.equal(reputation.checkout_related_complaints >= 1, true);
+  });
+
+  it("maps Status API native fixture to reputation envelope without API key", async () => {
+    configureSingleConnector("status_api");
+    global.fetch = makeFetchWithFixture("status-api", "status-api");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220011",
+      companyName: "Native Status API Co",
+      companyDomain: "native-status-api.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    const reputation = db.getSetting("reputation_99220011", null);
+
+    assert.equal(reputation.status_incidents_total, 3);
+    assert.equal(reputation.status_incidents_open >= 1, true);
+    assert.equal(reputation.status_major_incidents_open >= 1, true);
+    assert.equal(reputation.status_degraded_components >= 1, true);
+    assert.equal(reputation.status_incident_severity_score >= 0.6, true);
+    assert.equal(typeof reputation.status_health_band, "string");
+    assert.equal(reputation.payment_related_complaints >= 1, true);
+    assert.equal(reputation.checkout_related_complaints >= 1, true);
+  });
+
+  it("maps Status Instatus native fixture to reputation envelope without API key", async () => {
+    configureSingleConnector("status_instatus");
+    global.fetch = makeFetchWithFixture("status-instatus", "status-instatus");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220012",
+      companyName: "Native Status Instatus Co",
+      companyDomain: "native-status-instatus.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    const reputation = db.getSetting("reputation_99220012", null);
+
+    assert.equal(reputation.status_incidents_total >= 2, true);
+    assert.equal(reputation.status_incidents_open >= 1, true);
+    assert.equal(reputation.status_major_incidents_open >= 1, true);
+    assert.equal(reputation.status_degraded_components >= 1, true);
+    assert.equal(reputation.status_incident_severity_score >= 0.6, true);
+    assert.equal(typeof reputation.status_health_band, "string");
+    assert.equal(reputation.payment_related_complaints >= 1, true);
+    assert.equal(reputation.checkout_related_complaints >= 1, true);
+  });
+
+  it("maps Status Cachet native fixture to reputation envelope without API key", async () => {
+    configureSingleConnector("status_cachet");
+    global.fetch = makeFetchWithFixture("status-cachet", "status-cachet");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220013",
+      companyName: "Native Status Cachet Co",
+      companyDomain: "native-status-cachet.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+    const reputation = db.getSetting("reputation_99220013", null);
+
+    assert.equal(reputation.status_incidents_total >= 2, true);
+    assert.equal(reputation.status_incidents_open >= 1, true);
+    assert.equal(reputation.status_major_incidents_open >= 1, true);
+    assert.equal(reputation.status_incident_severity_score >= 0.4, true);
+    assert.equal(typeof reputation.status_health_band, "string");
+    assert.equal(reputation.payment_related_complaints >= 1, true);
+    assert.equal(reputation.checkout_related_complaints >= 1, true);
   });
 });

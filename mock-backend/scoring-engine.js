@@ -1126,6 +1126,44 @@ function scoreReputationSignals(reputationData, freshnessScale = 1) {
   const paymentComplaints = toFiniteNumber(reputationData.payment_related_complaints, 0);
   const checkoutComplaints = toFiniteNumber(reputationData.checkout_related_complaints, 0);
   const totalReviews = toFiniteNumber(reputationData.trustpilot_review_count, 0);
+  const statusIncidentsOpen = Math.max(0, toFiniteNumber(reputationData.status_incidents_open, 0));
+  const statusMajorOpen = Math.max(0, toFiniteNumber(reputationData.status_major_incidents_open, 0));
+  const statusDegradedComponents = Math.max(0, toFiniteNumber(reputationData.status_degraded_components, 0));
+
+  const defaultStatusWeightedOpen = statusIncidentsOpen + (statusMajorOpen * 1.5) + (statusDegradedComponents * 0.75);
+  const statusWeightedOpen = Math.max(0, toFiniteNumber(reputationData.status_incident_weighted_open, defaultStatusWeightedOpen));
+  const statusIncidentTotal = Math.max(statusIncidentsOpen, toFiniteNumber(reputationData.status_incidents_total, 0));
+  const statusDenominator = Math.max(4, statusIncidentTotal + statusDegradedComponents + 2);
+  const computedStatusSeverity = statusWeightedOpen > 0 ? Math.min(statusWeightedOpen / statusDenominator, 1) : 0;
+  const statusSeverityScore = Math.max(0, Math.min(toFiniteNumber(reputationData.status_incident_severity_score, computedStatusSeverity), 1));
+  const statusRecencyMultiplier = Math.max(0, Math.min(toFiniteNumber(reputationData.status_incident_recency_multiplier, 1), 1));
+  const statusRecentIncidentAgeDaysRaw = Number(reputationData.status_recent_incident_age_days);
+  const statusRecentIncidentAgeDays = Number.isFinite(statusRecentIncidentAgeDaysRaw)
+    ? Math.max(0, Math.round(statusRecentIncidentAgeDaysRaw * 10) / 10)
+    : null;
+
+  if (statusSeverityScore >= 0.2 || statusIncidentsOpen > 0) {
+    const acquiringBoost = Math.min(
+      0.12,
+      0.04 + (statusSeverityScore * 0.08) + (Math.min(statusMajorOpen, 2) * 0.01)
+    );
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + acquiringBoost;
+
+    if (statusMajorOpen >= 1 || statusSeverityScore >= 0.6) {
+      motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.05;
+    }
+
+    painBoost += Math.min(0.06, 0.015 + (statusSeverityScore * 0.06) + (Math.min(statusMajorOpen, 2) * 0.01));
+    adjustments.push({
+      source: "status_incident_health",
+      open_count: statusIncidentsOpen,
+      major_open_count: statusMajorOpen,
+      degraded_components: statusDegradedComponents,
+      severity_score: Math.round(statusSeverityScore * 100) / 100,
+      recency_multiplier: Math.round(statusRecencyMultiplier * 100) / 100,
+      recent_incident_age_days: statusRecentIncidentAgeDays,
+    });
+  }
 
   if (paymentComplaints >= 5 || (totalReviews > 500 && paymentComplaints >= 3)) {
     motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.10;

@@ -21,6 +21,37 @@ const ANALYSIS_META = {
   none: { label: "Pending", color: "#6b7280" },
 };
 
+const STATUS_HEALTH_META = {
+  low: {
+    label: "Status stable",
+    badge: "Status Stable",
+    color: "#0f766e",
+    text: "#065f46",
+    background: "#ecfdf5",
+  },
+  medium: {
+    label: "Status watch",
+    badge: "Status Watch",
+    color: "#d97706",
+    text: "#92400e",
+    background: "#fffbeb",
+  },
+  high: {
+    label: "Status risk",
+    badge: "Status Risk",
+    color: "#b91c1c",
+    text: "#991b1b",
+    background: "#fef2f2",
+  },
+  unknown: {
+    label: "Status unknown",
+    badge: "Status Unknown",
+    color: "#475569",
+    text: "#475569",
+    background: "#f8fafc",
+  },
+};
+
 const TURNOVER_BANDS = [
   { value: "all", label: "All turnover bands" },
   { value: "15-25", label: "GBP 15M-25M" },
@@ -118,6 +149,25 @@ function filingAgeLabel(value) {
   if (days === null) return "Unknown";
   if (days < 1) return "Today";
   return `Filed ${days}d`;
+}
+
+function normalizeStatusBand(value) {
+  const band = String(value || "").trim().toLowerCase();
+  if (band === "low" || band === "medium" || band === "high") return band;
+  return "unknown";
+}
+
+function formatStatusSeverityPercent(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return null;
+  return `${Math.round(Math.max(0, Math.min(score, 1)) * 100)}%`;
+}
+
+function formatStatusIncidentAge(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days)) return null;
+  if (days < 1) return "<1d ago";
+  return `${Math.round(days)}d ago`;
 }
 
 function inferSourceBucket(source, latestFilingDate) {
@@ -396,6 +446,13 @@ SourceBadge.propTypes = {
 function buildBriefSignals(company, detail) {
   const analysis = detail?.analysis || {};
   const topThemes = Array.isArray(analysis.themes) ? analysis.themes.slice(0, 2) : [];
+  const statusSignals = detail?.reputation_signals || company || {};
+  const statusBand = normalizeStatusBand(statusSignals.status_health_band);
+  const statusMeta = STATUS_HEALTH_META[statusBand] || STATUS_HEALTH_META.unknown;
+  const statusSeverity = formatStatusSeverityPercent(statusSignals.status_incident_severity_score);
+  const statusIncidentAge = formatStatusIncidentAge(statusSignals.status_recent_incident_age_days);
+  const statusOpenIncidents = Math.max(0, Number(statusSignals.status_incidents_open || 0));
+  const statusMajorOpenIncidents = Math.max(0, Number(statusSignals.status_major_incidents_open || 0));
 
   const firstPain = Array.isArray(analysis.pain_indicators) ? analysis.pain_indicators[0] : null;
   const firstPainText = typeof firstPain === "string"
@@ -417,6 +474,15 @@ function buildBriefSignals(company, detail) {
   const whyNow = [];
   if (company.latest_filing_date) whyNow.push(`${filingAgeLabel(company.latest_filing_date)} (${company.latest_filing_date})`);
   if (company.growth_trend && company.growth_trend !== "unknown") whyNow.push(`Growth trend: ${company.growth_trend}`);
+  if (statusBand !== "unknown" || statusSeverity || statusIncidentAge) {
+    const statusLine = [statusMeta.label];
+    if (statusSeverity) statusLine.push(`severity ${statusSeverity}`);
+    if (statusIncidentAge) statusLine.push(`last incident ${statusIncidentAge}`);
+    if (statusOpenIncidents > 0) {
+      statusLine.push(`open incidents ${statusOpenIncidents}${statusMajorOpenIncidents > 0 ? ` (${statusMajorOpenIncidents} major)` : ""}`);
+    }
+    whyNow.push(`Status health: ${statusLine.join(" · ")}`);
+  }
   whyNow.push(`Analysis: ${(company.analysis_status || "none").replaceAll("_", " ")}`);
 
   const angle = [];
@@ -437,6 +503,10 @@ function buildBriefSignals(company, detail) {
   if (company.analysis_status === "failed") watchFor.push("Analysis failed, retry may be needed");
   if (company.filter_reason && company.filter_reason !== "eligible") {
     watchFor.push(`Pipeline reason: ${String(company.filter_reason).replaceAll("_", " ")}`);
+  }
+  if (statusBand === "high") watchFor.push("Status provider reports elevated incident risk");
+  if (statusOpenIncidents > 0) {
+    watchFor.push(`Status incidents currently open: ${statusOpenIncidents}${statusMajorOpenIncidents > 0 ? ` (${statusMajorOpenIncidents} major)` : ""}`);
   }
 
   return {
@@ -1079,6 +1149,14 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const allVisibleSelected = filteredCompanies.length > 0 && filteredCompanies.every((c) => selectedCompanyIds.has(c.id));
 
   const briefSignals = buildBriefSignals(activeCompany || {}, companyDetail || {});
+  const briefStatusSignals = companyDetail?.reputation_signals || activeCompany || {};
+  const briefStatusBand = normalizeStatusBand(briefStatusSignals.status_health_band);
+  const briefStatusMeta = STATUS_HEALTH_META[briefStatusBand] || STATUS_HEALTH_META.unknown;
+  const briefStatusSeverity = formatStatusSeverityPercent(briefStatusSignals.status_incident_severity_score);
+  const briefStatusIncidentAge = formatStatusIncidentAge(briefStatusSignals.status_recent_incident_age_days);
+  const briefStatusOpenIncidents = Math.max(0, Number(briefStatusSignals.status_incidents_open || 0));
+  const briefStatusMajorIncidents = Math.max(0, Number(briefStatusSignals.status_major_incidents_open || 0));
+  const briefStatusDegradedComponents = Math.max(0, Number(briefStatusSignals.status_degraded_components || 0));
 
   if (loading && weeklyCompanies.length === 0) {
     return <TableSkeleton rows={8} />;
@@ -1314,6 +1392,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 const analysisMeta = ANALYSIS_META[company.analysis_status] || ANALYSIS_META.none;
                 const sourceMeta = SOURCE_META[company.source_bucket] || SOURCE_META.unknown;
                 const state = STATE_META[company.workflow_state] || STATE_META.new_candidate;
+                const statusBand = normalizeStatusBand(company.status_health_band);
+                const statusMeta = STATUS_HEALTH_META[statusBand] || STATUS_HEALTH_META.unknown;
+                const statusSeverity = formatStatusSeverityPercent(company.status_incident_severity_score);
+                const statusIncidentAge = formatStatusIncidentAge(company.status_recent_incident_age_days);
+                const statusOpenIncidents = Math.max(0, Number(company.status_incidents_open || 0));
                 const sourceTitle = company.source_family
                   ? String(company.source_family).replaceAll("_", " ")
                   : sourceMeta.title;
@@ -1350,6 +1433,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                       <Badge text={`Tier ${company.score_tier}`} bg={company.score_tier === "A" ? "#047857" : company.score_tier === "B" ? "#2563eb" : "#6b7280"} />
                       <Badge text={analysisMeta.label} bg={analysisMeta.color} />
                       <Badge text={state.label} bg={state.color} />
+                      {(statusBand !== "unknown" || statusSeverity || statusOpenIncidents > 0) && (
+                        <Badge text={statusMeta.badge} bg={statusMeta.color} />
+                      )}
                       {company.is_new_this_week && <Badge text="New this week" bg="#0f766e" />}
                       {company.is_carryover && (
                         <Badge
@@ -1369,6 +1455,16 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                         <>
                           <span>•</span>
                           <span title="Backend filter reason" style={{ textTransform: "capitalize" }}>{String(company.filter_reason).replaceAll("_", " ")}</span>
+                        </>
+                      )}
+                      {(statusBand !== "unknown" || statusSeverity || statusIncidentAge || statusOpenIncidents > 0) && (
+                        <>
+                          <span>•</span>
+                          <span title="Status health signal" style={{ color: statusMeta.text }}>
+                            {statusSeverity ? `Severity ${statusSeverity}` : statusMeta.label}
+                            {statusIncidentAge ? ` · ${statusIncidentAge}` : ""}
+                            {statusOpenIncidents > 0 ? ` · ${statusOpenIncidents} open` : ""}
+                          </span>
                         </>
                       )}
                     </div>
@@ -1459,6 +1555,26 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
                       {briefSignals.whyNow.map((line, idx) => <li key={`now-${idx}`}>{line}</li>)}
                     </ul>
+                  )}
+                </div>
+
+                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: briefStatusMeta.background }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 8 }}>Status health</div>
+                  {(briefStatusBand !== "unknown" || briefStatusSeverity || briefStatusOpenIncidents > 0 || briefStatusIncidentAge) ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <Badge text={briefStatusMeta.badge} bg={briefStatusMeta.color} />
+                        {briefStatusSeverity && <span style={{ fontSize: 12, color: briefStatusMeta.text }}>Severity {briefStatusSeverity}</span>}
+                        {briefStatusIncidentAge && <span style={{ fontSize: 12, color: briefStatusMeta.text }}>Recent incident {briefStatusIncidentAge}</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#334155" }}>
+                        Open incidents: {briefStatusOpenIncidents}
+                        {briefStatusMajorIncidents > 0 ? ` (${briefStatusMajorIncidents} major)` : ""}
+                        {briefStatusDegradedComponents > 0 ? ` · Degraded components: ${briefStatusDegradedComponents}` : ""}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>No status telemetry captured yet.</div>
                   )}
                 </div>
 

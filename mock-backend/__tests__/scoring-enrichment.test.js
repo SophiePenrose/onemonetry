@@ -150,4 +150,35 @@ describe("enrichment-aware scoring", () => {
     assert.ok(enrichedScore.confidence_interval.plus_minus < baselineScore.confidence_interval.plus_minus);
     assert.equal(enrichedScore.confidence_interval.reasons.includes("enrichment_supported"), true);
   });
+
+  it("applies normalized status incident severity to reputation boosts", () => {
+    const companyNumber = "90000005";
+    seedScorableCompany(companyNumber, {
+      raw_data: [
+        "The company offers business process software and advisory services to enterprise clients.",
+        "Current priorities include procurement controls, finance automation, and operational resilience.",
+      ].join(" "),
+    });
+
+    db.setSetting(`reputation_${companyNumber}`, {
+      updated_at: isoDaysAgo(1),
+      status_incidents_total: 3,
+      status_incidents_open: 2,
+      status_major_incidents_open: 1,
+      status_degraded_components: 1,
+      status_incident_severity_score: 0.71,
+      status_health_band: "critical",
+    });
+
+    const score = scoring.scoreCompany(companyNumber);
+
+    assert.equal(score.enrichment.reputation.applied, true);
+    assert.equal(
+      score.enrichment.reputation.adjustments.some((entry) => entry.source === "status_incident_health"),
+      true
+    );
+    assert.ok(Number(score.enrichment.reputation.pain_boost || 0) > 0);
+    assert.ok(Number(score.all_motion_scores["Merchant Acquiring"]?.reputation_boost || 0) > 0);
+    assert.ok(Number(score.all_motion_scores["Revolut Pay"]?.reputation_boost || 0) > 0);
+  });
 });

@@ -1,0 +1,32 @@
+{
+  "page": {
+    "name": "Instatus Summary Example",
+    "url": "https://status.native-status-instatus.co.uk"
+  },
+  "activeIncidents": [
+    {
+      "name": "Payment API major outage",
+      "status": "investigating",
+      "severity": "major",
+      "message": "Checkout and payout failures are impacting card transactions."
+    }
+  ],
+  "incidents": [
+    {
+      "name": "Issue resolved",
+      "status": "resolved",
+      "severity": "minor",
+      "description": "Payment and checkout services restored."
+    }
+  ],
+  "components": [
+    {
+      "name": "Card Processing",
+      "status": "major_outage"
+    },
+    {
+      "name": "Public API",
+      "status": "operational"
+    }
+  ]
+}

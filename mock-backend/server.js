@@ -2209,6 +2209,50 @@ function deriveShortlistSourceFamily(sourceType) {
   return "unknown";
 }
 
+function getStatusSignalSnapshot(companyNumber) {
+  const raw = getSetting(`reputation_${companyNumber}`, null);
+  if (!raw || typeof raw !== "object") {
+    return {
+      status_health_band: null,
+      status_incident_severity_score: null,
+      status_incident_recency_multiplier: null,
+      status_recent_incident_age_days: null,
+      status_recent_incident_at: null,
+      status_recent_open_incident_at: null,
+      status_incidents_open: 0,
+      status_major_incidents_open: 0,
+      status_degraded_components: 0,
+    };
+  }
+
+  const severityRaw = Number(raw.status_incident_severity_score);
+  const recencyRaw = Number(raw.status_incident_recency_multiplier);
+  const ageRaw = Number(raw.status_recent_incident_age_days);
+  const incidentsOpenRaw = Number(raw.status_incidents_open);
+  const majorOpenRaw = Number(raw.status_major_incidents_open);
+  const degradedRaw = Number(raw.status_degraded_components);
+  const bandRaw = String(raw.status_health_band || "").trim().toLowerCase();
+  const statusBand = bandRaw === "critical" || bandRaw === "high"
+    ? "high"
+    : bandRaw === "degraded" || bandRaw === "medium"
+      ? "medium"
+      : bandRaw === "stable" || bandRaw === "low"
+        ? "low"
+        : null;
+
+  return {
+    status_health_band: statusBand,
+    status_incident_severity_score: Number.isFinite(severityRaw) ? Math.max(0, Math.min(severityRaw, 1)) : null,
+    status_incident_recency_multiplier: Number.isFinite(recencyRaw) ? Math.max(0, Math.min(recencyRaw, 1)) : null,
+    status_recent_incident_age_days: Number.isFinite(ageRaw) ? Math.max(0, Math.round(ageRaw * 10) / 10) : null,
+    status_recent_incident_at: raw.status_recent_incident_at || null,
+    status_recent_open_incident_at: raw.status_recent_open_incident_at || null,
+    status_incidents_open: Number.isFinite(incidentsOpenRaw) ? Math.max(0, incidentsOpenRaw) : 0,
+    status_major_incidents_open: Number.isFinite(majorOpenRaw) ? Math.max(0, majorOpenRaw) : 0,
+    status_degraded_components: Number.isFinite(degradedRaw) ? Math.max(0, degradedRaw) : 0,
+  };
+}
+
 function deriveShortlistFilterReason(companyRow, suppression, analysisStatus, sourceType) {
   if (suppression?.suppressed) return "suppressed_state";
   if (companyRow?.below_threshold === 1) return "below_turnover_threshold";
@@ -2450,6 +2494,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
       const sourceFamily = deriveShortlistSourceFamily(sourceType);
       const filterReason = deriveShortlistFilterReason(c, supp, analysis_status, sourceType);
+      const statusSignals = getStatusSignalSnapshot(c.company_number);
 
       return {
         id: `ch-${c.company_number}`,
@@ -2486,6 +2531,13 @@ app.get("/api/unified-shortlist", (req, res) => {
         score_interval_high: priority.score_interval_high,
         volatility_band: priority.volatility_band,
         priority_reason: priority.reason,
+        status_health_band: statusSignals.status_health_band,
+        status_incident_severity_score: statusSignals.status_incident_severity_score,
+        status_incident_recency_multiplier: statusSignals.status_incident_recency_multiplier,
+        status_recent_incident_age_days: statusSignals.status_recent_incident_age_days,
+        status_incidents_open: statusSignals.status_incidents_open,
+        status_major_incidents_open: statusSignals.status_major_incidents_open,
+        status_degraded_components: statusSignals.status_degraded_components,
       };
     })
     .filter((entry) => {
@@ -2639,6 +2691,7 @@ app.get("/api/company/:id", async (req, res) => {
         turnover: monitored.latest_turnover,
         industry: titleCase(score?.industries?.[0]),
       };
+      const reputationSignals = getStatusSignalSnapshot(companyNumber);
       const { stakeholders, assessment } = getProfileStakeholders(profileId, analysis, score, monitorCompany);
       const competitors = getProfileCompetitors(profileId, analysis, score);
       const cadenceHistory = getCadenceLog(profileId);
@@ -2682,6 +2735,7 @@ app.get("/api/company/:id", async (req, res) => {
           analysis,
           analysis_status: analysisStatus,
           analysis_queue_status: detailQueue?.status || null,
+          reputation_signals: reputationSignals,
           competitors,
           stakeholders,
           cadence_history: cadenceHistory,
@@ -2705,6 +2759,7 @@ app.get("/api/company/:id", async (req, res) => {
   const profile = computeCompanyProfile(company);
   const rawAnalysis = getSetting(`analysis_${company.company_number}`, null);
   const storedScore = getStoredScore(company.company_number) || scoreCompany(company.company_number);
+  const reputationSignals = getStatusSignalSnapshot(company.company_number);
   const analysis = enrichAnalysisWithCompetitorSignals(rawAnalysis, storedScore);
   const competitors = getProfileCompetitors(company.id, analysis, storedScore);
   const analysisStatus = analysis ? "ready" : "none";
@@ -2737,6 +2792,7 @@ app.get("/api/company/:id", async (req, res) => {
         notes: getSetting(`notes_${company.id}`, ""),
         analysis,
         analysis_status: analysisStatus,
+        reputation_signals: reputationSignals,
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -2772,6 +2828,7 @@ app.get("/api/company/:id", async (req, res) => {
         notes: getSetting(`notes_${company.id}`, ""),
         analysis,
         analysis_status: analysisStatus,
+        reputation_signals: reputationSignals,
       },
     });
   }
@@ -4499,6 +4556,7 @@ app.get("/api/integrations/status", (_req, res) => {
   const hasTemplate = (value) => String(value || "").trim().length > 0;
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
+  const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
 
   const integrations = {
     companies_house: {
@@ -4527,6 +4585,48 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "NEWS_API_KEY",
       purpose: "Optional premium news enrichment",
     },
+    statuspage: {
+      configured: hasTemplate(process.env.STATUSPAGE_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUSPAGE_URL_TEMPLATE",
+      purpose: "Free Statuspage-compatible incident and uptime enrichment",
+      can_auto_discover: true,
+    },
+    status_feed: {
+      configured: hasTemplate(process.env.STATUS_FEED_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_FEED_URL_TEMPLATE",
+      purpose: "Free RSS/Atom status feed incident enrichment",
+      can_auto_discover: true,
+    },
+    status_api: {
+      configured: hasTemplate(process.env.STATUS_API_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_API_URL_TEMPLATE",
+      purpose: "Free JSON status API incident enrichment",
+      can_auto_discover: true,
+    },
+    status_instatus: {
+      configured: hasTemplate(process.env.STATUS_INSTATUS_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_INSTATUS_URL_TEMPLATE",
+      purpose: "Free Instatus-style summary JSON enrichment",
+      can_auto_discover: true,
+    },
+    status_cachet: {
+      configured: hasTemplate(process.env.STATUS_CACHET_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_CACHET_URL_TEMPLATE",
+      purpose: "Free Cachet-style incidents API enrichment",
+      can_auto_discover: true,
+    },
+    status_url_discovery: {
+      configured: statusUrlDiscoveryEnabled,
+      required: false,
+      env_var: "ENABLE_STATUS_URL_DISCOVERY",
+      purpose: "Try common status URL patterns before connector sync",
+      default: "false",
+    },
     endole: {
       configured: hasConfiguredSecret(process.env.ENDOLE_API_KEY) && hasTemplate(process.env.ENDOLE_URL_TEMPLATE),
       required: false,
@@ -4534,9 +4634,9 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Ownership and corporate relationship enrichment",
     },
     opencorporates: {
-      configured: hasConfiguredSecret(process.env.OPENCORPORATES_API_TOKEN) && hasTemplate(process.env.OPENCORPORATES_URL_TEMPLATE),
+      configured: hasTemplate(process.env.OPENCORPORATES_URL_TEMPLATE),
       required: false,
-      env_var: "OPENCORPORATES_API_TOKEN, OPENCORPORATES_URL_TEMPLATE",
+      env_var: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
       purpose: "Cross-jurisdiction corporate registry enrichment",
     },
     similarweb: {
@@ -4614,6 +4714,12 @@ app.get("/api/integrations/status", (_req, res) => {
       "LUSHA_API_KEY=optional_lusha_key",
       "ENABLE_NEWS_LOOKUP=true",
       "NEWS_API_KEY=optional_newsapi_key",
+      "ENABLE_STATUS_URL_DISCOVERY=false",
+      "STATUSPAGE_URL_TEMPLATE=https://status.{company_domain}/api/v2/summary.json",
+      "STATUS_FEED_URL_TEMPLATE=https://status.{company_domain}/history.rss",
+      "STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents",
+      "STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json",
+      "STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents",
       "ENDOLE_API_KEY=optional_endole_key",
       "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
       "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
@@ -4660,6 +4766,10 @@ app.post("/api/signals/sync/:number", async (req, res) => {
       companyName,
       companyDomain,
       timeoutMs: req.body?.timeout_ms,
+      enableStatusDiscovery: parseBooleanInput(
+        req.body?.discover_status_urls,
+        (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true"
+      ),
     });
 
     if (!sync.updated && sync.status !== "no_connectors_configured") {
@@ -4689,8 +4799,10 @@ app.get("/api/integrations/status", (_req, res) => {
       || lower === "change_me";
     return !looksPlaceholder;
   };
+  const hasTemplate = (value) => String(value || "").trim().length > 0;
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
+  const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
 
   const integrations = {
     companies_house: {
@@ -4718,6 +4830,54 @@ app.get("/api/integrations/status", (_req, res) => {
       required: false,
       env_var: "NEWS_API_KEY",
       purpose: "Optional premium news enrichment",
+    },
+    statuspage: {
+      configured: hasTemplate(process.env.STATUSPAGE_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUSPAGE_URL_TEMPLATE",
+      purpose: "Free Statuspage-compatible incident and uptime enrichment",
+      can_auto_discover: true,
+    },
+    status_feed: {
+      configured: hasTemplate(process.env.STATUS_FEED_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_FEED_URL_TEMPLATE",
+      purpose: "Free RSS/Atom status feed incident enrichment",
+      can_auto_discover: true,
+    },
+    status_api: {
+      configured: hasTemplate(process.env.STATUS_API_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_API_URL_TEMPLATE",
+      purpose: "Free JSON status API incident enrichment",
+      can_auto_discover: true,
+    },
+    status_instatus: {
+      configured: hasTemplate(process.env.STATUS_INSTATUS_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_INSTATUS_URL_TEMPLATE",
+      purpose: "Free Instatus-style summary JSON enrichment",
+      can_auto_discover: true,
+    },
+    status_cachet: {
+      configured: hasTemplate(process.env.STATUS_CACHET_URL_TEMPLATE),
+      required: false,
+      env_var: "STATUS_CACHET_URL_TEMPLATE",
+      purpose: "Free Cachet-style incidents API enrichment",
+      can_auto_discover: true,
+    },
+    status_url_discovery: {
+      configured: statusUrlDiscoveryEnabled,
+      required: false,
+      env_var: "ENABLE_STATUS_URL_DISCOVERY",
+      purpose: "Try common status URL patterns before connector sync",
+      default: "false",
+    },
+    opencorporates: {
+      configured: hasTemplate(process.env.OPENCORPORATES_URL_TEMPLATE),
+      required: false,
+      env_var: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
+      purpose: "Cross-jurisdiction corporate registry enrichment",
     },
     lusha: {
       configured: hasConfiguredSecret(process.env.LUSHA_API_KEY),
@@ -4749,6 +4909,14 @@ app.get("/api/integrations/status", (_req, res) => {
       "LUSHA_API_KEY=optional_lusha_key",
       "ENABLE_NEWS_LOOKUP=true",
       "NEWS_API_KEY=optional_newsapi_key",
+      "ENABLE_STATUS_URL_DISCOVERY=false",
+      "STATUSPAGE_URL_TEMPLATE=https://status.{company_domain}/api/v2/summary.json",
+      "STATUS_FEED_URL_TEMPLATE=https://status.{company_domain}/history.rss",
+      "STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents",
+      "STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json",
+      "STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents",
+      "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
+      "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
     ],
   });
 });
@@ -4808,6 +4976,10 @@ app.post("/api/llm/analyse", async (req, res) => {
         companyName: name,
         companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
         timeoutMs: req.body?.external_signal_timeout_ms,
+        enableStatusDiscovery: parseBooleanInput(
+          req.body?.discover_status_urls,
+          (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true"
+        ),
       });
     }
 

@@ -1,0 +1,34 @@
+{
+  "name": "Status API Example",
+  "url": "https://status.native-status-api.co.uk",
+  "incidents": [
+    {
+      "title": "Payment processing outage",
+      "status": "investigating",
+      "description": "Card payment and checkout flows are failing for some merchants.",
+      "severity": "major"
+    },
+    {
+      "title": "Checkout latency",
+      "status": "identified",
+      "description": "Hosted checkout pages are responding slowly.",
+      "severity": "minor"
+    },
+    {
+      "title": "Issue resolved",
+      "status": "resolved",
+      "description": "Payment and checkout services restored.",
+      "severity": "minor"
+    }
+  ],
+  "components": [
+    {
+      "name": "Card Processing",
+      "status": "degraded"
+    },
+    {
+      "name": "Public API",
+      "status": "operational"
+    }
+  ]
+}

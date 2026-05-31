@@ -9,6 +9,11 @@ Defines expected provider payload shapes and how fields map into runtime envelop
 - API route: POST /api/signals/sync/:number
 - Runtime writer: mock-backend/signal-connectors.js
 
+Discovery option:
+
+- Request body flag discover_status_urls (or enable_status_discovery in internal sync calls)
+- Environment default override: ENABLE_STATUS_URL_DISCOVERY=false
+
 ## URL Template Placeholders
 
 Supported placeholders inside *_URL_TEMPLATE values:
@@ -69,6 +74,23 @@ Common normalized outputs:
 - trustpilot_review_count
 - payment_related_complaints
 - checkout_related_complaints
+- status_incidents_total
+- status_incidents_open
+- status_major_incidents_open
+- status_degraded_components
+- status_incident_weighted_open
+- status_incident_severity_score
+- status_health_band
+- status_recent_incident_at
+- status_recent_open_incident_at
+- status_recent_incident_age_days
+- status_incident_recency_multiplier
+
+Status severity normalization notes:
+
+- status_incident_severity_score is recency-adjusted so stale incidents decay over time.
+- status_incident_recency_multiplier ranges 0..1 and is applied to weighted open-incident severity before health band assignment.
+- status_recent_open_incident_at is preferred for recency decay when present; otherwise latest incident timestamp is used.
 
 ### marketing_intelligence_{company_number}
 
@@ -112,6 +134,11 @@ Primary envelope targets:
 - ownership, hiring_signals, reputation, marketing_intelligence, tech_stack
 
 ### OpenCorporates
+
+Configuration note:
+
+- OPENCORPORATES_URL_TEMPLATE is required
+- OPENCORPORATES_API_TOKEN is optional (used when provided)
 
 Expected source structures accepted:
 
@@ -182,6 +209,67 @@ Primary envelope targets:
 
 - tech_stack, hiring_signals, marketing_intelligence
 
+### Statuspage (free, Statuspage-compatible)
+
+Expected source structures accepted:
+
+- incidents[] (name/title, status, impact, incident_updates[])
+- components[] (name, status)
+- page.name / page.url
+
+Primary envelope targets:
+
+- reputation
+
+### Status Feed (free, RSS/Atom)
+
+Expected source structures accepted:
+
+- RSS item title/description/pubDate/link
+- Atom entry title/summary/content/updated/link
+- Optional feed title/link metadata
+
+Primary envelope targets:
+
+- reputation
+
+### Status API (free, JSON)
+
+Expected source structures accepted:
+
+- incidents[] / events[] / issues[] / outages[]
+- components[] / services[] / systems[]
+- Optional top-level status metadata (name/title/url)
+
+Primary envelope targets:
+
+- reputation
+
+### Status Instatus (free, summary JSON)
+
+Expected source structures accepted:
+
+- activeIncidents[] / active_incidents[]
+- incidents[] (fallback)
+- components[] / page.components[]
+- page.name / page.url (or top-level name/url)
+
+Primary envelope targets:
+
+- reputation
+
+### Status Cachet (free, incidents API)
+
+Expected source structures accepted:
+
+- data[] incident rows from /api/v1/incidents
+- incidents[] fallback
+- incident fields such as name/title/message, human_status/status_name/status
+
+Primary envelope targets:
+
+- reputation
+
 ## Merge and Precedence Rules
 
 - Source-native parse runs first.
@@ -206,3 +294,8 @@ Fixture payloads for contract verification:
 - mock-backend/__tests__/fixtures/signal-connectors/adzuna.json
 - mock-backend/__tests__/fixtures/signal-connectors/crunchbase.json
 - mock-backend/__tests__/fixtures/signal-connectors/clearbit.json
+- mock-backend/__tests__/fixtures/signal-connectors/statuspage.json
+- mock-backend/__tests__/fixtures/signal-connectors/status-feed.json
+- mock-backend/__tests__/fixtures/signal-connectors/status-api.json
+- mock-backend/__tests__/fixtures/signal-connectors/status-instatus.json
+- mock-backend/__tests__/fixtures/signal-connectors/status-cachet.json

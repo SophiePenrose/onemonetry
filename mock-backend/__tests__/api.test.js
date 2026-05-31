@@ -161,6 +161,61 @@ describe("API endpoints", () => {
         assert.ok(data.companies[i - 1].combined_score >= data.companies[i].combined_score);
       }
     });
+
+    it("includes status health snapshot fields for shortlist rendering", async () => {
+      const { status, data } = await fetchJSON("/api/unified-shortlist");
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(data.companies));
+      if (data.companies.length === 0) {
+        return;
+      }
+
+      const row = data.companies[0];
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_health_band"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_incident_severity_score"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_incident_recency_multiplier"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_recent_incident_age_days"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_incidents_open"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_major_incidents_open"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "status_degraded_components"), true);
+      assert.ok(["low", "medium", "high", null].includes(row.status_health_band));
+    });
+  });
+
+  describe("GET /api/company/:id", () => {
+    it("returns a reputation_signals status snapshot for evidence UI", async () => {
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Status Snapshot Contract Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 25000000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const companyId = created.data.company?.id;
+      assert.ok(companyId);
+
+      const { status, data } = await fetchJSON(`/api/company/${companyId}`);
+
+      assert.equal(status, 200);
+      assert.equal(typeof data.company?.reputation_signals, "object");
+
+      const signals = data.company.reputation_signals;
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_health_band"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_incident_severity_score"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_incident_recency_multiplier"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_recent_incident_age_days"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_recent_incident_at"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(signals, "status_recent_open_incident_at"), true);
+      assert.equal(typeof signals.status_incidents_open, "number");
+      assert.equal(typeof signals.status_major_incidents_open, "number");
+      assert.equal(typeof signals.status_degraded_components, "number");
+      assert.ok(["low", "medium", "high", null].includes(signals.status_health_band));
+    });
   });
 
   describe("GET /api/unified-shortlist/distribution", () => {
@@ -206,10 +261,18 @@ describe("API endpoints", () => {
       assert.equal(status, 200);
       assert.equal(typeof data.integrations.tech_enrichment, "object");
       assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
+      assert.equal(typeof data.integrations.status_api, "object");
+      assert.equal(typeof data.integrations.status_instatus, "object");
+      assert.equal(typeof data.integrations.status_cachet, "object");
+      assert.equal(typeof data.integrations.status_url_discovery, "object");
       assert.equal(typeof data.integrations.tech_enrichment.defaults?.deep_scan_mode, "string");
       assert.ok(Array.isArray(data.env_template));
       assert.ok(data.env_template.includes("TECH_ENRICHMENT_DEEP_SCAN_MODE=auto"));
       assert.ok(data.env_template.includes("TECH_ENRICHMENT_SEED_ENABLED=true"));
+      assert.ok(data.env_template.includes("ENABLE_STATUS_URL_DISCOVERY=false"));
+      assert.ok(data.env_template.includes("STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
+      assert.ok(data.env_template.includes("STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json"));
+      assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
     });
   });
 
