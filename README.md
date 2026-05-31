@@ -29,6 +29,41 @@ The current design focuses on:
 - competitor context,
 - and segment-aware logic with a Mid-Market emphasis.
 
+## Continuous integration
+
+Every pull request and every push to `main` runs the CI workflow
+(`.github/workflows/ci.yml`) on Node 22:
+
+| Job | Working dir | Commands |
+|-----|-------------|----------|
+| `Backend (mock-backend tests)` | `mock-backend/` | `npm ci` then `npm test` (`node --test`, 85 tests) |
+| `Frontend (build + tests)` | `frontend/` | `npm ci`, `npm run build` (`vite build`), then `npm test` (`vitest run`) |
+
+Run the same checks locally before pushing:
+
+```bash
+# backend tests
+(cd mock-backend && npm ci && npm test)
+
+# frontend build + tests
+(cd frontend && npm ci && npm run build && npm test)
+```
+
+### Make CI a required merge gate (recommended)
+
+CI is currently advisory — a red run does not block merging. To turn it into a
+hard gate, enable branch protection on `main`
+(**Settings → Branches → Add branch protection rule / ruleset**) and:
+
+1. **Require status checks to pass before merging**, then select both checks:
+   - `Backend (mock-backend tests)`
+   - `Frontend (build + tests)`
+2. **Require branches to be up to date before merging** (so checks run against the latest `main`).
+3. *(Optional)* **Require a pull request before merging** with at least one approving review.
+
+The check names above must match exactly; they are the `name:` values of the two
+jobs in `.github/workflows/ci.yml`.
+
 ## Notes
 
 This is a design and specification repository, not the final application itself. The files here are intended to support implementation in GitHub and Copilot.
