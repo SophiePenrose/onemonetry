@@ -897,6 +897,11 @@ export function getSequence(sequenceId) {
   };
 }
 
+function touchSequence(sequenceId) {
+  if (!sequenceId) return;
+  db.prepare("UPDATE email_sequences SET updated_at = datetime('now') WHERE id = ?").run(sequenceId);
+}
+
 export function updateStepStatus(sequenceId, stepNumber, status) {
   const updates = { status };
   if (status === "sent") updates.sent_at = new Date().toISOString();
@@ -906,6 +911,7 @@ export function updateStepStatus(sequenceId, stepNumber, status) {
   const sets = Object.entries(updates).map(([k]) => `${k} = ?`);
   const vals = Object.values(updates);
   db.prepare(`UPDATE email_steps SET ${sets.join(", ")} WHERE sequence_id = ? AND step_number = ?`).run(...vals, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 export function updateStepContent(sequenceId, stepNumber, subject, body) {
@@ -926,6 +932,7 @@ export function updateStepContent(sequenceId, stepNumber, subject, body) {
         voice_percent = NULL
     WHERE sequence_id = ? AND step_number = ?
   `).run(subject, body, editedAt, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 function safeJsonParse(raw, fallback) {
@@ -945,6 +952,7 @@ export function markStepReviewed(sequenceId, stepNumber) {
         reviewed_at = ?
     WHERE sequence_id = ? AND step_number = ?
   `).run(reviewedAt, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 export function deleteSequence(sequenceId) {
