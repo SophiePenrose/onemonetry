@@ -1,3 +1,4 @@
+// CI trigger: regression guard that CSV-imported companies land in company_monitor.
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
