@@ -209,6 +209,21 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_email_audit_sequence_id ON email_audit_log(sequence_id);
   CREATE INDEX IF NOT EXISTS idx_email_audit_company_id ON email_audit_log(company_id);
+
+  CREATE TABLE IF NOT EXISTS suppression_list (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    value_normalized TEXT NOT NULL,
+    reason TEXT,
+    source TEXT,
+    company_name TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_type_value ON suppression_list(type, value_normalized);
+  CREATE INDEX IF NOT EXISTS idx_suppression_type ON suppression_list(type);
 `);
 
 function ensureAnalysisQueueSchema() {
@@ -560,6 +575,123 @@ export function getEmailAuditLog(filters = {}) {
     ${whereSql}
     ORDER BY datetime(audited_at) DESC, id DESC
   `).all(...params);
+}
+
+function sanitizeSuppressionType(type) {
+  const normalizedType = String(type || "").trim().toLowerCase();
+  if (normalizedType === "email" || normalizedType === "company_number" || normalizedType === "domain") {
+    return normalizedType;
+  }
+  return null;
+}
+
+function normalizeSuppressionValue(type, value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  if (type === "email") return raw.toLowerCase();
+  if (type === "company_number") return normalizeCompanyNumber(raw);
+  if (type === "domain") return raw.toLowerCase().replace(/^www\./, "");
+  return null;
+}
+
+function sanitizeNullableText(value) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+const stmtUpsertSuppression = db.prepare(`
+  INSERT INTO suppression_list (type, value, value_normalized, reason, source, company_name, notes)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(type, value_normalized) DO UPDATE SET
+    reason = excluded.reason,
+    source = excluded.source,
+    company_name = excluded.company_name,
+    notes = excluded.notes
+`);
+
+const stmtGetSuppressionByTypeValue = db.prepare(`
+  SELECT *
+  FROM suppression_list
+  WHERE type = ? AND value_normalized = ?
+  LIMIT 1
+`);
+
+export function addSuppression({ type, value, reason, source, company_name, notes } = {}) {
+  const normalizedType = sanitizeSuppressionType(type);
+  const rawValue = String(value || "").trim();
+  if (!normalizedType || !rawValue) return null;
+
+  const normalizedValue = normalizeSuppressionValue(normalizedType, rawValue);
+  if (!normalizedValue) return null;
+
+  stmtUpsertSuppression.run(
+    normalizedType,
+    rawValue,
+    normalizedValue,
+    sanitizeNullableText(reason),
+    sanitizeNullableText(source),
+    sanitizeNullableText(company_name),
+    sanitizeNullableText(notes)
+  );
+
+  return stmtGetSuppressionByTypeValue.get(normalizedType, normalizedValue) || null;
+}
+
+export function removeSuppression(id) {
+  const parsedId = Number.parseInt(String(id), 10);
+  if (!Number.isFinite(parsedId)) return 0;
+  return db.prepare("DELETE FROM suppression_list WHERE id = ?").run(parsedId).changes;
+}
+
+export function listSuppressions({ type, limit = 500, offset = 0 } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number.parseInt(String(limit), 10) || 500, 5000));
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+  const normalizedType = sanitizeSuppressionType(type);
+  if (type && !normalizedType) return [];
+
+  if (normalizedType) {
+    return db.prepare(`
+      SELECT *
+      FROM suppression_list
+      WHERE type = ?
+      ORDER BY datetime(created_at) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(normalizedType, safeLimit, safeOffset);
+  }
+
+  return db.prepare(`
+    SELECT *
+    FROM suppression_list
+    ORDER BY datetime(created_at) DESC, id DESC
+    LIMIT ? OFFSET ?
+  `).all(safeLimit, safeOffset);
+}
+
+export function getSuppressionCount() {
+  return db.prepare("SELECT COUNT(*) AS count FROM suppression_list").get().count;
+}
+
+export function isContactSuppressed({ company_number, email, domain } = {}) {
+  const normalizedEmail = normalizeSuppressionValue("email", email);
+  if (normalizedEmail) {
+    const match = stmtGetSuppressionByTypeValue.get("email", normalizedEmail);
+    if (match) return match;
+  }
+
+  const normalizedCompanyNumber = normalizeSuppressionValue("company_number", company_number);
+  if (normalizedCompanyNumber) {
+    const match = stmtGetSuppressionByTypeValue.get("company_number", normalizedCompanyNumber);
+    if (match) return match;
+  }
+
+  const normalizedDomain = normalizeSuppressionValue("domain", domain);
+  if (normalizedDomain) {
+    const match = stmtGetSuppressionByTypeValue.get("domain", normalizedDomain);
+    if (match) return match;
+  }
+
+  return null;
 }
 
 // --- Settings ---

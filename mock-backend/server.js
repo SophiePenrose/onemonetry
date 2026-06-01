@@ -22,6 +22,11 @@ import {
   getImportLogs,
   recordEmailAudit,
   getEmailAuditLog,
+  addSuppression,
+  removeSuppression,
+  listSuppressions,
+  getSuppressionCount,
+  isContactSuppressed,
 } from "./db.js";
 import {
   isCompaniesHouseConfigured,
@@ -1585,6 +1590,81 @@ function parseClosedWonRowsFromCsv(csvContent) {
       company_number: normalizedNumber,
       company_name: String(candidateName || "").trim() || null,
     });
+  }
+
+  return rows;
+}
+
+function parseSuppressionRowsFromCsv(csvContent) {
+  const text = String(csvContent || "").replace(/\r/g, "").trim();
+  if (!text) return [];
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const rows = [];
+  const seen = new Set();
+
+  for (const line of lines) {
+    const cells = parseCsvRow(line)
+      .map((cell) => String(cell || "").trim())
+      .filter(Boolean);
+    if (cells.length === 0) continue;
+
+    const tokenCandidates = [...cells];
+    for (const cell of cells) {
+      if (!cell.includes(",")) continue;
+      tokenCandidates.push(...cell.split(",").map((part) => part.trim()).filter(Boolean));
+    }
+
+    const tokens = [];
+    const tokenSeen = new Set();
+    for (const token of tokenCandidates) {
+      const normalizedToken = String(token || "").trim();
+      if (!normalizedToken || tokenSeen.has(normalizedToken)) continue;
+      tokenSeen.add(normalizedToken);
+      tokens.push(normalizedToken);
+    }
+
+    const emailTokens = tokens.filter((token) => emailPattern.test(token));
+    const companyNumberTokens = tokens.filter((token) => !!normalizeCompanyNumber(token));
+    if (emailTokens.length === 0 && companyNumberTokens.length === 0) continue;
+
+    const textTokens = tokens.filter((token) => {
+      if (token.includes(",")) return false;
+      if (emailPattern.test(token)) return false;
+      if (normalizeCompanyNumber(token)) return false;
+      return true;
+    });
+    const companyName = textTokens.join(" ").trim() || null;
+
+    for (const emailToken of emailTokens) {
+      const normalizedEmail = emailToken.toLowerCase();
+      const key = `email:${normalizedEmail}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        type: "email",
+        value: emailToken,
+        value_normalized: normalizedEmail,
+        company_name: textTokens[0] || null,
+      });
+    }
+
+    for (const companyNumberToken of companyNumberTokens) {
+      const normalizedCompanyNumber = normalizeCompanyNumber(companyNumberToken);
+      if (!normalizedCompanyNumber) continue;
+      const key = `company_number:${normalizedCompanyNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        type: "company_number",
+        value: companyNumberToken,
+        value_normalized: normalizedCompanyNumber,
+        company_name: companyName,
+      });
+    }
   }
 
   return rows;
@@ -6030,7 +6110,16 @@ function deriveValidationResults(step, subject, body) {
   };
 }
 
-function recordAuditForExportRows(rows, sequencesById, exportFormat) {
+function resolveSequenceSuppression(sequence) {
+  const companyNumber = normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(sequence?.company_id)));
+  const email = String(sequence?.stakeholder_email || "").trim() || null;
+  return isContactSuppressed({
+    company_number: companyNumber,
+    email,
+  });
+}
+
+function recordAuditForExportRows(rows, sequencesById, exportFormat, suppressionBySequenceId = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return;
 
   const exportedAt = new Date().toISOString();
@@ -6047,6 +6136,12 @@ function recordAuditForExportRows(rows, sequencesById, exportFormat) {
     const body = step.body || row.body || "";
     const validationResults = deriveValidationResults(step, subject, body);
     const consentStatus = buildConsentStatus(row.body || body);
+    const suppression = suppressionBySequenceId?.[sequence.id] || suppressionBySequenceId?.[row.sequence_id] || null;
+    if (suppression) {
+      consentStatus.suppressed = true;
+      consentStatus.suppression_reason = suppression.reason || null;
+      consentStatus.suppression_source = suppression.source || null;
+    }
     const claims = extractClaimsFromBody(row.body || body);
 
     recordEmailAudit({
@@ -6082,6 +6177,93 @@ function parseAuditJson(value, fallback) {
   }
 }
 
+function resolveSuppressionTypeAndValue(payload = {}) {
+  const directType = String(payload.type || "").trim().toLowerCase();
+  const directValue = String(payload.value || "").trim();
+  if (directType && directValue) {
+    return { type: directType, value: directValue };
+  }
+  if (String(payload.email || "").trim()) {
+    return { type: "email", value: String(payload.email).trim() };
+  }
+  if (String(payload.company_number || "").trim()) {
+    return { type: "company_number", value: String(payload.company_number).trim() };
+  }
+  if (String(payload.domain || "").trim()) {
+    return { type: "domain", value: String(payload.domain).trim() };
+  }
+  return null;
+}
+
+app.get("/api/suppression", (req, res) => {
+  const type = req.query.type ? String(req.query.type).trim() : undefined;
+  return res.json({
+    total: getSuppressionCount(),
+    suppressions: listSuppressions({ type }),
+  });
+});
+
+app.post("/api/suppression", (req, res) => {
+  const resolved = resolveSuppressionTypeAndValue(req.body || {});
+  if (!resolved) return res.status(400).json({ error: "No valid suppression type/value provided" });
+
+  const row = addSuppression({
+    type: resolved.type,
+    value: resolved.value,
+    reason: req.body?.reason || "manual",
+    source: req.body?.source || "manual_flag",
+    company_name: req.body?.company_name,
+    notes: req.body?.notes,
+  });
+  if (!row) return res.status(400).json({ error: "No valid suppression type/value provided" });
+
+  return res.json({ added: row });
+});
+
+app.post("/api/suppression/upload", (req, res) => {
+  const csvContent = String(req.body?.csv_content || "");
+  if (!csvContent.trim()) {
+    return res.status(400).json({ error: "csv_content is required" });
+  }
+
+  const parsedRows = parseSuppressionRowsFromCsv(csvContent);
+  if (parsedRows.length === 0) {
+    return res.status(400).json({ error: "No valid suppression rows found" });
+  }
+
+  let stored = 0;
+  const types = { email: 0, company_number: 0 };
+
+  for (const row of parsedRows) {
+    const saved = addSuppression({
+      type: row.type,
+      value: row.value,
+      reason: req.body?.reason || "opt_out",
+      source: req.body?.source || "csv_upload",
+      company_name: row.company_name,
+    });
+    if (!saved) continue;
+    stored += 1;
+    if (saved.type === "email") types.email += 1;
+    if (saved.type === "company_number") types.company_number += 1;
+  }
+
+  if (stored === 0) {
+    return res.status(400).json({ error: "No valid suppression rows found" });
+  }
+
+  return res.json({
+    received: parsedRows.length,
+    stored,
+    skipped_invalid: parsedRows.length - stored,
+    types,
+  });
+});
+
+app.delete("/api/suppression/:id", (req, res) => {
+  return res.json({ removed: removeSuppression(req.params.id) });
+});
+
 app.get("/api/email/export/csv/:sequenceId", (req, res) => {
   const exported = exportSequenceForYAMM(req.params.sequenceId, {
     startDate: req.query.start_date,
@@ -6100,8 +6282,22 @@ app.get("/api/email/export/csv/:sequenceId", (req, res) => {
   try {
     const sequence = getSequence(req.params.sequenceId);
     const sequencesById = new Map();
-    if (sequence?.id) sequencesById.set(sequence.id, sequence);
-    recordAuditForExportRows(exported.rows, sequencesById, "csv");
+    const suppressionBySequenceId = {};
+    if (sequence?.id) {
+      sequencesById.set(sequence.id, sequence);
+      const suppression = resolveSequenceSuppression(sequence);
+      if (suppression) {
+        suppressionBySequenceId[sequence.id] = suppression;
+      }
+    }
+    recordAuditForExportRows(exported.rows, sequencesById, "csv", suppressionBySequenceId);
+    if (sequence?.id && suppressionBySequenceId[sequence.id]) {
+      const csv = generateCSV([]);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="sequence-${req.params.sequenceId}.csv"`);
+      res.setHeader("X-Suppressed", "true");
+      return res.send(csv);
+    }
   } catch (err) {
     console.warn("[email-audit] Unable to record CSV export audit", err?.message || err);
   }
@@ -6127,13 +6323,40 @@ app.get("/api/email/export/json/:sequenceId", (req, res) => {
     });
   }
 
+  let suppressionForSequence = null;
+  let suppressedRecipient = null;
   try {
     const sequence = getSequence(req.params.sequenceId);
     const sequencesById = new Map();
-    if (sequence?.id) sequencesById.set(sequence.id, sequence);
-    recordAuditForExportRows(exported.rows, sequencesById, "json");
+    const suppressionBySequenceId = {};
+    if (sequence?.id) {
+      sequencesById.set(sequence.id, sequence);
+      suppressionForSequence = resolveSequenceSuppression(sequence);
+      if (suppressionForSequence) {
+        suppressionBySequenceId[sequence.id] = suppressionForSequence;
+      }
+      suppressedRecipient = {
+        company_number: normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(sequence.company_id))),
+        email: String(sequence.stakeholder_email || "").trim() || null,
+      };
+    }
+    recordAuditForExportRows(exported.rows, sequencesById, "json", suppressionBySequenceId);
   } catch (err) {
     console.warn("[email-audit] Unable to record JSON export audit", err?.message || err);
+  }
+
+  if (suppressionForSequence) {
+    return res.json({
+      metadata: {
+        ...exported.metadata,
+        suppressed: true,
+        suppression_reason: suppressionForSequence.reason || null,
+        suppression_source: suppressionForSequence.source || null,
+        suppressed_recipient: suppressedRecipient || { company_number: null, email: null },
+      },
+      sheets_data: [],
+      raw_rows: [],
+    });
   }
 
   res.json({
@@ -6150,12 +6373,44 @@ app.get("/api/email/export/company/:companyId", (req, res) => {
     title: req.query.title || "Account Executive",
     sendTime: req.query.send_time || "08:37",
   });
+  if (!exported) return res.status(404).json({ error: "No sequences found" });
   const rows = exported.rows || [];
 
   try {
     const sequences = getSequencesForCompany(req.params.companyId) || [];
     const sequencesById = new Map(sequences.map((seq) => [seq.id, seq]));
-    recordAuditForExportRows(rows, sequencesById, req.query.format === "csv" ? "csv" : "json");
+    const suppressionBySequenceId = {};
+    for (const sequence of sequences) {
+      const suppression = resolveSequenceSuppression(sequence);
+      if (suppression) suppressionBySequenceId[sequence.id] = suppression;
+    }
+    recordAuditForExportRows(rows, sequencesById, req.query.format === "csv" ? "csv" : "json", suppressionBySequenceId);
+
+    const keptRows = rows.filter((row) => !suppressionBySequenceId[row.sequence_id]);
+    const suppressedRecipients = Object.entries(suppressionBySequenceId).map(([sequenceId, suppression]) => {
+      const sequence = sequencesById.get(sequenceId) || {};
+      return {
+        sequence_id: sequenceId,
+        company_number: normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(sequence.company_id))),
+        email: String(sequence.stakeholder_email || "").trim() || null,
+        reason: suppression.reason || null,
+      };
+    });
+
+    if (req.query.format === "csv") {
+      const csv = generateCSV(keptRows);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="company-${req.params.companyId}-sequences.csv"`);
+      return res.send(csv);
+    }
+
+    return res.json({
+      total_emails: keptRows.length,
+      needs_email: keptRows.filter((r) => r.needs_email).length,
+      blocked_sequences: exported.blocked_sequences || [],
+      sheets_data: generateGoogleSheetsJSON(keptRows),
+      suppressed_recipients: suppressedRecipients,
+    });
   } catch (err) {
     console.warn("[email-audit] Unable to record company export audit", err?.message || err);
   }
