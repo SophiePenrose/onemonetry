@@ -28,6 +28,7 @@ import {
   lookupCompanyOwnership,
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
+  fetchLatestAccountsDocument,
 } from "./companies-house.js";
 import { getMonthlyZipURLs, getDailyZipURLs } from "./bulk-processor.js";
 import { getDailyAutoPullPlan } from "./daily-autopull-planner.js";
@@ -76,6 +77,7 @@ import {
   getMonitoredCompanies as dbGetMonitoredCompanies,
   getFilingsForCompany,
   getFilingCount,
+  upsertFiling,
   getMonitoredCompanyCount,
   getShortlistCompanies,
   getShortlistCount,
@@ -3645,6 +3647,30 @@ async function processCSVImport(jobId, companyNumbers) {
             status: "active",
             source: "csv_import",
           });
+          try {
+            const doc = await fetchLatestAccountsDocument(num);
+            if (doc?.raw_data) {
+              upsertFiling({
+                company_number: num,
+                filing_date: doc.filing_date,
+                description: doc.description,
+                filing_type: "accounts",
+                barcode: doc.barcode,
+                turnover: doc.turnover,
+                source: "csv_import",
+                raw_data: doc.raw_data,
+              });
+              if (doc.turnover && !newCompany.turnover) {
+                upsertMonitoredCompany({
+                  company_number: num,
+                  company_name: newCompany.name,
+                  latest_turnover: doc.turnover,
+                  status: "active",
+                  source: "csv_import",
+                });
+              }
+            }
+          } catch { /* best-effort: company already imported + monitored */ }
           existingNumbers.add(num);
           if (chData.charge_summary) {
             upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
