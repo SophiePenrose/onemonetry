@@ -182,6 +182,33 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_analysis_queue_status ON analysis_queue(status);
   CREATE INDEX IF NOT EXISTS idx_analysis_queue_queued_at ON analysis_queue(queued_at);
+
+  CREATE TABLE IF NOT EXISTS email_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audited_at TEXT DEFAULT (datetime('now')),
+    exported_at TEXT,
+    sequence_id TEXT,
+    company_id TEXT,
+    company_name TEXT,
+    stakeholder_name TEXT,
+    stakeholder_email TEXT,
+    ae_owner TEXT,
+    step_number INTEGER,
+    step_type TEXT,
+    subject TEXT,
+    body TEXT,
+    scheduled_date TEXT,
+    scheduled_time TEXT,
+    qc_score REAL,
+    voice_percent REAL,
+    validation_results_json TEXT,
+    claims_json TEXT,
+    consent_status_json TEXT,
+    export_format TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_email_audit_sequence_id ON email_audit_log(sequence_id);
+  CREATE INDEX IF NOT EXISTS idx_email_audit_company_id ON email_audit_log(company_id);
 `);
 
 function ensureAnalysisQueueSchema() {
@@ -460,6 +487,79 @@ export function addCadenceEntry(companyId, date, type, summary, outcome) {
   db.prepare(
     "INSERT INTO cadence_log (company_id, date, type, summary, outcome) VALUES (?, ?, ?, ?, ?)"
   ).run(companyId, date, type, summary, outcome || null);
+}
+
+// --- Email Audit Log ---
+
+const stmtRecordEmailAudit = db.prepare(`
+  INSERT INTO email_audit_log (
+    exported_at,
+    sequence_id,
+    company_id,
+    company_name,
+    stakeholder_name,
+    stakeholder_email,
+    ae_owner,
+    step_number,
+    step_type,
+    subject,
+    body,
+    scheduled_date,
+    scheduled_time,
+    qc_score,
+    voice_percent,
+    validation_results_json,
+    claims_json,
+    consent_status_json,
+    export_format
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+export function recordEmailAudit(record) {
+  stmtRecordEmailAudit.run(
+    record?.exported_at ?? null,
+    record?.sequence_id ?? null,
+    record?.company_id ?? null,
+    record?.company_name ?? null,
+    record?.stakeholder_name ?? null,
+    record?.stakeholder_email ?? null,
+    record?.ae_owner ?? null,
+    record?.step_number ?? null,
+    record?.step_type ?? null,
+    record?.subject ?? null,
+    record?.body ?? null,
+    record?.scheduled_date ?? null,
+    record?.scheduled_time ?? null,
+    record?.qc_score ?? null,
+    record?.voice_percent ?? null,
+    record?.validation_results_json ?? null,
+    record?.claims_json ?? null,
+    record?.consent_status_json ?? null,
+    record?.export_format ?? null
+  );
+}
+
+export function getEmailAuditLog(filters = {}) {
+  const where = [];
+  const params = [];
+
+  if (filters.sequence_id) {
+    where.push("sequence_id = ?");
+    params.push(filters.sequence_id);
+  }
+
+  if (filters.company_id) {
+    where.push("company_id = ?");
+    params.push(filters.company_id);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return db.prepare(`
+    SELECT *
+    FROM email_audit_log
+    ${whereSql}
+    ORDER BY datetime(audited_at) DESC, id DESC
+  `).all(...params);
 }
 
 // --- Settings ---
