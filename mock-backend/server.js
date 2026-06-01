@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import {
   getCompanyWorkflowState,
   setCompanyWorkflowState,
@@ -456,7 +456,7 @@ function filingFreshnessSignal(latestFilingDate) {
   return 0.2;
 }
 
-function computePriorityBreakdown(companyRow, score, analysisStatus) {
+export function computePriorityBreakdown(companyRow, score, analysisStatus, segment = "Mid-Market") {
   const turnover = Number(companyRow?.latest_turnover || 0);
   const productFit = clamp01(Number(score?.layers?.product_fit?.score || 0));
   const commercialValue = clamp01(Number(score?.layers?.commercial_value?.score || 0));
@@ -484,6 +484,23 @@ function computePriorityBreakdown(companyRow, score, analysisStatus) {
   const fitGate = productFit < 0.15 ? 0.35 : productFit < 0.25 ? 0.55 : productFit < 0.35 ? 0.8 : 1;
   const fitReliability = confidenceLevel === "low" ? 0.88 : confidenceLevel === "high" ? 1.0 : 0.95;
   fitScore = clamp01(fitScore * fitGate * fitReliability);
+  const segmentWeights = getWeightsForSegment(segment);
+  let segmentFitWeightedTotal = 0;
+  let segmentFitWeightSum = 0;
+  for (const layerName of LAYER_NAMES) {
+    const layerScore = Number(score?.layers?.[layerName]?.score);
+    const layerWeight = Number(segmentWeights?.[layerName]);
+    if (Number.isFinite(layerScore) && Number.isFinite(layerWeight) && layerWeight > 0) {
+      segmentFitWeightedTotal += clamp01(layerScore) * layerWeight;
+      segmentFitWeightSum += layerWeight;
+    }
+  }
+  const segmentWeightedFit = clamp01(
+    segmentFitWeightSum > 0
+      ? segmentFitWeightedTotal / segmentFitWeightSum
+      : fitScore
+  );
+  fitScore = clamp01((fitScore * 0.5) + (segmentWeightedFit * 0.5));
 
   const propensityBase = clamp01(Number(score?.propensity_score ?? score?.layers?.urgency?.score ?? 0.5));
   const readinessSignal = analysisStatus === "ready"
@@ -493,7 +510,10 @@ function computePriorityBreakdown(companyRow, score, analysisStatus) {
       : analysisStatus === "failed"
         ? -0.12
         : 0;
-  const qualitySignal = clamp01(Number(score?.integration_quality?.coverage_ratio || 0));
+  const qualitySignal = clamp01(Math.max(
+    Number(score?.integration_quality?.coverage_ratio || 0),
+    Number(score?.enrichment?.sources_available || 0) / 6
+  ));
   const freshnessSignal = filingFreshnessSignal(companyRow?.latest_filing_date);
   const stakeholderSignal = clamp01(Number(score?.stakeholder_priority?.boost || 0) * 8);
   const belowThresholdDrag = companyRow?.below_threshold === 1 ? -0.18 : 0;
@@ -511,7 +531,9 @@ function computePriorityBreakdown(companyRow, score, analysisStatus) {
     - confidencePenalty
   );
 
-  const priorityScore = Math.round(clamp01((fitScore * 0.6) + (propensityScore * 0.4)) * 1000) / 1000;
+  const propShare = clamp01(0.25 + getPropensityWeight());
+  const fitShare = 1 - propShare;
+  const priorityScore = Math.round(clamp01((fitScore * fitShare) + (propensityScore * propShare)) * 1000) / 1000;
   const reason = [
     fitScore >= 0.7 ? "strong fit" : fitScore >= 0.5 ? "moderate fit" : "low fit",
     propensityScore >= 0.7 ? "high timing/response propensity" : propensityScore >= 0.5 ? "moderate timing signal" : "weak timing signal",
@@ -523,7 +545,9 @@ function computePriorityBreakdown(companyRow, score, analysisStatus) {
   return {
     priority_score: priorityScore,
     fit_score: Math.round(fitScore * 1000) / 1000,
+    segment_weighted_fit: Math.round(segmentWeightedFit * 1000) / 1000,
     propensity_score: Math.round(propensityScore * 1000) / 1000,
+    propensity_share: Math.round(propShare * 1000) / 1000,
     velocity_score: Math.round(velocitySignal * 1000) / 1000,
     confidence_level: confidenceLevel,
     confidence_plus_minus: Math.round(Number(score?.confidence_interval?.plus_minus || 0) * 100) / 100,
@@ -2370,7 +2394,8 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
       const queue = queueRows[c.company_number] || null;
       const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
       const analysis_status = deriveAnalysisStatus(queue, storedAnalysis);
-      const priority = computePriorityBreakdown(c, stored, analysis_status);
+      const segment = guessTurnoverSegment(c.latest_turnover);
+      const priority = computePriorityBreakdown(c, stored, analysis_status, segment);
       const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
       const sourceFamily = deriveShortlistSourceFamily(sourceType);
       const filterReason = deriveShortlistFilterReason(c, supp, analysis_status, sourceType);
@@ -2490,7 +2515,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
 
       const analysis_status = deriveAnalysisStatus(queue, storedAnalysis);
-      const priority = computePriorityBreakdown(c, stored, analysis_status);
+      const priority = computePriorityBreakdown(c, stored, analysis_status, segment);
       const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
       const sourceFamily = deriveShortlistSourceFamily(sourceType);
       const filterReason = deriveShortlistFilterReason(c, supp, analysis_status, sourceType);
@@ -6090,55 +6115,64 @@ async function generateAndSaveWeeklyReport() {
 }
 
 
-app.listen(PORT, () => {
-  runMigrations();
-  console.log(`Prospector running on http://localhost:${PORT}`);
-  console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
-  console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
-  console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
+function startServer() {
+  app.listen(PORT, () => {
+    runMigrations();
+    console.log(`Prospector running on http://localhost:${PORT}`);
+    console.log(`LLM: ${isLLMConfigured() ? "configured" : "mock mode (set OPENAI_API_KEY to enable)"}`);
+    console.log(`Auth: ${isAuthConfigured() ? "password set" : "OPEN (set password via /api/auth/setup)"}`);
+    console.log(`Filings: ${getFilingCount()} stored, ${getMonitoredCompanyCount()} companies monitored`);
 
-  if (LIGHTWEIGHT_RUNTIME) {
-    console.log("Runtime profile: lightweight (background workers/schedulers disabled)");
-    console.log("Analysis queue: disabled in lightweight runtime");
-    console.log("Analysis auto-seed: disabled in lightweight runtime");
-    console.log("Tech enrichment auto-refresh: disabled in lightweight runtime");
-    console.log("Daily auto-pull: disabled in lightweight runtime");
-    console.log("Stale filing monitor: disabled in lightweight runtime");
-    console.log("Backfill autorun: disabled in lightweight runtime");
-    return;
-  }
+    if (LIGHTWEIGHT_RUNTIME) {
+      console.log("Runtime profile: lightweight (background workers/schedulers disabled)");
+      console.log("Analysis queue: disabled in lightweight runtime");
+      console.log("Analysis auto-seed: disabled in lightweight runtime");
+      console.log("Tech enrichment auto-refresh: disabled in lightweight runtime");
+      console.log("Daily auto-pull: disabled in lightweight runtime");
+      console.log("Stale filing monitor: disabled in lightweight runtime");
+      console.log("Backfill autorun: disabled in lightweight runtime");
+      return;
+    }
 
-  const queueStatus = startAnalysisQueueWorker();
-  console.log(`Analysis queue: enabled (${queueStatus.batch_size} per batch every ${queueStatus.interval_ms}ms), recovered ${queueStatus.recovered_processing_items} in-flight items`);
+    const queueStatus = startAnalysisQueueWorker();
+    console.log(`Analysis queue: enabled (${queueStatus.batch_size} per batch every ${queueStatus.interval_ms}ms), recovered ${queueStatus.recovered_processing_items} in-flight items`);
 
-  const reconciledQueueRows = reconcileAnalysisQueueWithStoredAnalyses();
-  if (reconciledQueueRows > 0) {
-    console.log(`Analysis queue: reconciled ${reconciledQueueRows} queued/failed item(s) to ready using existing stored analyses`);
-  }
+    const reconciledQueueRows = reconcileAnalysisQueueWithStoredAnalyses();
+    if (reconciledQueueRows > 0) {
+      console.log(`Analysis queue: reconciled ${reconciledQueueRows} queued/failed item(s) to ready using existing stored analyses`);
+    }
 
-  const seederStatus = startShortlistBackgroundSeeder();
-  console.log(`Analysis auto-seed: enabled (${seederStatus.max_enqueue} max queued every ${seederStatus.interval_ms}ms, queue soft/hard cap ${seederStatus.queue_soft_cap}/${seederStatus.queue_hard_cap})`);
+    const seederStatus = startShortlistBackgroundSeeder();
+    console.log(`Analysis auto-seed: enabled (${seederStatus.max_enqueue} max queued every ${seederStatus.interval_ms}ms, queue soft/hard cap ${seederStatus.queue_soft_cap}/${seederStatus.queue_hard_cap})`);
 
-  const techEnrichmentSeederStatus = startTechEnrichmentSeeder();
-  if (techEnrichmentSeederStatus.enabled) {
-    console.log(
-      `Tech enrichment auto-refresh: enabled (${techEnrichmentSeederStatus.max_refresh} max refresh every ${techEnrichmentSeederStatus.interval_ms}ms, deep scan mode ${techEnrichmentSeederStatus.deep_scan_mode})`
-    );
-  } else {
-    console.log("Tech enrichment auto-refresh: disabled (set TECH_ENRICHMENT_SEED_ENABLED=true to enable)");
-  }
+    const techEnrichmentSeederStatus = startTechEnrichmentSeeder();
+    if (techEnrichmentSeederStatus.enabled) {
+      console.log(
+        `Tech enrichment auto-refresh: enabled (${techEnrichmentSeederStatus.max_refresh} max refresh every ${techEnrichmentSeederStatus.interval_ms}ms, deep scan mode ${techEnrichmentSeederStatus.deep_scan_mode})`
+      );
+    } else {
+      console.log("Tech enrichment auto-refresh: disabled (set TECH_ENRICHMENT_SEED_ENABLED=true to enable)");
+    }
 
-  scheduleWeeklyReport();
-  startAutoPull();
-  startStaleFilingMonitor();
-  const backfillAutorun = startBackfillAutorun();
-  console.log("Daily auto-pull: enabled (checking every 12 hours for new CH files)");
-  console.log("Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)");
-  if (backfillAutorun.enabled) {
-    console.log(
-      `Backfill autorun: enabled (normal ${backfillAutorun.max_files} file(s) every ${Math.round(backfillAutorun.interval_ms / 60000)}m, catch-up ${backfillAutorun.catchup_max_files} file(s) every ${Math.round(backfillAutorun.catchup_interval_ms / 60000)}m when pending >= ${backfillAutorun.backlog_threshold})`
-    );
-  } else {
-    console.log("Backfill autorun: disabled (set BACKFILL_AUTORUN=true to enable)");
-  }
-});
+    scheduleWeeklyReport();
+    startAutoPull();
+    startStaleFilingMonitor();
+    const backfillAutorun = startBackfillAutorun();
+    console.log("Daily auto-pull: enabled (checking every 12 hours for new CH files)");
+    console.log("Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)");
+    if (backfillAutorun.enabled) {
+      console.log(
+        `Backfill autorun: enabled (normal ${backfillAutorun.max_files} file(s) every ${Math.round(backfillAutorun.interval_ms / 60000)}m, catch-up ${backfillAutorun.catchup_max_files} file(s) every ${Math.round(backfillAutorun.catchup_interval_ms / 60000)}m when pending >= ${backfillAutorun.backlog_threshold})`
+      );
+    } else {
+      console.log("Backfill autorun: disabled (set BACKFILL_AUTORUN=true to enable)");
+    }
+  });
+}
+
+const isMainModule = process.argv[1]
+  && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+
+if (isMainModule) {
+  startServer();
+}
