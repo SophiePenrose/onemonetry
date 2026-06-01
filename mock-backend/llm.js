@@ -21,17 +21,37 @@ function resolveConfiguredSecret(value) {
 const OPENAI_API_KEY = resolveConfiguredSecret(process.env.OPENAI_API_KEY);
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const ANTHROPIC_API_KEY = resolveConfiguredSecret(process.env.ANTHROPIC_API_KEY);
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
 let openAiAuthDisabled = false;
 let openAiAuthLogged = false;
+let anthropicAuthDisabled = false;
+let anthropicAuthLogged = false;
 
-function canUseLLM() {
-  return !!OPENAI_API_KEY && !openAiAuthDisabled;
+function getActiveProvider() {
+  if (ANTHROPIC_API_KEY && !anthropicAuthDisabled) return "anthropic";
+  if (OPENAI_API_KEY && !openAiAuthDisabled) return "openai";
+  return null;
 }
 
-function disableLlmDueToAuth(status) {
+function canUseLLM() {
+  return !!getActiveProvider();
+}
+
+function disableLlmDueToAuth(provider, status) {
+  if (provider === "anthropic") {
+    anthropicAuthDisabled = true;
+    if (!anthropicAuthLogged) {
+      console.warn(`Anthropic LLM disabled for this process after auth failure (${status}). Falling back to deterministic analysis.`);
+      anthropicAuthLogged = true;
+    }
+    return;
+  }
+
   openAiAuthDisabled = true;
   if (!openAiAuthLogged) {
-    console.warn(`LLM disabled for this process after auth failure (${status}). Falling back to deterministic analysis.`);
+    console.warn(`OpenAI LLM disabled for this process after auth failure (${status}). Falling back to deterministic analysis.`);
     openAiAuthLogged = true;
   }
 }
@@ -1074,6 +1094,13 @@ export function isLLMConfigured() {
   return canUseLLM();
 }
 
+export function getLLMProviderInfo() {
+  const provider = getActiveProvider();
+  if (provider === "anthropic") return { provider, model: ANTHROPIC_MODEL };
+  if (provider === "openai") return { provider, model: OPENAI_MODEL };
+  return { provider: null, model: null };
+}
+
 export async function analyseCompany(companyNumber, companyName, turnover) {
   const filings = getFilingsForCompany(companyNumber, 3);
   const filingText = filings.find((f) => f.raw_data)?.raw_data || null;
@@ -1103,21 +1130,8 @@ export async function analyseCompany(companyNumber, companyName, turnover) {
   }
 
   const prompt = buildAnalysisPrompt(companyName, companyNumber, turnover, filingText);
-
-  try {
-    const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `You are a Revolut Business mid-market account executive prospecting analyst. You analyse UK company accounts filings to identify prospecting opportunities.
+  const provider = getActiveProvider();
+  const systemPrompt = `You are a Revolut Business mid-market account executive prospecting analyst. You analyse UK company accounts filings to identify prospecting opportunities.
 
 REVOLUT BUSINESS CONTEXT:
 - Primary entry product: FX (73% of positioning, interbank rates vs banks charging 1-3%)
@@ -1216,18 +1230,46 @@ Return ONLY raw valid JSON (no markdown code fences, no commentary) with these f
 
 Token budget guardrail:
 - Keep arrays concise (typically max 4 entries unless explicitly required above).
-- Keep each evidence/quote string <= 240 characters where possible.`,
-          },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 3200,
-      }),
-    });
+- Keep each evidence/quote string <= 240 characters where possible.`;
+
+  try {
+    const response = provider === "anthropic"
+      ? await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 3200,
+          temperature: 0.3,
+          system: systemPrompt,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      })
+      : await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: ["Bearer", OPENAI_API_KEY].join(" "),
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 3200,
+        }),
+      });
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        disableLlmDueToAuth(response.status);
+        disableLlmDueToAuth(provider || "openai", response.status);
         const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: `API auth failed (${response.status})` };
         return enrichSupplementaryContext(fallback, companyName, filingText);
       }
@@ -1238,7 +1280,9 @@ Token budget guardrail:
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const content = provider === "anthropic"
+      ? data.content?.[0]?.text
+      : data.choices?.[0]?.message?.content;
     if (!content) {
       const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: "Empty response" };
       return enrichSupplementaryContext(fallback, companyName, filingText);
@@ -1246,7 +1290,8 @@ Token budget guardrail:
 
     const parsed = parseLlmJsonContent(content);
     const enriched = ensureHolisticAnalysisShape(parsed, filingText, { companyName, turnover });
-    const result = { ...enriched, source: "llm", model: OPENAI_MODEL, analysed_at: new Date().toISOString() };
+    const model = provider === "anthropic" ? ANTHROPIC_MODEL : OPENAI_MODEL;
+    const result = { ...enriched, source: "llm", model, analysed_at: new Date().toISOString() };
     return enrichSupplementaryContext(result, companyName, filingText);
   } catch (err) {
     console.error("LLM analysis error:", err.message);
