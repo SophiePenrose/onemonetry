@@ -16,6 +16,9 @@ export default function App() {
     backendReachable: true,
     openaiConfigured: true,
     openaiModel: null,
+    integrationConfiguredCount: 0,
+    integrationTotalCount: 0,
+    missingRequired: [],
   });
 
   async function loadRuntimeStatus() {
@@ -26,17 +29,29 @@ export default function App() {
       }
       const payload = await response.json();
       const openai = payload?.integrations?.openai || {};
+      const integrations = payload?.integrations && typeof payload.integrations === "object"
+        ? payload.integrations
+        : {};
+      const integrationEntries = Object.values(integrations);
+      const integrationConfiguredCount = integrationEntries.filter((item) => item?.configured === true).length;
+      const integrationTotalCount = integrationEntries.length;
       setRuntimeStatus({
         loading: false,
         backendReachable: true,
         openaiConfigured: openai.configured === true,
         openaiModel: openai.model || null,
+        integrationConfiguredCount,
+        integrationTotalCount,
+        missingRequired: Array.isArray(payload?.missing_required) ? payload.missing_required : [],
       });
     } catch {
       setRuntimeStatus((current) => ({
         ...current,
         loading: false,
         backendReachable: false,
+        integrationConfiguredCount: 0,
+        integrationTotalCount: 0,
+        missingRequired: [],
       }));
     }
   }
@@ -109,6 +124,14 @@ export default function App() {
   ];
   const showRuntimeBanner = !runtimeStatus.loading && (!runtimeStatus.backendReachable || !runtimeStatus.openaiConfigured);
   const runtimeBannerTone = runtimeStatus.backendReachable ? "warning" : "error";
+  const integrationSummaryText = runtimeStatus.loading
+    ? "Integrations: checking..."
+    : runtimeStatus.integrationTotalCount > 0
+      ? `Integrations: ${runtimeStatus.integrationConfiguredCount}/${runtimeStatus.integrationTotalCount} configured`
+      : "Integrations: unavailable";
+  const missingRequiredMessage = runtimeStatus.missingRequired.length > 0
+    ? ` Missing required integrations: ${runtimeStatus.missingRequired.join(", ")}.`
+    : "";
 
   return (
     <div className="app-shell">
@@ -121,6 +144,7 @@ export default function App() {
         <div className="app-top-meta" aria-label="Workspace context">
           <span className="app-live-dot" aria-hidden="true" />
           <span>Revolut Business</span>
+          <span style={{ color: "#64748b", fontSize: 12 }}>{integrationSummaryText}</span>
         </div>
 
         <div className="app-secondary-actions" aria-label="Secondary navigation">
@@ -129,7 +153,7 @@ export default function App() {
             className={`app-secondary-button${view === "settings" ? " active" : ""}`}
             onClick={navigateSettings}
           >
-            Settings
+            Settings & Integrations
           </button>
           <button type="button" className="app-secondary-button" disabled>
             Account
@@ -149,7 +173,7 @@ export default function App() {
             </strong>
             <span>
               {runtimeStatus.backendReachable
-                ? `OPENAI_API_KEY is not configured, so generation is running in fallback mode. Configure the key in Settings for true LLM output${runtimeStatus.openaiModel ? ` (${runtimeStatus.openaiModel})` : ""}.`
+                ? `OPENAI_API_KEY is not configured, so generation is running in fallback mode. Configure the key in Settings for true LLM output${runtimeStatus.openaiModel ? ` (${runtimeStatus.openaiModel})` : ""}.${missingRequiredMessage}`
                 : "The frontend cannot reach the backend API right now, so data and LLM generation are unavailable until it reconnects."}
             </span>
           </div>

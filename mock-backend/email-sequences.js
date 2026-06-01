@@ -1,5 +1,6 @@
 import { getSetting } from "./db.js";
 import db from "./db.js";
+import { validateEmail } from "./email-qc.js";
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS email_sequences (
@@ -108,7 +109,7 @@ const SEQUENCE_TEMPLATES = {
         subject_template: "Quick question on {{company}}'s international payments",
         body_template: `Hi {{first_name}},
 
-I noticed {{company}} has significant international operations{{international_detail}}. I wanted to reach out because we're helping similar mid-market businesses reduce their FX costs by 60-80% vs traditional banks.
+I noticed {{company}} has significant international operations{{international_detail}}. I wanted to reach out because, as an illustrative benchmark, we're helping similar mid-market businesses reduce their FX costs by 60-80% vs traditional banks.
 
 {{pain_hook}}
 
@@ -124,7 +125,7 @@ Best,
 
 Just following up on my note from earlier this week. I appreciate you're busy, so I'll keep this brief.
 
-We recently helped a {{industry}} business of similar size save over £{{estimated_savings}} annually on FX alone — interbank rates with no hidden markups.
+Based on your filed accounts, we estimate a {{industry}} business of similar size could save over £{{estimated_savings}} annually on FX alone — interbank rates during market hours within plan allowance with no hidden markups.
 
 {{competitor_angle}}
 
@@ -164,7 +165,7 @@ Best,
 
 I came across {{company}}'s accounts and noticed your international operations{{international_detail}}. With currency volatility where it is, I imagine budget certainty on overseas payments is important.
 
-We offer FX forwards at 0.8% markup — no credit line needed, no minimum contract — which is typically 50-70% cheaper than what traditional brokers charge.
+As an illustrative benchmark based on your filed accounts, we offer FX forwards at 0.8% markup — no credit line needed, no minimum contract — which is typically 50-70% cheaper than what traditional brokers charge.
 
 {{pain_hook}}
 
@@ -178,7 +179,7 @@ Best,
         subject_template: "Re: {{company}} — protecting margins on international payments",
         body_template: `Hi {{first_name}},
 
-Quick follow-up — I wanted to share that we've recently onboarded several {{industry}} businesses who were paying 2-3% on forwards through their existing bank.
+Quick follow-up — I wanted to share that we've recently onboarded several {{industry}} businesses who were paying 2-3% on forwards through their existing bank, and those percentages are illustrative based on your filed accounts.
 
 The switch typically takes less than a week, and most clients see the rate improvement immediately on their next batch of payments.
 
@@ -292,6 +293,8 @@ Best,
 const HOLISTIC_MOTION = "Holistic Narrative";
 const PLACEHOLDER_TOKEN_PATTERN = /\[(?:rounded\s*figure|your\s*name|your\s*title|ae_name|ae_title)\]/i;
 const RESEARCH_HEADER_PREFIX = "Revolut X";
+const RESEARCH_HEADER_SUBJECT_SUFFIX = " research";
+const RESEARCH_HEADER_SUBJECT_MAX_LENGTH = 45;
 const INTERNAL_MOTION_PRIORITY = {
   "Cards": 0.95,
   "FX": 0.9,
@@ -305,7 +308,15 @@ const INTERNAL_MOTION_PRIORITY = {
 
 function buildResearchHeaderSubject(companyName) {
   const safeCompanyName = String(companyName || "Company").trim() || "Company";
-  return `${RESEARCH_HEADER_PREFIX} ${safeCompanyName} - I've done my research`;
+  const maxCompanyLength = Math.max(
+    1,
+    RESEARCH_HEADER_SUBJECT_MAX_LENGTH
+      - RESEARCH_HEADER_PREFIX.length
+      - RESEARCH_HEADER_SUBJECT_SUFFIX.length
+      - 2
+  );
+  const compactCompanyName = safeCompanyName.slice(0, maxCompanyLength).trim() || "Company";
+  return `${RESEARCH_HEADER_PREFIX} ${compactCompanyName}${RESEARCH_HEADER_SUBJECT_SUFFIX}`;
 }
 
 function rankUseCasesByInternalPriority(useCases) {
@@ -562,7 +573,7 @@ function buildHolisticSteps(params) {
     {
       delay: 3,
       subject: fixedSubject,
-      body: `Observation & Origin: ${quantifiedHook}. ${fitSnippet?.quote ? `Source line: "${fitSnippet.quote}".` : "Source: filing signals on scale, complexity, and current process design."}\n\nMain Pain Link: ${operationsHook}. Without a controlled first-step sequence, teams at this scale often carry hidden cost and reconciliation overhead.\n\nValue Path (Suggestions): Prioritise ${topUseCase?.product || primaryPath}${secondUseCase ? `, then ${secondUseCase.product}` : ""}. ${topUseCase?.example_use_case || "Run the first lane in parallel with current setup to avoid disruption."}\n\nWould a one-page assumptions sheet be useful?`,
+      body: `Observation & Origin: ${quantifiedHook}. ${fitSnippet?.quote ? `Source line: "${fitSnippet.quote}".` : "Source: filing signals on scale, complexity, and current process design."}\n\nMain Pain Link: Based on your filed accounts, ${operationsHook}. Without a controlled first-step sequence, teams at this scale often carry hidden cost and reconciliation overhead.\n\nValue Path (Suggestions): Prioritise ${topUseCase?.product || primaryPath}${secondUseCase ? `, then ${secondUseCase.product}` : ""}. ${topUseCase?.example_use_case || "Run the first lane in parallel with current setup to avoid disruption."}\n\nWould a one-page assumptions sheet be useful?`,
     },
     {
       delay: 7,
@@ -655,7 +666,28 @@ export function saveGeneratedSequence(params) {
     ...step,
     subject: fixedSubject || step.subject,
   }));
-  if (!companyId || !stakeholderName || normalizedSteps.length === 0) return null;
+  const qcSteps = normalizedSteps.map((step) => {
+    const qcResult = validateEmail(
+      {
+        subject: step.subject,
+        body: step.body,
+      },
+      {
+        isInitialOutreach: step.step_number === 1,
+        assumeManagedFooter: true,
+      }
+    );
+    return {
+      ...step,
+      qc_score: qcResult.score,
+      qc_pass: qcResult.pass ? 1 : 0,
+      qc_issues: qcResult.issues,
+      qc_metrics: qcResult.metrics,
+      quality_gates: qcResult.gates,
+      voice_percent: qcResult.metrics.voice_percent,
+    };
+  });
+  if (!companyId || !stakeholderName || qcSteps.length === 0) return null;
 
   const sequenceId = id || `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const resolvedMotion = motion || HOLISTIC_MOTION;
@@ -673,7 +705,7 @@ export function saveGeneratedSequence(params) {
     sequenceStatus || "draft"
   );
 
-  for (const step of normalizedSteps) {
+  for (const step of qcSteps) {
     db.prepare(`
       INSERT INTO email_steps (
         sequence_id,
@@ -720,7 +752,7 @@ export function saveGeneratedSequence(params) {
     );
   }
 
-  return { id: sequenceId, steps: normalizedSteps, motion: resolvedMotion };
+  return { id: sequenceId, steps: qcSteps, motion: resolvedMotion };
 }
 
 export function generateSequence(params) {
@@ -815,8 +847,20 @@ export function generateSequence(params) {
 }
 
 export function getSequencesForCompany(companyId) {
-  const sequences = db.prepare("SELECT * FROM email_sequences WHERE company_id = ? ORDER BY created_at DESC").all(companyId);
-  return sequences.map((seq) => ({
+  const sequences = db.prepare("SELECT * FROM email_sequences WHERE company_id = ?").all(companyId);
+
+  const parseSequenceTimestamp = (value) => {
+    const ts = Date.parse(String(value || ""));
+    return Number.isFinite(ts) ? ts : 0;
+  };
+
+  const sorted = [...sequences].sort((a, b) => {
+    const aTs = Math.max(parseSequenceTimestamp(a.updated_at), parseSequenceTimestamp(a.created_at));
+    const bTs = Math.max(parseSequenceTimestamp(b.updated_at), parseSequenceTimestamp(b.created_at));
+    return bTs - aTs;
+  });
+
+  return sorted.map((seq) => ({
     ...seq,
     steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
       ...step,
@@ -853,6 +897,11 @@ export function getSequence(sequenceId) {
   };
 }
 
+function touchSequence(sequenceId) {
+  if (!sequenceId) return;
+  db.prepare("UPDATE email_sequences SET updated_at = datetime('now') WHERE id = ?").run(sequenceId);
+}
+
 export function updateStepStatus(sequenceId, stepNumber, status) {
   const updates = { status };
   if (status === "sent") updates.sent_at = new Date().toISOString();
@@ -862,6 +911,7 @@ export function updateStepStatus(sequenceId, stepNumber, status) {
   const sets = Object.entries(updates).map(([k]) => `${k} = ?`);
   const vals = Object.values(updates);
   db.prepare(`UPDATE email_steps SET ${sets.join(", ")} WHERE sequence_id = ? AND step_number = ?`).run(...vals, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 export function updateStepContent(sequenceId, stepNumber, subject, body) {
@@ -882,6 +932,7 @@ export function updateStepContent(sequenceId, stepNumber, subject, body) {
         voice_percent = NULL
     WHERE sequence_id = ? AND step_number = ?
   `).run(subject, body, editedAt, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 function safeJsonParse(raw, fallback) {
@@ -901,6 +952,7 @@ export function markStepReviewed(sequenceId, stepNumber) {
         reviewed_at = ?
     WHERE sequence_id = ? AND step_number = ?
   `).run(reviewedAt, sequenceId, stepNumber);
+  touchSequence(sequenceId);
 }
 
 export function deleteSequence(sequenceId) {

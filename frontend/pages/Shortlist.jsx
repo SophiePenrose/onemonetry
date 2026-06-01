@@ -114,6 +114,7 @@ const POST_EXPORT_STATE_OPTIONS = [
 
 const CARRYOVER_ACTIVE_STATES = new Set(["new_candidate", "shortlisted", "selected_for_outreach"]);
 const FORBIDDEN_SEND_MINUTES = new Set([0, 15, 30, 45]);
+const STALE_SEQUENCE_DRAFT_DAYS = 14;
 
 function getWeekStartMonday(date = new Date()) {
   const d = new Date(date);
@@ -134,6 +135,36 @@ function parseDate(value) {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseSequenceTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const iso = /[zZ]$|[+-]\d{2}:\d{2}$/.test(normalized) ? normalized : `${normalized}Z`;
+  const millis = Date.parse(iso);
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function sequenceLatestTimestamp(sequence) {
+  return Math.max(
+    parseSequenceTimestamp(sequence?.updated_at) || 0,
+    parseSequenceTimestamp(sequence?.created_at) || 0
+  );
+}
+
+function sequenceDraftAgeDays(sequence) {
+  const latest = sequenceLatestTimestamp(sequence);
+  if (!latest) return null;
+  return Math.max(0, Math.floor((Date.now() - latest) / 86400000));
+}
+
+function sequenceDraftFreshnessLabel(sequence) {
+  const ageDays = sequenceDraftAgeDays(sequence);
+  if (ageDays === null) return "updated date unavailable";
+  if (ageDays === 0) return "updated today";
+  if (ageDays === 1) return "updated 1 day ago";
+  return `updated ${ageDays} days ago`;
 }
 
 function daysSince(value) {
@@ -1120,9 +1151,13 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
 
   const latestSequence = useMemo(() => {
     if (!Array.isArray(sequences) || sequences.length === 0) return null;
-    const sorted = [...sequences].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    const sorted = [...sequences].sort((a, b) => sequenceLatestTimestamp(b) - sequenceLatestTimestamp(a));
     return sorted[0];
   }, [sequences]);
+
+  const latestSequenceFreshness = latestSequence ? sequenceDraftFreshnessLabel(latestSequence) : null;
+  const latestSequenceAgeDays = latestSequence ? sequenceDraftAgeDays(latestSequence) : null;
+  const latestSequenceIsStale = Number.isFinite(latestSequenceAgeDays) && latestSequenceAgeDays > STALE_SEQUENCE_DRAFT_DAYS;
 
   const sequenceSteps = useMemo(() => {
     const steps = Array.isArray(latestSequence?.steps) ? latestSequence.steps : [];
@@ -1643,6 +1678,8 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <div>
               <div style={{ marginBottom: 10, fontSize: 12, color: "#475569" }}>
                 Latest sequence: {latestSequence.id} · Stakeholder: {latestSequence.stakeholder_name || "Unknown"}
+                {latestSequenceFreshness ? ` · ${latestSequenceFreshness}` : ""}
+                {latestSequenceIsStale ? " · older draft" : ""}
               </div>
 
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
