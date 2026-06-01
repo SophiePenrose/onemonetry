@@ -80,6 +80,7 @@ import {
   getShortlistCompanies,
   getShortlistCount,
   getMonitoredCompany,
+  upsertMonitoredCompany,
   getCompanyChargeSummary,
   upsertCompanyChargeSummary,
   updateMonitorCheck,
@@ -3637,6 +3638,13 @@ async function processCSVImport(jobId, companyNumbers) {
           });
 
           COMPANIES.push(newCompany);
+          upsertMonitoredCompany({
+            company_number: num,
+            company_name: newCompany.name,
+            latest_turnover: newCompany.turnover,
+            status: "active",
+            source: "csv_import",
+          });
           existingNumbers.add(num);
           if (chData.charge_summary) {
             upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
