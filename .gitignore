@@ -1,9 +1,14 @@
+# Local environment / secrets
 .env
 .env.*
 !.env.example
+
+# Dependencies and build output
 frontend/node_modules
 frontend/dist
 mock-backend/node_modules
+
+# Local backend state / databases
 mock-backend/workflow_state.json
 mock-backend/weekly_reports.json
 mock-backend/exclusions.json
@@ -14,3 +19,6 @@ mock-backend/mock-backend/
 mock-backend/data/
 mock-backend/prospector.db
 exports/
+
+# Local scratch artifacts (cookie jars, scratch notebooks/exports) — never commit
+*.cookies
