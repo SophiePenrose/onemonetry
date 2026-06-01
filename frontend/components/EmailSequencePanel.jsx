@@ -13,6 +13,38 @@ const REVIEW_META = {
   reviewed: { label: "Reviewed", color: "#0a8754", bg: "#dcfce7" },
 };
 
+const STALE_SEQUENCE_DAYS = 14;
+
+function parseSequenceTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const iso = /[zZ]$|[+-]\d{2}:\d{2}$/.test(normalized) ? normalized : `${normalized}Z`;
+  const millis = Date.parse(iso);
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function sequenceLatestTimestamp(sequence) {
+  return Math.max(
+    parseSequenceTimestamp(sequence?.updated_at) || 0,
+    parseSequenceTimestamp(sequence?.created_at) || 0
+  );
+}
+
+function sequenceAgeDays(sequence) {
+  const latest = sequenceLatestTimestamp(sequence);
+  if (!latest) return null;
+  return Math.max(0, Math.floor((Date.now() - latest) / 86400000));
+}
+
+function sequenceRecencyLabel(sequence) {
+  const ageDays = sequenceAgeDays(sequence);
+  if (ageDays === null) return "Updated date unavailable";
+  if (ageDays === 0) return "Updated today";
+  if (ageDays === 1) return "Updated 1 day ago";
+  return `Updated ${ageDays} days ago`;
+}
+
 function CopyButton({ subject, body, footer }) {
   const [copied, setCopied] = React.useState(null);
 
@@ -81,6 +113,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
   const [purgingBroken, setPurgingBroken] = useState(false);
+  const [showStaleSequences, setShowStaleSequences] = useState(false);
 
   useEffect(() => {
     fetch("/api/email/templates")
@@ -96,7 +129,11 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
   function loadSequences() {
     fetch(`/api/email/sequences/${encodeURIComponent(companyId)}`)
       .then((r) => r.json())
-      .then((d) => setSequences(d.sequences || []))
+      .then((d) => {
+        const rows = Array.isArray(d.sequences) ? d.sequences : [];
+        const sorted = [...rows].sort((a, b) => sequenceLatestTimestamp(b) - sequenceLatestTimestamp(a));
+        setSequences(sorted);
+      })
       .catch(() => {});
   }
 
@@ -224,6 +261,18 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
     ...(stakeholders || []).map((s) => ({ name: s.name, role: s.role || s.title, source: "Manual" })),
   ];
 
+  const staleSequenceCount = sequences.filter((seq) => {
+    const ageDays = sequenceAgeDays(seq);
+    return Number.isFinite(ageDays) && ageDays > STALE_SEQUENCE_DAYS;
+  }).length;
+
+  const visibleSequences = showStaleSequences
+    ? sequences
+    : sequences.filter((seq) => {
+      const ageDays = sequenceAgeDays(seq);
+      return !Number.isFinite(ageDays) || ageDays <= STALE_SEQUENCE_DAYS;
+    });
+
   const availableMotions = Object.keys(templates);
   const inputStyle = { width: "100%", padding: "6px 10px", borderRadius: 4, border: "1px solid #ddd", fontSize: 13, boxSizing: "border-box" };
 
@@ -232,6 +281,17 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <h3 style={{ fontSize: 16, margin: 0 }}>Email Sequences</h3>
         <div style={{ display: "flex", gap: 8 }}>
+          {staleSequenceCount > 0 && (
+            <button
+              onClick={() => setShowStaleSequences((current) => !current)}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                background: "#fff", color: "#374151",
+              }}
+            >
+              {showStaleSequences ? `Hide older drafts (${staleSequenceCount})` : `Show older drafts (${staleSequenceCount})`}
+            </button>
+          )}
           <button
             onClick={handlePurgeBrokenSequences}
             disabled={purgingBroken}
@@ -356,12 +416,20 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
         </div>
       )}
 
-      {sequences.length > 0 && (
+      {sequences.length > 0 && visibleSequences.length === 0 && !showGenerate && (
+        <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: 16, border: "1px dashed #d4dce6", borderRadius: 8 }}>
+          Only older drafts are available right now. Toggle "Show older drafts" to inspect them.
+        </div>
+      )}
+
+      {visibleSequences.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {sequences.map((seq) => {
+          {visibleSequences.map((seq) => {
             const isExpanded = expandedSeq === seq.id;
             const sentCount = seq.steps?.filter((s) => s.status !== "pending").length || 0;
             const totalSteps = seq.steps?.length || 0;
+            const ageDays = sequenceAgeDays(seq);
+            const isStale = Number.isFinite(ageDays) && ageDays > STALE_SEQUENCE_DAYS;
 
             return (
               <div key={seq.id} style={{ background: "#fafbfc", borderRadius: 6, border: "1px solid #f0f0f0", overflow: "hidden" }}>
@@ -372,10 +440,16 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{seq.stakeholder_name}</div>
                     <div style={{ fontSize: 12, color: "#888" }}>
-                      {seq.stakeholder_role ? `${seq.stakeholder_role} · ` : ""}{seq.motion} · {sentCount}/{totalSteps} steps
+                      {seq.stakeholder_role ? `${seq.stakeholder_role} · ` : ""}
+                      {seq.motion} · {sentCount}/{totalSteps} steps · {sequenceRecencyLabel(seq)}
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {isStale && (
+                      <span style={{ fontSize: 11, color: "#92400e", background: "#fef3c7", padding: "2px 8px", borderRadius: 8, fontWeight: 600 }}>
+                        Old draft
+                      </span>
+                    )}
                     <span style={{ fontSize: 11, color: "#888", background: "#f3f4f6", padding: "2px 8px", borderRadius: 8 }}>
                       {seq.status}
                     </span>
