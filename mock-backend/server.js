@@ -1598,7 +1598,14 @@ function parseClosedWonRowsFromCsv(csvContent) {
 function parseSuppressionRowsFromCsv(csvContent) {
   const text = String(csvContent || "").replace(/\r/g, "").trim();
   if (!text) return [];
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const isEmailToken = (token) => {
+    const value = String(token || "").trim();
+    const atIndex = value.indexOf("@");
+    if (atIndex <= 0 || atIndex !== value.lastIndexOf("@")) return false;
+    const domainPart = value.slice(atIndex + 1);
+    const dotIndex = domainPart.lastIndexOf(".");
+    return dotIndex > 0 && dotIndex < domainPart.length - 1;
+  };
 
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) return [];
@@ -1627,13 +1634,13 @@ function parseSuppressionRowsFromCsv(csvContent) {
       tokens.push(normalizedToken);
     }
 
-    const emailTokens = tokens.filter((token) => emailPattern.test(token));
+    const emailTokens = tokens.filter((token) => isEmailToken(token));
     const companyNumberTokens = tokens.filter((token) => !!normalizeCompanyNumber(token));
     if (emailTokens.length === 0 && companyNumberTokens.length === 0) continue;
 
     const textTokens = tokens.filter((token) => {
       if (token.includes(",")) return false;
-      if (emailPattern.test(token)) return false;
+      if (isEmailToken(token)) return false;
       if (normalizeCompanyNumber(token)) return false;
       return true;
     });
