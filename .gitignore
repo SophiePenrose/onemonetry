@@ -12,3 +12,5 @@ mock-backend/onemonetry.db-wal
 mock-backend/onemonetry.db-shm
 mock-backend/mock-backend/
 mock-backend/data/
+mock-backend/prospector.db
+exports/
