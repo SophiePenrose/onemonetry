@@ -12,6 +12,22 @@ describe("parseLlmJsonContent", () => {
     assert.deepEqual(parsed.themes, []);
   });
 
+  it("parses raw JSON content without code fences", () => {
+    const content = "{\"summary\":\"Acme\",\"turnover_trend\":\"stable\"}";
+    const parsed = parseLlmJsonContent(content);
+
+    assert.equal(parsed.summary, "Acme");
+    assert.equal(parsed.turnover_trend, "stable");
+  });
+
+  it("parses leading prose followed by a JSON object", () => {
+    const content = "Claude analysis result:\n{\"summary\":\"Acme\",\"turnover_trend\":\"growing\"}";
+    const parsed = parseLlmJsonContent(content);
+
+    assert.equal(parsed.summary, "Acme");
+    assert.equal(parsed.turnover_trend, "growing");
+  });
+
   it("extracts and parses JSON with surrounding prose", () => {
     const content = "Model output follows:\n{\"summary\":\"Acme\",\"turnover_trend\":\"growing\"}\nEnd of output.";
     const parsed = parseLlmJsonContent(content);
