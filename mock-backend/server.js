@@ -20,6 +20,8 @@ import {
   listImportJobs,
   addImportLogEntry,
   getImportLogs,
+  recordEmailAudit,
+  getEmailAuditLog,
 } from "./db.js";
 import {
   isCompaniesHouseConfigured,
@@ -5948,6 +5950,138 @@ app.post("/api/enrichment/tech-stack/batch", async (req, res) => {
 
 // --- YAMM Export & Sequence Management ---
 
+function extractClaimsFromBody(body) {
+  const text = String(body || "");
+  if (!text) return [];
+  const claims = [];
+  const pattern = /(?:£\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:k|m|bn|b|million|billion))?|\b\d+(?:\.\d+)?%)/gi;
+  for (const match of text.matchAll(pattern)) {
+    const value = String(match[0] || "").trim();
+    if (value && !claims.includes(value)) claims.push(value);
+  }
+  return claims;
+}
+
+function buildConsentStatus(body) {
+  const text = String(body || "").toLowerCase();
+  const opt_out_present = [
+    "opt out",
+    "unsubscribe",
+    "stop receiving",
+    "remove me",
+    "do not wish to receive",
+  ].some((needle) => text.includes(needle));
+  const privacy_notice_present = [
+    "privacy notice",
+    "privacy policy",
+    "data protection",
+    "gdpr",
+  ].some((needle) => text.includes(needle));
+  return {
+    opt_out_present,
+    privacy_notice_present,
+    consent_basis: "legitimate_interest_b2b",
+  };
+}
+
+function deriveValidationResults(step, subject, body) {
+  const gates = step?.quality_gates && typeof step.quality_gates === "object" ? step.quality_gates : null;
+  const metrics = step?.metrics && typeof step.metrics === "object" ? step.metrics : {};
+
+  if (gates?.gate1 && gates?.gate2 && gates?.gate3) {
+    return {
+      gate1_pass: gates.gate1.pass === true,
+      gate2_pass: gates.gate2.pass === true,
+      gate3_pass: gates.gate3.pass === true,
+      voice_percent: Number.isFinite(Number(step?.voice_percent))
+        ? Number(step.voice_percent)
+        : Number.isFinite(Number(metrics.voice_percent))
+          ? Number(metrics.voice_percent)
+          : Number.isFinite(Number(gates.gate2?.metrics?.voice_percent))
+            ? Number(gates.gate2.metrics.voice_percent)
+            : null,
+      citation_density: Number.isFinite(Number(metrics.citation_density))
+        ? Number(metrics.citation_density)
+        : Number.isFinite(Number(gates.gate1?.metrics?.citation_density))
+          ? Number(gates.gate1.metrics.citation_density)
+          : null,
+      research_density: Number.isFinite(Number(metrics.research_density))
+        ? Number(metrics.research_density)
+        : Number.isFinite(Number(gates.gate1?.metrics?.research_density))
+          ? Number(gates.gate1.metrics.research_density)
+          : null,
+    };
+  }
+
+  const qc = validateEmail(
+    { subject: subject || "", body: body || "" },
+    {
+      isInitialOutreach: Number(step?.step_number) === 1,
+      assumeManagedFooter: true,
+    }
+  );
+  return {
+    gate1_pass: qc.gates?.gate1?.pass === true,
+    gate2_pass: qc.gates?.gate2?.pass === true,
+    gate3_pass: qc.gates?.gate3?.pass === true,
+    voice_percent: Number.isFinite(Number(qc.metrics?.voice_percent)) ? Number(qc.metrics.voice_percent) : null,
+    citation_density: Number.isFinite(Number(qc.metrics?.citation_density)) ? Number(qc.metrics.citation_density) : null,
+    research_density: Number.isFinite(Number(qc.metrics?.research_density)) ? Number(qc.metrics.research_density) : null,
+  };
+}
+
+function recordAuditForExportRows(rows, sequencesById, exportFormat) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  const exportedAt = new Date().toISOString();
+  const aeOwner = String(getSetting("sender_name", "") || "");
+
+  for (const row of rows) {
+    const sequence = sequencesById.get(row.sequence_id);
+    const stepNumber = Number(row.step_number);
+    if (!sequence || !Number.isFinite(stepNumber)) continue;
+    const step = (sequence.steps || []).find((item) => Number(item.step_number) === stepNumber);
+    if (!step) continue;
+
+    const subject = step.subject || row.subject || "";
+    const body = step.body || row.body || "";
+    const validationResults = deriveValidationResults(step, subject, body);
+    const consentStatus = buildConsentStatus(row.body || body);
+    const claims = extractClaimsFromBody(row.body || body);
+
+    recordEmailAudit({
+      exported_at: exportedAt,
+      sequence_id: sequence.id,
+      company_id: sequence.company_id || null,
+      company_name: sequence.company_name || row.company_name || null,
+      stakeholder_name: sequence.stakeholder_name || row.stakeholder_name || null,
+      stakeholder_email: sequence.stakeholder_email || row.stakeholder_email || null,
+      ae_owner: aeOwner,
+      step_number: stepNumber,
+      step_type: step.step_type || null,
+      subject,
+      body,
+      scheduled_date: row.scheduled_date || null,
+      scheduled_time: row.scheduled_time || null,
+      qc_score: Number.isFinite(Number(step.qc_score)) ? Number(step.qc_score) : null,
+      voice_percent: Number.isFinite(Number(step.voice_percent)) ? Number(step.voice_percent) : null,
+      validation_results_json: JSON.stringify(validationResults),
+      claims_json: JSON.stringify(claims),
+      consent_status_json: JSON.stringify(consentStatus),
+      export_format: exportFormat,
+    });
+  }
+}
+
+function parseAuditJson(value, fallback) {
+  if (value === null || value === undefined || value === "") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 app.get("/api/email/export/csv/:sequenceId", (req, res) => {
   const exported = exportSequenceForYAMM(req.params.sequenceId, {
     startDate: req.query.start_date,
@@ -5961,6 +6095,15 @@ app.get("/api/email/export/csv/:sequenceId", (req, res) => {
       error: "Manual review required before CSV export",
       detail: exported.metadata,
     });
+  }
+
+  try {
+    const sequence = getSequence(req.params.sequenceId);
+    const sequencesById = new Map();
+    if (sequence?.id) sequencesById.set(sequence.id, sequence);
+    recordAuditForExportRows(exported.rows, sequencesById, "csv");
+  } catch (err) {
+    console.warn("[email-audit] Unable to record CSV export audit", err?.message || err);
   }
 
   const csv = generateCSV(exported.rows);
@@ -5984,6 +6127,15 @@ app.get("/api/email/export/json/:sequenceId", (req, res) => {
     });
   }
 
+  try {
+    const sequence = getSequence(req.params.sequenceId);
+    const sequencesById = new Map();
+    if (sequence?.id) sequencesById.set(sequence.id, sequence);
+    recordAuditForExportRows(exported.rows, sequencesById, "json");
+  } catch (err) {
+    console.warn("[email-audit] Unable to record JSON export audit", err?.message || err);
+  }
+
   res.json({
     metadata: exported.metadata,
     sheets_data: generateGoogleSheetsJSON(exported.rows),
@@ -6000,6 +6152,14 @@ app.get("/api/email/export/company/:companyId", (req, res) => {
   });
   const rows = exported.rows || [];
 
+  try {
+    const sequences = getSequencesForCompany(req.params.companyId) || [];
+    const sequencesById = new Map(sequences.map((seq) => [seq.id, seq]));
+    recordAuditForExportRows(rows, sequencesById, req.query.format === "csv" ? "csv" : "json");
+  } catch (err) {
+    console.warn("[email-audit] Unable to record company export audit", err?.message || err);
+  }
+
   if (req.query.format === "csv") {
     const csv = generateCSV(rows);
     res.setHeader("Content-Type", "text/csv");
@@ -6012,6 +6172,29 @@ app.get("/api/email/export/company/:companyId", (req, res) => {
     needs_email: rows.filter((r) => r.needs_email).length,
     blocked_sequences: exported.blocked_sequences || [],
     sheets_data: generateGoogleSheetsJSON(rows),
+  });
+});
+
+app.get("/api/email/audit/:sequenceId", (req, res) => {
+  const sequence_id = String(req.params.sequenceId || "");
+  const records = getEmailAuditLog({ sequence_id }).map((record) => {
+    const {
+      validation_results_json,
+      claims_json,
+      consent_status_json,
+      ...rest
+    } = record;
+    return {
+      ...rest,
+      validation_results: parseAuditJson(validation_results_json, {}),
+      claims: parseAuditJson(claims_json, []),
+      consent_status: parseAuditJson(consent_status_json, {}),
+    };
+  });
+
+  res.json({
+    sequence_id,
+    records,
   });
 });
 
