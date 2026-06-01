@@ -1,0 +1,24 @@
+{
+  "name": "onemonetry",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": {
+      "label": "App (backend + built UI)",
+      "onAutoForward": "openBrowser"
+    },
+    "5173": {
+      "label": "Frontend dev server (Vite)",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "npm --prefix mock-backend install && npm --prefix frontend install && npm --prefix frontend run build",
+  "postStartCommand": "nohup bash ./start.sh > /tmp/onemonetry-start.log 2>&1 || true",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}
