@@ -103,6 +103,7 @@ import {
   getTechEnrichmentRuntimeConfig,
 } from "./tech-enrichment.js";
 import { syncExternalSignals } from "./signal-connectors.js";
+import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -283,34 +284,6 @@ function isSuppressed(companyId, companyNumberHint = null) {
 // --- Scoring weights (segment-aware) ---
 
 const VALID_SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
-
-const LAYER_NAMES = ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"];
-
-const DEFAULT_SEGMENT_WEIGHTS = {
-  SMB: {
-    product_fit: 0.35,
-    commercial_value: 0.15,
-    pain_strength: 0.25,
-    urgency: 0.15,
-    competitor_context: 0.10,
-  },
-  "Mid-Market": {
-    product_fit: 0.30,
-    commercial_value: 0.22,
-    pain_strength: 0.20,
-    urgency: 0.15,
-    competitor_context: 0.13,
-  },
-  Enterprise: {
-    product_fit: 0.28,
-    commercial_value: 0.25,
-    pain_strength: 0.18,
-    urgency: 0.14,
-    competitor_context: 0.15,
-  },
-};
-
-const DEFAULT_PROPENSITY_WEIGHT = 0.15;
 
 function getSegmentWeights() {
   return getSetting("segment_weights", DEFAULT_SEGMENT_WEIGHTS);

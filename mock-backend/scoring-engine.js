@@ -1,6 +1,7 @@
 import { getCompanyChargeSummary, getFilingsForCompany, getMonitoredCompany, getSetting, setSetting } from "./db.js";
 import { analyseCompany } from "./llm.js";
 import { getOutreachReadiness, scoreAllStakeholders } from "./stakeholder-scoring.js";
+import { SCORING_ENGINE_FIT_WEIGHTS as SCORING_WEIGHTS } from "./scoring-weights.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
 
@@ -97,16 +98,6 @@ const INDUSTRY_PRIOR_PATTERNS = {
     /(?:food\s+processing|food\s+manufacturer|beverage\s+producer)/i,
     /(?:packaging\s+line|cold\s+chain|ingredient\s+cost)/i,
   ],
-};
-
-// --- Scoring weights ---
-const SCORING_WEIGHTS = {
-  product_fit: 0.28,
-  commercial_value: 0.18,
-  pain_strength: 0.18,
-  urgency: 0.14,
-  competitor_context: 0.10,
-  switching_feasibility: 0.12,
 };
 
 const MOTION_LLM_BOOST_CAP = 0.22;
