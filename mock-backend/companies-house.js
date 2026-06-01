@@ -336,6 +336,57 @@ async function chFetch(urlPath, retries = 2) {
   }
 }
 
+async function chFetchDocumentText(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        ...authHeaders(),
+        Accept: "application/xhtml+xml",
+      },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLatestAccountsDocument(companyNumber) {
+  try {
+    if (!isCompaniesHouseConfigured()) return null;
+
+    const padded = normalizeCompanyNumber(companyNumber);
+    const filings = await chFetch(`/company/${padded}/filing-history?category=accounts&items_per_page=10`);
+    if (filings?.error) return null;
+
+    const latestWithDoc = (Array.isArray(filings?.items) ? filings.items : [])
+      .filter((item) => item?.links?.document_metadata)
+      .sort((a, b) => Date.parse(b?.date || "") - Date.parse(a?.date || ""))[0];
+    if (!latestWithDoc?.links?.document_metadata) return null;
+
+    const metadataUrl = latestWithDoc.links.document_metadata;
+    const metadata = await chFetch(metadataUrl);
+    if (metadata?.error) return null;
+
+    const resourceTypes = Object.keys(metadata?.resources || {});
+    const hasTextResource = resourceTypes.some((type) => /xhtml\+xml|application\/xml|text\/xml/i.test(type));
+    if (!hasTextResource) return null;
+
+    const rawHtml = await chFetchDocumentText(`${metadataUrl}/content`);
+    if (!rawHtml) return null;
+
+    return {
+      filing_date: latestWithDoc.date || null,
+      description: latestWithDoc.description || null,
+      barcode: latestWithDoc.barcode || null,
+      turnover: extractTurnoverFromIXBRL(rawHtml),
+      raw_data: String(rawHtml).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200000),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function lookupCompanyCharges(companyNumber) {
   const padded = normalizeCompanyNumber(companyNumber);
 
