@@ -1,86 +1,102 @@
-import test from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 
-function loadModuleFresh(dbPath) {
-  process.env.DATABASE_PATH = dbPath;
-  const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return import(`../email-sequences.js?test=${stamp}`);
-}
+// Use ONE temp DB for the whole file. DATABASE_PATH must be set before db.js is
+// imported so its module-level better-sqlite3 connection points at this file.
+// The previous version reloaded email-sequences.js with a `?test=` query string
+// per test, but that does not re-import the db.js singleton, so the module kept
+// the first test's connection (bound to a temp DB the first test then deleted),
+// causing the second test to fail with "no such table: email_sequences".
+const dbPath = path.join(
+  os.tmpdir(),
+  `email-sequences-touch-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`
+);
+process.env.DATABASE_PATH = dbPath;
 
-function makeTmpDbPath(name) {
-  return path.join(os.tmpdir(), `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`);
-}
+const db = (await import("../db.js")).default;
+const {
+  saveGeneratedSequence,
+  getSequence,
+  getSequencesForCompany,
+  updateStepContent,
+  markStepReviewed,
+  updateStepStatus,
+} = await import("../email-sequences.js");
 
-function parseSqliteDateTime(value) {
-  return Date.parse(String(value).replace(" ", "T") + "Z");
-}
-
-test("updateStepContent touch moves older sequence to top by updated_at", async () => {
-  const dbPath = makeTmpDbPath("email-seq-touch-sort");
-  const mod = await loadModuleFresh(dbPath);
-  const sqlite = new Database(dbPath);
-
-  const first = mod.saveGeneratedSequence({
-    companyId: "co-touch-sort",
-    companyName: "Atlas",
-    stakeholderName: "Jordan",
-    stakeholderRole: "COO",
-    steps: [{ step_number: 1, subject: "First", body: "Body first", send_delay_days: 0 }],
-  });
-  const second = mod.saveGeneratedSequence({
-    companyId: "co-touch-sort",
-    companyName: "Atlas",
-    stakeholderName: "Casey",
-    stakeholderRole: "VP Operations",
-    steps: [{ step_number: 1, subject: "Second", body: "Body second", send_delay_days: 0 }],
-  });
-
-  sqlite.prepare("UPDATE email_sequences SET created_at = ?, updated_at = ? WHERE id = ?").run("2024-01-01 00:00:00", "2024-01-01 00:00:00", first.id);
-  sqlite.prepare("UPDATE email_sequences SET created_at = ?, updated_at = ? WHERE id = ?").run("2024-01-02 00:00:00", "2024-01-02 00:00:00", second.id);
-
-  const initial = mod.getSequencesForCompany("co-touch-sort");
-  assert.equal(initial[0].id, second.id);
-  assert.equal(initial[1].id, first.id);
-
-  mod.updateStepContent(first.id, 1, "First updated", "Body first updated");
-  const touchedFirst = mod.getSequence(first.id);
-  assert.ok(parseSqliteDateTime(touchedFirst.updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"));
-
-  const reordered = mod.getSequencesForCompany("co-touch-sort");
-  assert.equal(reordered[0].id, first.id);
-  assert.equal(reordered[1].id, second.id);
-
-  sqlite.close();
+after(() => {
+  try {
+    db.close();
+  } catch {
+    // ignore close errors during teardown
+  }
   fs.rmSync(dbPath, { force: true });
 });
 
-test("markStepReviewed and updateStepStatus both advance sequence updated_at", async () => {
-  const dbPath = makeTmpDbPath("email-seq-touch-actions");
-  const mod = await loadModuleFresh(dbPath);
-  const sqlite = new Database(dbPath);
+function parseSqliteDateTime(value) {
+  return Date.parse(`${String(value).replace(" ", "T")}Z`);
+}
 
-  const created = mod.saveGeneratedSequence({
-    companyId: "co-touch-actions",
-    companyName: "Touch Co",
-    stakeholderName: "Sam",
+// Use the module's own connection so writes are visible to the functions under test.
+function setSequenceTimestamps(id, createdAt, updatedAt) {
+  db.prepare("UPDATE email_sequences SET created_at = ?, updated_at = ? WHERE id = ?")
+    .run(createdAt, updatedAt, id);
+}
+
+function createSequence(companyId, stakeholderName) {
+  const seq = saveGeneratedSequence({
+    companyId,
+    companyName: "Atlas",
+    stakeholderName,
     stakeholderRole: "COO",
-    steps: [{ step_number: 1, subject: "Initial", body: "Body", send_delay_days: 0 }],
+    steps: [{ step_number: 1, subject: "Subject", body: "Body", send_delay_days: 0 }],
   });
+  assert.ok(seq && seq.id, "expected saveGeneratedSequence to return an id");
+  return seq;
+}
 
-  sqlite.prepare("UPDATE email_sequences SET updated_at = ? WHERE id = ?").run("2024-01-01 00:00:00", created.id);
-  mod.markStepReviewed(created.id, 1);
-  const reviewed = mod.getSequence(created.id);
-  assert.ok(parseSqliteDateTime(reviewed.updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"));
+test("updateStepContent bumps updated_at and floats the edited sequence to the top", () => {
+  const companyId = "co-touch-sort";
+  const first = createSequence(companyId, "Jordan");
+  const second = createSequence(companyId, "Casey");
 
-  sqlite.prepare("UPDATE email_sequences SET updated_at = ? WHERE id = ?").run("2024-01-01 00:00:00", created.id);
-  mod.updateStepStatus(created.id, 1, "sent");
-  const statusUpdated = mod.getSequence(created.id);
-  assert.ok(parseSqliteDateTime(statusUpdated.updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"));
+  setSequenceTimestamps(first.id, "2024-01-01 00:00:00", "2024-01-01 00:00:00");
+  setSequenceTimestamps(second.id, "2024-01-02 00:00:00", "2024-01-02 00:00:00");
 
-  sqlite.close();
-  fs.rmSync(dbPath, { force: true });
+  const initial = getSequencesForCompany(companyId);
+  assert.equal(initial[0].id, second.id);
+  assert.equal(initial[1].id, first.id);
+
+  updateStepContent(first.id, 1, "Subject updated", "Body updated");
+
+  const touched = getSequence(first.id);
+  assert.ok(
+    parseSqliteDateTime(touched.updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"),
+    "updateStepContent should advance the parent sequence updated_at"
+  );
+
+  const reordered = getSequencesForCompany(companyId);
+  assert.equal(reordered[0].id, first.id);
+  assert.equal(reordered[1].id, second.id);
+});
+
+test("markStepReviewed and updateStepStatus both advance updated_at", () => {
+  const companyId = "co-touch-actions";
+  const seq = createSequence(companyId, "Sam");
+
+  setSequenceTimestamps(seq.id, "2024-01-01 00:00:00", "2024-01-01 00:00:00");
+  markStepReviewed(seq.id, 1);
+  assert.ok(
+    parseSqliteDateTime(getSequence(seq.id).updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"),
+    "markStepReviewed should advance updated_at"
+  );
+
+  setSequenceTimestamps(seq.id, "2024-01-01 00:00:00", "2024-01-01 00:00:00");
+  updateStepStatus(seq.id, 1, "sent");
+  assert.ok(
+    parseSqliteDateTime(getSequence(seq.id).updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"),
+    "updateStepStatus should advance updated_at"
+  );
 });
