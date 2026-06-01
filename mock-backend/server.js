@@ -6096,7 +6096,20 @@ async function generateAndSaveWeeklyReport() {
 }
 
 
+export function authStartupRefusalReason(env = process.env, authConfigured = isAuthConfigured()) {
+  if (String(env?.NODE_ENV || "").toLowerCase() === "production" && !authConfigured) {
+    return "NODE_ENV=production but no auth password is configured. Set one via POST /api/auth/setup (or your bootstrap process) before starting; the server refuses to start unauthenticated in production.";
+  }
+  return null;
+}
+
 function startServer() {
+  const refusal = authStartupRefusalReason();
+  if (refusal) {
+    console.error(`[startup] Refusing to start: ${refusal}`);
+    process.exit(1);
+  }
+
   app.listen(PORT, () => {
     runMigrations();
     console.log(`Prospector running on http://localhost:${PORT}`);
