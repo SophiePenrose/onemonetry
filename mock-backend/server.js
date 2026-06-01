@@ -30,6 +30,7 @@ import {
   lookupCompanyOwnership,
   parseCompanyNumbersCSV,
   getBulkDownloadInfo,
+  fetchLatestAccountsDocument,
 } from "./companies-house.js";
 import { getMonthlyZipURLs, getDailyZipURLs } from "./bulk-processor.js";
 import { getDailyAutoPullPlan } from "./daily-autopull-planner.js";
@@ -78,6 +79,7 @@ import {
   getMonitoredCompanies as dbGetMonitoredCompanies,
   getFilingsForCompany,
   getFilingCount,
+  upsertFiling,
   getMonitoredCompanyCount,
   getShortlistCompanies,
   getShortlistCount,
@@ -3647,6 +3649,30 @@ async function processCSVImport(jobId, companyNumbers) {
             status: "active",
             source: "csv_import",
           });
+          try {
+            const doc = await fetchLatestAccountsDocument(num);
+            if (doc?.raw_data) {
+              upsertFiling({
+                company_number: num,
+                filing_date: doc.filing_date,
+                description: doc.description,
+                filing_type: "accounts",
+                barcode: doc.barcode,
+                turnover: doc.turnover,
+                source: "csv_import",
+                raw_data: doc.raw_data,
+              });
+              if (doc.turnover && !newCompany.turnover) {
+                upsertMonitoredCompany({
+                  company_number: num,
+                  company_name: newCompany.name,
+                  latest_turnover: doc.turnover,
+                  status: "active",
+                  source: "csv_import",
+                });
+              }
+            }
+          } catch { /* best-effort: company already imported + monitored */ }
           existingNumbers.add(num);
           if (chData.charge_summary) {
             upsertCompanyChargeSummary(num, chData.charge_summary, "companies_house_api");
@@ -4538,10 +4564,11 @@ app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
 
 // --- LLM Company Analysis ---
 
-import { analyseCompany, isLLMConfigured } from "./llm.js";
+import { analyseCompany, getLLMProviderInfo, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  res.json({ configured: isLLMConfigured(), model: process.env.OPENAI_MODEL || "gpt-4.1-mini" });
+  const { provider, model } = getLLMProviderInfo();
+  res.json({ configured: isLLMConfigured(), provider, model });
 });
 
 app.get("/api/integrations/status", (_req, res) => {
@@ -4565,6 +4592,7 @@ app.get("/api/integrations/status", (_req, res) => {
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
+  const llmProviderInfo = getLLMProviderInfo();
 
   const integrations = {
     companies_house: {
@@ -4574,11 +4602,26 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Company lookups and filing-monitor refresh",
     },
     openai: {
-      configured: isLLMConfigured(),
-      required: true,
+      configured: hasConfiguredSecret(process.env.OPENAI_API_KEY),
+      required: false,
       env_var: "OPENAI_API_KEY",
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       purpose: "Analysis enrichment and advanced email generation",
+    },
+    anthropic: {
+      configured: hasConfiguredSecret(process.env.ANTHROPIC_API_KEY),
+      required: false,
+      env_var: "ANTHROPIC_API_KEY",
+      model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514",
+      purpose: "Claude LLM for analysis + advanced email generation",
+    },
+    llm: {
+      configured: isLLMConfigured(),
+      required: true,
+      env_var: "OPENAI_API_KEY or ANTHROPIC_API_KEY",
+      provider: llmProviderInfo.provider,
+      model: llmProviderInfo.model,
+      purpose: "Active LLM layer for analysis + advanced email generation",
     },
     news_lookup: {
       configured: newsLookupEnabled,
@@ -4712,6 +4755,11 @@ app.get("/api/integrations/status", (_req, res) => {
 
   res.json({
     integrations,
+    llm: {
+      configured: isLLMConfigured(),
+      provider: llmProviderInfo.provider,
+      model: llmProviderInfo.model,
+    },
     missing_required: missingRequired,
     ready_for_production: missingRequired.length === 0,
     env_template: [
@@ -4719,6 +4767,8 @@ app.get("/api/integrations/status", (_req, res) => {
       "# Optional alias supported: CH_API_KEY=your_companies_house_api_key",
       "OPENAI_API_KEY=your_openai_api_key",
       "OPENAI_MODEL=gpt-4.1-mini",
+      "ANTHROPIC_API_KEY=replace_with_anthropic_api_key",
+      "ANTHROPIC_MODEL=claude-sonnet-4-20250514",
       "LUSHA_API_KEY=optional_lusha_key",
       "ENABLE_NEWS_LOOKUP=true",
       "NEWS_API_KEY=optional_newsapi_key",
@@ -6279,7 +6329,20 @@ async function generateAndSaveWeeklyReport() {
 }
 
 
+export function authStartupRefusalReason(env = process.env, authConfigured = isAuthConfigured()) {
+  if (String(env?.NODE_ENV || "").toLowerCase() === "production" && !authConfigured) {
+    return "NODE_ENV=production but no auth password is configured. Set one via POST /api/auth/setup (or your bootstrap process) before starting; the server refuses to start unauthenticated in production.";
+  }
+  return null;
+}
+
 function startServer() {
+  const refusal = authStartupRefusalReason();
+  if (refusal) {
+    console.error(`[startup] Refusing to start: ${refusal}`);
+    process.exit(1);
+  }
+
   app.listen(PORT, () => {
     runMigrations();
     console.log(`Prospector running on http://localhost:${PORT}`);
