@@ -1,5 +1,7 @@
 // Live Companies House Document API fetch is exercised at runtime.
 // CI has no COMPANIES_HOUSE_API_KEY, so this guards the stored-filing-text -> full-dossier invariant.
+// Note: db.js calls fs.mkdirSync(dirname(DATABASE_PATH), { recursive: true }) at load,
+// so the nested data/ subdirectory in the temp DATABASE_PATH below is created automatically.
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
