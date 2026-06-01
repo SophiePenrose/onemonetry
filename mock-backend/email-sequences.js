@@ -520,11 +520,32 @@ function firstOrFallback(items, fallback) {
   return (Array.isArray(items) && items.length > 0) ? items[0] : fallback;
 }
 
+function sanitizeHolisticBodyForVoice(body, options = {}) {
+  const emDashLimit = options.isInitialOutreach ? 2 : 1;
+  let emDashCount = 0;
+  const threeItemListPattern = /\b(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:and\s+)?(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+\b/gi;
+
+  return String(body || "")
+    .replace(threeItemListPattern, (match) => {
+      const parts = match.split(/,\s+/);
+      if (parts.length !== 3) return match;
+      const [first, second, thirdRaw] = parts;
+      const third = thirdRaw.replace(/^and\s+/i, "");
+      return `${first} and ${second} plus ${third}`;
+    })
+    .replace(/—|--/g, (match) => {
+      emDashCount += 1;
+      if (emDashCount <= emDashLimit) return match;
+      return ";";
+    });
+}
+
 function buildHolisticSteps(params) {
   const {
     companyName,
     stakeholderName,
     stakeholderRole,
+    motion,
     analysis,
     turnover,
     senderName,
@@ -543,6 +564,15 @@ function buildHolisticSteps(params) {
   const sequenceInputs = level5.sequence_inputs || {};
   const painRegister = level5.pain_register || [];
   const useCases = rankUseCasesByInternalPriority(level5.revolut_opportunity?.recommended_use_cases || []);
+  const hasRequestedMotion = motion && motion !== HOLISTIC_MOTION;
+  const motionPrioritizedUseCases = hasRequestedMotion
+    ? [...useCases].sort((a, b) => {
+      const aIsRequested = String(a?.product || "") === motion;
+      const bIsRequested = String(b?.product || "") === motion;
+      if (aIsRequested === bIsRequested) return 0;
+      return bIsRequested ? 1 : -1;
+    })
+    : useCases;
 
   const primaryPain = firstOrFallback(painList, "payment and treasury inefficiency");
   const primaryPath = firstOrFallback(oppList, "an operational finance first step");
@@ -550,8 +580,14 @@ function buildHolisticSteps(params) {
   const turnoverBand = turnover ? `around £${(turnover / 1e6).toFixed(1)}M` : "mid-market scale";
   const recommendedAngle = analysis?.recommended_approach || narrative.revolut_advantage || "a sequencing approach that starts from the highest-confidence pain and expands only where value is proven.";
   const topPain = firstOrFallback(painRegister, null);
-  const topUseCase = firstOrFallback(useCases, null);
-  const secondUseCase = useCases.length > 1 ? useCases[1] : null;
+  const topUseCase = firstOrFallback(
+    motionPrioritizedUseCases,
+    hasRequestedMotion ? { product: motion } : null
+  );
+  const secondUseCase = motionPrioritizedUseCases.find(
+    (useCase) => String(useCase?.product || "") !== String(topUseCase?.product || "")
+  ) || null;
+  const preferredProduct = topUseCase?.product || primaryPath;
   const nowTrigger = sequenceInputs.now_trigger || "your latest filing context";
   const quantifiedHook = sequenceInputs.quantified_hook || "a quantification pass after confirming your current provider rates";
   const operationsHook = sequenceInputs.operations_hook || `teams operating at ${turnoverBand}`;
@@ -568,24 +604,24 @@ function buildHolisticSteps(params) {
     {
       delay: 0,
       subject: fixedSubject,
-      body: `Observation & Origin: ${nowTrigger || `${company} has a live finance execution signal in the latest filing`}. ${painSnippet?.quote ? `Source line: "${painSnippet.quote}".` : topPain?.evidence ? `Source line: "${topPain.evidence}".` : "Source: latest filing narrative and accounts context."}\n\nMain Pain Link: ${topPain?.inferred_problem || primaryPain}. This likely creates avoidable execution drag ${roleAnchor}.\n\nValue Path (Suggestions): Start with ${topUseCase?.product || primaryPath} to validate one high-confidence lane first, then expand only where data confirms value.\n\nIf useful, I can share the exact pain-to-action map we would use, including what we would not change initially.`,
+      body: `Observation & Origin: ${nowTrigger || `${company} has a live finance execution signal in the latest filing`}. ${painSnippet?.quote ? `Source line: "${painSnippet.quote}".` : topPain?.evidence ? `Source line: "${topPain.evidence}".` : "Source: latest filing narrative and accounts context."}\n\nMain Pain Link: ${topPain?.inferred_problem || primaryPain}. This likely creates avoidable execution drag ${roleAnchor}.\n\nValue Path (Suggestions): Start with ${preferredProduct} to validate one high-confidence lane first, then expand only where data confirms value.\n\nIf useful, I can share the exact pain-to-action map we would use, including what we would not change initially.`,
     },
     {
       delay: 3,
       subject: fixedSubject,
-      body: `Observation & Origin: ${quantifiedHook}. ${fitSnippet?.quote ? `Source line: "${fitSnippet.quote}".` : "Source: filing signals on scale, complexity, and current process design."}\n\nMain Pain Link: Based on your filed accounts, ${operationsHook}. Without a controlled first-step sequence, teams at this scale often carry hidden cost and reconciliation overhead.\n\nValue Path (Suggestions): Prioritise ${topUseCase?.product || primaryPath}${secondUseCase ? `, then ${secondUseCase.product}` : ""}. ${topUseCase?.example_use_case || "Run the first lane in parallel with current setup to avoid disruption."}\n\nWould a one-page assumptions sheet be useful?`,
+      body: `Observation & Origin: ${quantifiedHook}. ${fitSnippet?.quote ? `Source line: "${fitSnippet.quote}".` : "Source: filing signals on scale and current process complexity."}\n\nMain Pain Link: Based on your filed accounts, ${operationsHook}. Without a controlled first-step sequence, teams at this scale often carry hidden cost and reconciliation overhead.\n\nValue Path (Suggestions): Prioritise ${preferredProduct}${secondUseCase ? `, then ${secondUseCase.product}` : ""}. ${topUseCase?.example_use_case || "Run the first lane in parallel with current setup to avoid disruption."}\n\nWould a one-page assumptions sheet be useful?`,
     },
     {
       delay: 7,
       subject: fixedSubject,
-      body: `Observation & Origin: Governance risk usually appears where strategy intent and day-to-day execution diverge; in your case that appears tied to ${governanceHook}. ${gapSnippet?.quote ? `Source line: "${gapSnippet.quote}".` : directorsPhrase ? `Source line: "${directorsPhrase}".` : "Source: filing context and operating narrative."}\n\nMain Pain Link: Left unaddressed, this typically shows up as avoidable delay, leakage, and fragmented accountability across finance workflows.\n\nValue Path (Suggestions): ${objectionPreempt} ${recommendedAngle} Keep scope tight at first: one lane, one owner, one measurement loop.\n\nIf useful, I can share the short brief we would use with a CFO/FD team to validate this in one pass.`,
+      body: `Observation & Origin: Governance risk usually appears where strategy intent and day-to-day execution diverge; in your case that appears tied to ${governanceHook}. ${gapSnippet?.quote ? `Source line: "${gapSnippet.quote}".` : directorsPhrase ? `Source line: "${directorsPhrase}".` : "Source: filing context and operating narrative."}\n\nMain Pain Link: Left unaddressed, this typically creates avoidable delay and fragmented accountability across finance workflows, with cost leakage over time.\n\nValue Path (Suggestions): ${objectionPreempt} ${recommendedAngle} Keep scope tight at first by starting with a single lane under one owner and measuring one loop.\n\nIf useful, I can share the short brief we would use with a CFO/FD team to validate this in one pass.`,
     },
   ];
 
   return steps.map((step, idx) => ({
     step_number: idx + 1,
     subject: step.subject,
-    body: step.body,
+    body: sanitizeHolisticBodyForVoice(step.body, { isInitialOutreach: idx === 0 }),
     send_delay_days: step.delay,
     status: "pending",
   }));
@@ -758,80 +794,25 @@ export function saveGeneratedSequence(params) {
 export function generateSequence(params) {
   const { companyId, companyName, stakeholderName, stakeholderRole, motion, analysis, turnover, employeeCount, industry } = params;
 
-  const requestedMotion = motion && SEQUENCE_TEMPLATES[motion] ? motion : HOLISTIC_MOTION;
+  const requestedMotion = motion === HOLISTIC_MOTION || (motion && SEQUENCE_TEMPLATES[motion])
+    ? motion
+    : HOLISTIC_MOTION;
   const senderName = String(getSetting("sender_name", "") || "").trim();
 
-  let steps = [];
-
-  if (requestedMotion === HOLISTIC_MOTION) {
-    steps = buildHolisticSteps({
-      companyName,
-      stakeholderName,
-      stakeholderRole,
-      analysis,
-      turnover,
-      employeeCount,
-      industry,
-      senderName,
-    });
-  }
-
-  const template = requestedMotion === HOLISTIC_MOTION ? null : SEQUENCE_TEMPLATES[requestedMotion];
-  if (!template && requestedMotion !== HOLISTIC_MOTION) return null;
-
-  const firstName = stakeholderName?.split(" ")[0] || "there";
-
-  const internationalDetail = analysis?.international_exposure?.present
-    ? ` (${analysis.international_exposure.details})`
-    : "";
-
-  const firstPain = Array.isArray(analysis?.pain_indicators) ? analysis.pain_indicators[0] : null;
-  const firstPainText = typeof firstPain === "string"
-    ? firstPain
-    : (firstPain?.pain || firstPain?.indicator || "");
-  const painHook = firstPainText
-    ? `I also noticed ${String(firstPainText).toLowerCase()} — something we help similar businesses address directly.`
-    : "";
-
-  const firstCompetitor = Array.isArray(analysis?.competitors_detected) ? analysis.competitors_detected[0] : null;
-  const competitorName = typeof firstCompetitor === "string" ? firstCompetitor : firstCompetitor?.name;
-  const competitorDisplacement = typeof firstCompetitor === "string" ? "" : firstCompetitor?.displacement_angle;
-  const competitorAngle = competitorName
-    ? `I understand you may currently work with ${competitorName}. Many of our clients switched from similar providers and typically see ${String(competitorDisplacement || "meaningful improvement").toLowerCase()}.`
-    : "Many finance teams we speak to are surprised by how much they're overpaying on what feels like a commodity service.";
-
-  const estimatedSavings = turnover ? Math.round((turnover * 0.003) / 1000) + "K" : "50K+";
-
-  const vars = {
-    "{{company}}": companyName || "your company",
-    "{{first_name}}": firstName,
-    "{{sender_name}}": senderName,
-    "{{international_detail}}": internationalDetail,
-    "{{pain_hook}}": painHook,
-    "{{competitor_angle}}": competitorAngle,
-    "{{estimated_savings}}": estimatedSavings,
-    "{{employee_count}}": employeeCount?.toLocaleString() || "100",
-    "{{industry}}": industry || "mid-market",
-  };
+  const steps = buildHolisticSteps({
+    companyName,
+    stakeholderName,
+    stakeholderRole,
+    motion: requestedMotion,
+    analysis,
+    turnover,
+    employeeCount,
+    industry,
+    senderName,
+  });
 
   const sequenceId = `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const fixedSubject = buildResearchHeaderSubject(companyName || "Company");
-
-  if (template) {
-    steps = template.steps.map((step, idx) => {
-      let body = step.body_template;
-      for (const [key, val] of Object.entries(vars)) {
-        body = body.replaceAll(key, val);
-      }
-      return {
-        step_number: idx + 1,
-        subject: fixedSubject,
-        body,
-        send_delay_days: step.delay,
-        status: "pending",
-      };
-    });
-  }
 
   return saveGeneratedSequence({
     id: sequenceId,
