@@ -815,8 +815,20 @@ export function generateSequence(params) {
 }
 
 export function getSequencesForCompany(companyId) {
-  const sequences = db.prepare("SELECT * FROM email_sequences WHERE company_id = ? ORDER BY created_at DESC").all(companyId);
-  return sequences.map((seq) => ({
+  const sequences = db.prepare("SELECT * FROM email_sequences WHERE company_id = ?").all(companyId);
+
+  const parseSequenceTimestamp = (value) => {
+    const ts = Date.parse(String(value || ""));
+    return Number.isFinite(ts) ? ts : 0;
+  };
+
+  const sorted = [...sequences].sort((a, b) => {
+    const aTs = Math.max(parseSequenceTimestamp(a.updated_at), parseSequenceTimestamp(a.created_at));
+    const bTs = Math.max(parseSequenceTimestamp(b.updated_at), parseSequenceTimestamp(b.created_at));
+    return bTs - aTs;
+  });
+
+  return sorted.map((seq) => ({
     ...seq,
     steps: db.prepare("SELECT * FROM email_steps WHERE sequence_id = ? ORDER BY step_number").all(seq.id).map((step) => ({
       ...step,

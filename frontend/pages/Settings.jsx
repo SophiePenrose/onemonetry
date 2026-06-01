@@ -71,13 +71,28 @@ export default function Settings() {
   const [preview, setPreview] = useState(null);
   const [integrationStatus, setIntegrationStatus] = useState(null);
   const [integrationLoading, setIntegrationLoading] = useState(false);
+  const [integrationError, setIntegrationError] = useState(null);
+  const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
 
   function loadIntegrationStatus() {
     setIntegrationLoading(true);
+    setIntegrationError(null);
     fetch("/api/integrations/status")
-      .then((r) => r.json())
-      .then((d) => setIntegrationStatus(d))
-      .catch(() => setIntegrationStatus(null))
+      .then(async (r) => {
+        if (!r.ok) {
+          throw new Error(`Failed to load integration status (${r.status})`);
+        }
+        return r.json();
+      })
+      .then((d) => {
+        setIntegrationStatus(d);
+        setIntegrationCheckedAt(new Date().toISOString());
+      })
+      .catch((err) => {
+        setIntegrationStatus(null);
+        setIntegrationError(err?.message || "Integration status unavailable");
+        setIntegrationCheckedAt(new Date().toISOString());
+      })
       .finally(() => setIntegrationLoading(false));
   }
 
@@ -165,6 +180,24 @@ export default function Settings() {
 
   if (!config) return <div style={{ color: "#888" }}>Loading settings…</div>;
 
+  const integrationEntries = integrationStatus?.integrations
+    ? Object.entries(integrationStatus.integrations)
+    : [];
+  const sortedIntegrationEntries = [...integrationEntries].sort((a, b) => {
+    const aCfg = a[1]?.configured === true ? 1 : 0;
+    const bCfg = b[1]?.configured === true ? 1 : 0;
+    if (bCfg !== aCfg) return bCfg - aCfg;
+
+    const aReq = a[1]?.required === true ? 1 : 0;
+    const bReq = b[1]?.required === true ? 1 : 0;
+    if (bReq !== aReq) return bReq - aReq;
+
+    return String(a[0] || "").localeCompare(String(b[0] || ""));
+  });
+  const configuredCount = integrationEntries.filter(([, cfg]) => cfg?.configured === true).length;
+  const requiredCount = integrationEntries.filter(([, cfg]) => cfg?.required === true).length;
+  const requiredConfiguredCount = integrationEntries.filter(([, cfg]) => cfg?.required === true && cfg?.configured === true).length;
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
@@ -234,7 +267,19 @@ export default function Settings() {
 
       <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <h4 style={{ margin: 0, fontSize: 15 }}>API Integrations Setup</h4>
+          <div>
+            <h4 style={{ margin: 0, fontSize: 15 }}>API Integrations Setup</h4>
+            {!integrationLoading && integrationEntries.length > 0 && (
+              <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
+                {configuredCount}/{integrationEntries.length} configured · required {requiredConfiguredCount}/{requiredCount}
+              </div>
+            )}
+            {!integrationLoading && integrationCheckedAt && (
+              <div style={{ marginTop: 3, fontSize: 11, color: "#64748b" }}>
+                Last checked: {new Date(integrationCheckedAt).toLocaleString("en-GB")}
+              </div>
+            )}
+          </div>
           <button
             onClick={loadIntegrationStatus}
             style={{
@@ -250,9 +295,21 @@ export default function Settings() {
           <div style={{ fontSize: 12, color: "#888" }}>Checking integration status...</div>
         )}
 
+        {!integrationLoading && integrationError && (
+          <div style={{ fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 10px" }}>
+            {integrationError}
+          </div>
+        )}
+
+        {!integrationLoading && !integrationError && !integrationStatus && (
+          <div style={{ fontSize: 12, color: "#64748b", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            Integration status has not loaded yet. Click "Refresh Status" to retry.
+          </div>
+        )}
+
         {!integrationLoading && integrationStatus?.integrations && (
           <div>
-            {Object.entries(integrationStatus.integrations).map(([name, cfg]) => (
+            {sortedIntegrationEntries.map(([name, cfg]) => (
               <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#333", textTransform: "capitalize" }}>{name.replace(/_/g, " ")}</div>
