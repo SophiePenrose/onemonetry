@@ -235,18 +235,43 @@ const MOTION_SIGNALS = {
 
 // --- Competitor detection ---
 const COMPETITOR_PATTERNS = {
-  "HSBC": { regex: /\bHSBC\b/i, products: ["FX", "FX Forwards"], weakness: "digital_friction", stickiness: 4 },
-  "Barclays": { regex: /\bBarclays?\b/i, products: ["FX", "Cards", "Merchant Acquiring"], weakness: "legacy_costs", stickiness: 4 },
-  "NatWest": { regex: /\bNatWest\b/i, products: ["FX"], weakness: "digital_friction", stickiness: 4 },
-  "Lloyds": { regex: /\bLloyds\b/i, products: ["FX"], weakness: "digital_friction", stickiness: 4 },
-  "Worldpay": { regex: /\bWorldpay\b/i, products: ["Merchant Acquiring"], weakness: "legacy_pricing", stickiness: 4 },
-  "Stripe": { regex: /\bStripe\b/i, products: ["Merchant Acquiring", "API Integrations"], weakness: "slow_settlement", stickiness: 3.5 },
-  "Adyen": { regex: /\bAdyen\b/i, products: ["Merchant Acquiring"], weakness: "enterprise_gated", stickiness: 4 },
-  "Wise": { regex: /\bWise\b|TransferWise/i, products: ["FX"], weakness: "no_forwards_no_cards", stickiness: 2 },
-  "Ebury": { regex: /\bEbury\b/i, products: ["FX", "FX Forwards"], weakness: "no_banking_ecosystem", stickiness: 3 },
-  "Pleo": { regex: /\bPleo\b/i, products: ["Cards", "Spend Management"], weakness: "expensive_fx", stickiness: 2 },
-  "SAP Concur": { regex: /\b(?:SAP\s+)?Concur\b/i, products: ["Spend Management"], weakness: "expensive_complex", stickiness: 3 },
-  "Amex": { regex: /\bAm(?:erican\s+)?Ex(?:press)?\b/i, products: ["Cards"], weakness: "high_fees_limited_acceptance", stickiness: 3 },
+  "HSBC": { regex: /\bHSBC\b/i, products: ["FX", "FX Forwards"], weakness: "digital_friction", stickiness: 4.5 },
+  "Barclays": { regex: /\bBarclays?\b/i, products: ["FX", "Cards", "Merchant Acquiring"], weakness: "legacy_costs", stickiness: 4.5 },
+  "NatWest": { regex: /\bNatWest\b/i, products: ["FX", "Cards"], weakness: "digital_friction", stickiness: 4.4 },
+  "Lloyds": { regex: /\bLloyds\b/i, products: ["FX", "Cards"], weakness: "digital_friction", stickiness: 4.4 },
+  "Santander": { regex: /\bSantander\b/i, products: ["FX", "Cards"], weakness: "legacy_costs", stickiness: 4.2 },
+  "JP Morgan": { regex: /\b(?:JP\s*Morgan|JPMorgan)\b/i, products: ["FX", "FX Forwards"], weakness: "enterprise_gated", stickiness: 4.5 },
+  "Citi": { regex: /\b(?:Citi|Citibank)\b/i, products: ["FX", "FX Forwards"], weakness: "enterprise_gated", stickiness: 4.2 },
+  "Deutsche Bank": { regex: /\bDeutsche\s+Bank\b/i, products: ["FX", "FX Forwards"], weakness: "enterprise_gated", stickiness: 4.1 },
+  "Standard Chartered": { regex: /\bStandard\s+Chartered\b/i, products: ["FX", "FX Forwards"], weakness: "enterprise_gated", stickiness: 4.1 },
+  "Metro Bank": { regex: /\bMetro\s+Bank\b/i, products: ["Cards"], weakness: "limited_mm_depth", stickiness: 3.4 },
+  "Tide": { regex: /\bTide\b/i, products: ["Cards", "Spend Management", "API Integrations"], weakness: "mtd_compliance_edge", stickiness: 3.1 },
+  "Starling Business": { regex: /\bStarling(?:\s+Business)?\b/i, products: ["Cards"], weakness: "scale_cliff", stickiness: 3.2 },
+  "Monzo Business": { regex: /\bMonzo(?:\s+Business)?\b/i, products: ["Cards"], weakness: "scale_cliff", stickiness: 3.0 },
+  "Worldpay": { regex: /\bWorldpay\b/i, products: ["Merchant Acquiring"], weakness: "legacy_pricing", stickiness: 4.0 },
+  "Stripe": { regex: /\bStripe\b/i, products: ["Merchant Acquiring", "API Integrations"], weakness: "slow_settlement", stickiness: 3.8 },
+  "Adyen": { regex: /\bAdyen\b/i, products: ["Merchant Acquiring"], weakness: "enterprise_gated", stickiness: 4.0 },
+  "Checkout.com": { regex: /\bCheckout\.com\b|\bCheckout\b/i, products: ["Merchant Acquiring"], weakness: "enterprise_gated", stickiness: 3.7 },
+  "Square": { regex: /\bSquare\b/i, products: ["Merchant Acquiring", "Cards"], weakness: "limited_mm_depth", stickiness: 3.3 },
+  "SumUp": { regex: /\bSumUp\b/i, products: ["Merchant Acquiring"], weakness: "limited_mm_depth", stickiness: 2.8 },
+  "Zettle": { regex: /\b(?:i?Zettle|Zettle)\b/i, products: ["Merchant Acquiring"], weakness: "limited_mm_depth", stickiness: 2.9 },
+  "PayPal": { regex: /\bPayPal\b/i, products: ["Merchant Acquiring", "Revolut Pay"], weakness: "legacy_pricing", stickiness: 3.6 },
+  "Shopify Payments": { regex: /\bShopify\s+Payments\b|\bShopify\b/i, products: ["Merchant Acquiring", "Revolut Pay", "API Integrations"], weakness: "ecosystem_lock_in", stickiness: 3.9 },
+  "Wise": { regex: /\bWise\b|TransferWise/i, products: ["FX"], weakness: "no_forwards_no_cards", stickiness: 2.4 },
+  "Airwallex": { regex: /\bAirwallex\b/i, products: ["FX", "API Integrations"], weakness: "no_credit_no_treasury", stickiness: 3.0 },
+  "Ebury": { regex: /\bEbury\b/i, products: ["FX", "FX Forwards"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
+  "OFX": { regex: /\bOFX\b/i, products: ["FX", "FX Forwards"], weakness: "single_product_scope", stickiness: 2.5 },
+  "Moneycorp": { regex: /\bMoneycorp\b/i, products: ["FX", "FX Forwards"], weakness: "single_product_scope", stickiness: 3.0 },
+  "CurrencyCloud": { regex: /\bCurrencyCloud\b/i, products: ["FX", "API Integrations"], weakness: "single_product_scope", stickiness: 2.8 },
+  "Pleo": { regex: /\bPleo\b/i, products: ["Cards", "Spend Management"], weakness: "expensive_fx", stickiness: 2.8 },
+  "Payhawk": { regex: /\bPayhawk\b/i, products: ["Cards", "Spend Management"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
+  "Spendesk": { regex: /\bSpendesk\b/i, products: ["Spend Management"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
+  "Ramp": { regex: /\bRamp\b/i, products: ["Spend Management", "Cards"], weakness: "no_banking_ecosystem", stickiness: 3.2 },
+  "SAP Concur": { regex: /\b(?:SAP\s+)?Concur\b/i, products: ["Spend Management", "API Integrations"], weakness: "expensive_complex", stickiness: 4.1 },
+  "Coupa": { regex: /\bCoupa\b/i, products: ["Spend Management", "API Integrations"], weakness: "expensive_complex", stickiness: 4.0 },
+  "Kyriba": { regex: /\bKyriba\b/i, products: ["FX", "FX Forwards", "API Integrations"], weakness: "enterprise_gated", stickiness: 4.0 },
+  "Capital On Tap": { regex: /\bCapital\s+On\s+Tap\b/i, products: ["Cards"], weakness: "single_product_scope", stickiness: 3.1 },
+  "Amex": { regex: /\bAm(?:erican\s+)?Ex(?:press)?\b/i, products: ["Cards"], weakness: "high_fees_limited_acceptance", stickiness: 3.5 },
 };
 
 const COMPETITOR_ADVANTAGE_INFERENCE = {
@@ -260,6 +285,52 @@ const COMPETITOR_ADVANTAGE_INFERENCE = {
   expensive_fx: "Position lower total cost for cross-border and multi-currency spend flows.",
   expensive_complex: "Position leaner implementation and lower overhead for finance teams.",
   high_fees_limited_acceptance: "Position wider acceptance and better economics for day-to-day spend.",
+  no_credit_no_treasury: "Position broader platform depth where treasury, spend, and banking need to be unified.",
+  single_product_scope: "Position consolidation value by replacing point solutions with one finance operating stack.",
+  scale_cliff: "Position stronger multi-user governance and controls as teams and entities scale.",
+  ecosystem_lock_in: "Position banking-led optionality and lower dependency on a closed commerce ecosystem.",
+  mtd_compliance_edge: "Acknowledge MTD strengths and counter with broader multi-product value and cross-border depth.",
+  limited_mm_depth: "Position deeper controls, multi-entity support, and higher operational ceiling for mid-market finance teams.",
+};
+
+const COMPETITOR_INTELLIGENCE = {
+  "HSBC": { isolation_score: 0.38, holistic_score: 0.45, lock_in_strength: 0.92, platform_type: "full_stack_bank", credit_anchor: true },
+  "Barclays": { isolation_score: 0.40, holistic_score: 0.46, lock_in_strength: 0.90, platform_type: "full_stack_bank", credit_anchor: true },
+  "NatWest": { isolation_score: 0.42, holistic_score: 0.50, lock_in_strength: 0.88, platform_type: "full_stack_bank", credit_anchor: true },
+  "Lloyds": { isolation_score: 0.40, holistic_score: 0.46, lock_in_strength: 0.89, platform_type: "full_stack_bank", credit_anchor: true },
+  "Santander": { isolation_score: 0.46, holistic_score: 0.52, lock_in_strength: 0.84, platform_type: "full_stack_bank", credit_anchor: true },
+  "JP Morgan": { isolation_score: 0.50, holistic_score: 0.46, lock_in_strength: 0.88, platform_type: "enterprise_bank", credit_anchor: true },
+  "Citi": { isolation_score: 0.55, holistic_score: 0.52, lock_in_strength: 0.84, platform_type: "enterprise_bank", credit_anchor: true },
+  "Deutsche Bank": { isolation_score: 0.56, holistic_score: 0.52, lock_in_strength: 0.82, platform_type: "enterprise_bank", credit_anchor: true },
+  "Standard Chartered": { isolation_score: 0.56, holistic_score: 0.53, lock_in_strength: 0.80, platform_type: "enterprise_bank", credit_anchor: true },
+  "Metro Bank": { isolation_score: 0.66, holistic_score: 0.62, lock_in_strength: 0.70, platform_type: "full_stack_bank", credit_anchor: true },
+  "Tide": { isolation_score: 0.63, holistic_score: 0.67, lock_in_strength: 0.60, platform_type: "digital_bank", credit_anchor: false },
+  "Starling Business": { isolation_score: 0.66, holistic_score: 0.69, lock_in_strength: 0.58, platform_type: "digital_bank", credit_anchor: false },
+  "Monzo Business": { isolation_score: 0.72, holistic_score: 0.72, lock_in_strength: 0.55, platform_type: "digital_bank", credit_anchor: false },
+  "Wise": { isolation_score: 0.53, holistic_score: 0.84, lock_in_strength: 0.52, platform_type: "single_product", credit_anchor: false },
+  "Airwallex": { isolation_score: 0.56, holistic_score: 0.80, lock_in_strength: 0.58, platform_type: "single_product", credit_anchor: false },
+  "Ebury": { isolation_score: 0.52, holistic_score: 0.74, lock_in_strength: 0.60, platform_type: "single_product", credit_anchor: false },
+  "OFX": { isolation_score: 0.72, holistic_score: 0.82, lock_in_strength: 0.45, platform_type: "single_product", credit_anchor: false },
+  "Moneycorp": { isolation_score: 0.68, holistic_score: 0.76, lock_in_strength: 0.56, platform_type: "single_product", credit_anchor: false },
+  "CurrencyCloud": { isolation_score: 0.70, holistic_score: 0.78, lock_in_strength: 0.50, platform_type: "single_product", credit_anchor: false },
+  "Pleo": { isolation_score: 0.40, holistic_score: 0.86, lock_in_strength: 0.58, platform_type: "single_product", credit_anchor: false },
+  "Payhawk": { isolation_score: 0.50, holistic_score: 0.78, lock_in_strength: 0.62, platform_type: "single_product", credit_anchor: false },
+  "Spendesk": { isolation_score: 0.50, holistic_score: 0.76, lock_in_strength: 0.61, platform_type: "single_product", credit_anchor: false },
+  "Ramp": { isolation_score: 0.44, holistic_score: 0.82, lock_in_strength: 0.65, platform_type: "single_product", credit_anchor: false },
+  "SAP Concur": { isolation_score: 0.54, holistic_score: 0.61, lock_in_strength: 0.82, platform_type: "enterprise_suite", credit_anchor: false },
+  "Coupa": { isolation_score: 0.48, holistic_score: 0.56, lock_in_strength: 0.82, platform_type: "enterprise_suite", credit_anchor: false },
+  "Kyriba": { isolation_score: 0.52, holistic_score: 0.58, lock_in_strength: 0.84, platform_type: "enterprise_suite", credit_anchor: false },
+  "Stripe": { isolation_score: 0.34, holistic_score: 0.76, lock_in_strength: 0.82, platform_type: "payments_platform", credit_anchor: false },
+  "Adyen": { isolation_score: 0.46, holistic_score: 0.68, lock_in_strength: 0.80, platform_type: "payments_platform", credit_anchor: false },
+  "Checkout.com": { isolation_score: 0.50, holistic_score: 0.72, lock_in_strength: 0.72, platform_type: "payments_platform", credit_anchor: false },
+  "Worldpay": { isolation_score: 0.60, holistic_score: 0.74, lock_in_strength: 0.75, platform_type: "payments_platform", credit_anchor: false },
+  "Square": { isolation_score: 0.58, holistic_score: 0.72, lock_in_strength: 0.67, platform_type: "payments_platform", credit_anchor: false },
+  "SumUp": { isolation_score: 0.74, holistic_score: 0.80, lock_in_strength: 0.45, platform_type: "payments_platform", credit_anchor: false },
+  "Zettle": { isolation_score: 0.70, holistic_score: 0.78, lock_in_strength: 0.50, platform_type: "payments_platform", credit_anchor: false },
+  "PayPal": { isolation_score: 0.60, holistic_score: 0.70, lock_in_strength: 0.72, platform_type: "payments_platform", credit_anchor: false },
+  "Shopify Payments": { isolation_score: 0.62, holistic_score: 0.70, lock_in_strength: 0.76, platform_type: "commerce_anchor", credit_anchor: false },
+  "Capital On Tap": { isolation_score: 0.58, holistic_score: 0.72, lock_in_strength: 0.62, platform_type: "single_product", credit_anchor: false },
+  "Amex": { isolation_score: 0.54, holistic_score: 0.68, lock_in_strength: 0.70, platform_type: "single_product", credit_anchor: false },
 };
 
 const SPARSE_INDUSTRY_PRIORS = {
@@ -326,6 +397,66 @@ const COMPETITOR_SCORING_EFFECTS = {
     competitor_context_delta: 0.05,
     switching_feasibility_delta: 0.03,
   },
+  "Payhawk": {
+    motion_boosts: { "Spend Management": 0.1, "Cards": 0.06 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.03,
+  },
+  "Spendesk": {
+    motion_boosts: { "Spend Management": 0.09 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: 0.02,
+  },
+  "Ramp": {
+    motion_boosts: { "Spend Management": 0.1, "Cards": 0.05 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.03,
+  },
+  "Checkout.com": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "API Integrations": 0.06 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.02,
+  },
+  "Airwallex": {
+    motion_boosts: { "FX": 0.09, "API Integrations": 0.08 },
+    competitor_context_delta: 0.06,
+    switching_feasibility_delta: 0.04,
+  },
+  "PayPal": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "Revolut Pay": 0.08 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: 0.02,
+  },
+  "Shopify Payments": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "Revolut Pay": 0.1, "API Integrations": 0.05 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: -0.04,
+  },
+  "Square": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "Revolut Pay": 0.07 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.05,
+  },
+  "SumUp": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "Revolut Pay": 0.08 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.06,
+  },
+  "Tide": {
+    motion_boosts: { "Spend Management": 0.06, "API Integrations": 0.06 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: -0.02,
+  },
+  "Starling Business": {
+    motion_boosts: { "Cards": 0.07 },
+    competitor_context_delta: 0.03,
+    switching_feasibility_delta: 0.01,
+  },
+  "Monzo Business": {
+    motion_boosts: { "Cards": 0.06 },
+    competitor_context_delta: 0.03,
+    switching_feasibility_delta: 0.01,
+  },
   "HSBC": {
     motion_boosts: { "FX": 0.07 },
     competitor_context_delta: 0.04,
@@ -345,6 +476,21 @@ const COMPETITOR_SCORING_EFFECTS = {
     motion_boosts: { "FX": 0.05 },
     competitor_context_delta: 0.02,
     switching_feasibility_delta: -0.07,
+  },
+  "Santander": {
+    motion_boosts: { "FX": 0.05 },
+    competitor_context_delta: 0.02,
+    switching_feasibility_delta: -0.05,
+  },
+  "Kyriba": {
+    motion_boosts: { "FX": 0.05, "FX Forwards": 0.05, "API Integrations": 0.05 },
+    competitor_context_delta: 0.03,
+    switching_feasibility_delta: -0.04,
+  },
+  "Coupa": {
+    motion_boosts: { "Spend Management": 0.07, "API Integrations": 0.05 },
+    competitor_context_delta: 0.03,
+    switching_feasibility_delta: -0.04,
   },
 };
 
@@ -518,6 +664,102 @@ function normalizeLookupToken(value) {
     .trim();
 }
 
+function uniqueStrings(values = []) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    const next = String(value || "").trim();
+    if (!next) continue;
+    const token = next.toLowerCase();
+    if (seen.has(token)) continue;
+    seen.add(token);
+    output.push(next);
+  }
+  return output;
+}
+
+function resolveCompetitorProfile(name) {
+  const token = normalizeLookupToken(name);
+  if (!token) return null;
+
+  let fallback = null;
+  let fallbackScore = 0;
+
+  for (const [knownName, profile] of Object.entries(COMPETITOR_INTELLIGENCE)) {
+    const knownToken = normalizeLookupToken(knownName);
+    if (!knownToken) continue;
+    if (token === knownToken) return { name: knownName, ...profile };
+
+    if (token.includes(knownToken) || knownToken.includes(token)) {
+      const score = Math.min(token.length, knownToken.length);
+      if (score > fallbackScore) {
+        fallback = { name: knownName, ...profile };
+        fallbackScore = score;
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function inferIsolationScoreFromStickiness(stickiness) {
+  const normalized = Math.max(1, Math.min(Number(stickiness || 3), 5));
+  return clamp01(0.82 - ((normalized - 1) * 0.12));
+}
+
+function inferHolisticScoreFromIsolation(isolationScore, platformType) {
+  const base = clamp01(Number(isolationScore || 0.5));
+  if (["single_product", "payments_platform"].includes(platformType)) {
+    return clamp01(base + 0.18);
+  }
+  if (["full_stack_bank", "enterprise_bank", "enterprise_suite", "commerce_anchor"].includes(platformType)) {
+    return clamp01(base - 0.06);
+  }
+  return clamp01(base + 0.05);
+}
+
+function buildCompetitorRecord(raw = {}) {
+  const input = raw && typeof raw === "object" ? raw : { name: raw };
+  const name = String(input.name || "").trim();
+  if (!name) return null;
+
+  const profile = resolveCompetitorProfile(name);
+  const products = uniqueStrings([...(profile?.products || []), ...asArray(input.products)]);
+  const weakness = String(input.weakness || profile?.weakness || "single_product_scope");
+  const stickinessRaw = Number(input.stickiness ?? profile?.stickiness ?? 3);
+  const stickiness = Math.max(1.5, Math.min(Number.isFinite(stickinessRaw) ? stickinessRaw : 3, 5));
+  const platformType = String(input.platform_type || profile?.platform_type || "unknown");
+  const isolationScore = clamp01(Number(
+    input.isolation_score
+    ?? profile?.isolation_score
+    ?? inferIsolationScoreFromStickiness(stickiness)
+  ));
+  const holisticScore = clamp01(Number(
+    input.holistic_score
+    ?? profile?.holistic_score
+    ?? inferHolisticScoreFromIsolation(isolationScore, platformType)
+  ));
+  const lockInStrength = clamp01(Number(input.lock_in_strength ?? profile?.lock_in_strength ?? (stickiness / 5)));
+  const creditAnchor = Boolean(input.credit_anchor ?? profile?.credit_anchor ?? false);
+
+  return {
+    name,
+    products,
+    weakness,
+    stickiness,
+    platform_type: platformType,
+    isolation_score: isolationScore,
+    holistic_score: holisticScore,
+    lock_in_strength: lockInStrength,
+    credit_anchor: creditAnchor,
+    source: input.source || null,
+    snippet: input.snippet || null,
+    inferred_advantage: input.inferred_advantage
+      || COMPETITOR_ADVANTAGE_INFERENCE[weakness]
+      || "Position a clearer operating model with stronger multi-product leverage.",
+  };
+}
+
 function computeIndustryProductFitHint(industries = []) {
   const entries = asArray(industries)
     .map((industry) => ({
@@ -681,18 +923,38 @@ function applyMotionBoostMap(motionScores, boostMap, sourceKey, capPerMotion = 0
 
 function mergeCompetitorSignals(existingCompetitors, extraCompetitors) {
   const output = Array.isArray(existingCompetitors) ? existingCompetitors : [];
-  const existingByName = new Map(output.map((c) => [normalizeLookupToken(c?.name), c]));
+  const existingByName = new Map();
+
+  for (let idx = 0; idx < output.length; idx += 1) {
+    const enriched = buildCompetitorRecord(output[idx]);
+    if (!enriched) continue;
+    output[idx] = { ...output[idx], ...enriched, snippet: output[idx]?.snippet || enriched.snippet };
+    existingByName.set(normalizeLookupToken(enriched.name), output[idx]);
+  }
 
   for (const item of asArray(extraCompetitors)) {
-    const nameKey = normalizeLookupToken(item?.name);
-    if (!nameKey) continue;
+    const enriched = buildCompetitorRecord(item);
+    if (!enriched) continue;
+
+    const nameKey = normalizeLookupToken(enriched.name);
     const existing = existingByName.get(nameKey);
-    if (existing) {
-      if (!existing.source && item?.source) existing.source = item.source;
+    if (!existing) {
+      output.push(enriched);
+      existingByName.set(nameKey, enriched);
       continue;
     }
-    output.push(item);
-    existingByName.set(nameKey, item);
+
+    existing.products = uniqueStrings([...(existing.products || []), ...(enriched.products || [])]);
+    existing.stickiness = Math.max(Number(existing.stickiness || 0), Number(enriched.stickiness || 0));
+    existing.lock_in_strength = clamp01(Math.max(Number(existing.lock_in_strength || 0), Number(enriched.lock_in_strength || 0)));
+    existing.isolation_score = clamp01(Math.max(Number(existing.isolation_score || 0), Number(enriched.isolation_score || 0)));
+    existing.holistic_score = clamp01(Math.max(Number(existing.holistic_score || 0), Number(enriched.holistic_score || 0)));
+    existing.credit_anchor = Boolean(existing.credit_anchor || enriched.credit_anchor);
+    if (!existing.source && enriched.source) existing.source = enriched.source;
+    if (!existing.snippet && enriched.snippet) existing.snippet = enriched.snippet;
+    if (!existing.weakness) existing.weakness = enriched.weakness;
+    if (!existing.inferred_advantage) existing.inferred_advantage = enriched.inferred_advantage;
+    if (!existing.platform_type || existing.platform_type === "unknown") existing.platform_type = enriched.platform_type;
   }
 
   return output;
@@ -1992,7 +2254,7 @@ function detectCreditGapPenalty(text, competitors, chargeSummary) {
   };
 }
 
-function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary, competitorTuning = null, enrichmentTuning = null) {
+function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary, competitorTuning = null, enrichmentTuning = null, competitorContext = null) {
   const rawText = String(text || "");
   const outstandingCharges = Number(chargeSummary?.outstanding_count || 0);
   const uniqueLenders = Number(chargeSummary?.unique_lenders || 0);
@@ -2052,6 +2314,27 @@ function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary
     adjustments.push({ reason: "negative_qualification_drag", impact: -0.04 });
   }
 
+  const anchorDrag = Number(competitorContext?.anchor_drag || 0);
+  if (anchorDrag > 0) {
+    const impact = -Math.min(anchorDrag * 0.5, 0.14);
+    score += impact;
+    adjustments.push({ reason: "anchor_effect_drag", impact: Math.round(impact * 100) / 100 });
+  }
+
+  const consolidationLift = Number(competitorContext?.platform_consolidation_bonus || 0)
+    + Number(competitorContext?.fragmented_stack_bonus || 0);
+  if (consolidationLift > 0) {
+    const impact = Math.min(consolidationLift * 0.55, 0.12);
+    score += impact;
+    adjustments.push({ reason: "platform_consolidation_opportunity", impact: Math.round(impact * 100) / 100 });
+  }
+
+  const singleProductCount = Number(competitorContext?.single_product_count || 0);
+  if (singleProductCount >= 3) {
+    score += 0.03;
+    adjustments.push({ reason: "multi_specialist_displacement", impact: 0.03 });
+  }
+
   const competitorFeasibilityDelta = Number(competitorTuning?.switching_feasibility_delta || 0);
   if (competitorFeasibilityDelta !== 0) {
     score += competitorFeasibilityDelta;
@@ -2082,6 +2365,9 @@ function scoreSwitchingFeasibility(text, competitors, qualSignals, chargeSummary
     has_long_tenure_incumbent: hasLongTenureIncumbent,
     has_strong_bank_incumbent: hasStrongBankIncumbent,
     integration_ready_stack: !!enrichmentTuning?.integrationReady,
+    competitor_context_signal: competitorContext?.strategic_signal || "none",
+    platform_consolidation_bonus: Number(competitorContext?.platform_consolidation_bonus || 0),
+    anchor_drag: Number(competitorContext?.anchor_drag || 0),
     charge_data_available: !!chargeSummary,
     charge_summary: chargeSummary ? {
       outstanding_count: outstandingCharges,
@@ -2149,24 +2435,160 @@ function detectCompetitors(text) {
   for (const [name, config] of Object.entries(COMPETITOR_PATTERNS)) {
     const match = text.match(config.regex);
     if (match) {
-      detected.push({
+      const competitor = buildCompetitorRecord({
         name,
         products: config.products,
         weakness: config.weakness,
         stickiness: config.stickiness,
         snippet: buildSnippet(text, match.index || 0, match[0]?.length || name.length),
-        inferred_advantage: COMPETITOR_ADVANTAGE_INFERENCE[config.weakness] || "Position lower-friction migration with stronger day-to-day economics.",
       });
+      if (competitor) detected.push(competitor);
     }
   }
   return detected;
 }
 
-function scoreCompetitorContext(competitors) {
-  if (competitors.length === 0) return 0.5;
-  const avgStickiness = competitors.reduce((s, c) => s + c.stickiness, 0) / competitors.length;
-  const weakCompetitors = competitors.filter((c) => c.stickiness <= 2.5).length;
-  return Math.min(0.3 + weakCompetitors * 0.2 + (5 - avgStickiness) * 0.1, 1);
+function scoreCompetitorContext(competitors, motionScores = {}, businessModel = "unknown") {
+  const detected = Array.isArray(competitors) ? competitors.filter(Boolean) : [];
+  if (detected.length === 0) {
+    return {
+      score: 0.5,
+      isolation_score: 0.5,
+      holistic_score: 0.5,
+      fragmented_stack_bonus: 0,
+      platform_consolidation_bonus: 0,
+      anchor_drag: 0,
+      incumbent_lock_index: 0.5,
+      single_product_count: 0,
+      strong_incumbent_count: 0,
+      product_coverage_count: 0,
+      strategic_signal: "none",
+      detected_count: 0,
+    };
+  }
+
+  const strongMotions = new Set(
+    Object.entries(motionScores || {})
+      .filter(([, data]) => Number(data?.score || 0) >= 0.35)
+      .map(([motion]) => motion)
+  );
+
+  const legacyWeaknesses = new Set([
+    "digital_friction",
+    "legacy_costs",
+    "legacy_pricing",
+    "expensive_complex",
+    "enterprise_gated",
+    "limited_mm_depth",
+  ]);
+
+  let weightedIsolation = 0;
+  let weightedHolistic = 0;
+  let weightTotal = 0;
+  let totalStickiness = 0;
+  let totalLockIn = 0;
+  let singleProductCount = 0;
+  let strongIncumbentCount = 0;
+  let legacyOpportunityBoost = 0;
+  const productCoverage = new Set();
+
+  for (const competitor of detected) {
+    const products = asArray(competitor.products);
+    for (const product of products) productCoverage.add(product);
+
+    const stickiness = Math.max(1, Math.min(Number(competitor.stickiness || 3), 5));
+    const platformType = String(competitor.platform_type || "unknown");
+    const isolationScore = clamp01(Number(
+      competitor.isolation_score
+      ?? inferIsolationScoreFromStickiness(stickiness)
+    ));
+    const holisticScore = clamp01(Number(
+      competitor.holistic_score
+      ?? inferHolisticScoreFromIsolation(isolationScore, platformType)
+    ));
+    const lockInStrength = clamp01(Number(competitor.lock_in_strength ?? (stickiness / 5)));
+
+    const overlappingStrongMotions = strongMotions.size === 0
+      ? 0
+      : products.filter((product) => strongMotions.has(product)).length;
+    let relevanceWeight = 1;
+    if (strongMotions.size > 0) {
+      if (overlappingStrongMotions > 0) relevanceWeight += Math.min(overlappingStrongMotions * 0.25, 0.5);
+      else if (products.length > 0) relevanceWeight -= 0.15;
+    }
+    relevanceWeight = Math.max(0.65, relevanceWeight);
+
+    weightedIsolation += isolationScore * relevanceWeight;
+    weightedHolistic += holisticScore * relevanceWeight;
+    weightTotal += relevanceWeight;
+
+    totalStickiness += stickiness;
+    totalLockIn += lockInStrength;
+
+    if (["single_product", "payments_platform"].includes(platformType)) {
+      singleProductCount += 1;
+    }
+
+    if (["full_stack_bank", "enterprise_bank", "enterprise_suite", "commerce_anchor"].includes(platformType) || competitor.credit_anchor) {
+      strongIncumbentCount += 1;
+    }
+
+    if (legacyWeaknesses.has(String(competitor.weakness || ""))) {
+      legacyOpportunityBoost += 0.015;
+    }
+  }
+
+  const avgIsolation = weightTotal > 0 ? (weightedIsolation / weightTotal) : 0.5;
+  const avgHolistic = weightTotal > 0 ? (weightedHolistic / weightTotal) : 0.5;
+  const avgStickiness = totalStickiness / detected.length;
+  const avgLockIn = totalLockIn / detected.length;
+  const productCoverageCount = productCoverage.size;
+
+  const fragmentedStackBonus = Math.min(
+    (singleProductCount >= 2 ? 0.05 : 0)
+    + (productCoverageCount >= 3 ? 0.04 : 0)
+    + (productCoverageCount >= 4 ? 0.02 : 0),
+    0.12
+  );
+  const platformConsolidationBonus = Math.min(singleProductCount * 0.02, 0.10);
+  const anchorDrag = Math.min((avgLockIn * 0.08) + (strongIncumbentCount * 0.02), 0.20);
+
+  let businessModelAdjustment = 0;
+  if (businessModel === "B2C" && productCoverage.has("Merchant Acquiring")) businessModelAdjustment += 0.02;
+  if (businessModel === "B2B" && (productCoverage.has("FX") || productCoverage.has("FX Forwards"))) businessModelAdjustment += 0.015;
+
+  const score = clamp01(
+    (avgIsolation * 0.46)
+    + (avgHolistic * 0.36)
+    + fragmentedStackBonus
+    + platformConsolidationBonus
+    + Math.min(legacyOpportunityBoost, 0.06)
+    + businessModelAdjustment
+    - anchorDrag
+  );
+
+  const strategicSignal = anchorDrag >= 0.12 && platformConsolidationBonus < 0.05
+    ? "anchor_heavy"
+    : platformConsolidationBonus >= 0.08
+      ? "consolidation_play"
+      : fragmentedStackBonus >= 0.07
+        ? "fragmented_stack"
+        : "balanced";
+
+  return {
+    score,
+    isolation_score: Math.round(avgIsolation * 100) / 100,
+    holistic_score: Math.round(avgHolistic * 100) / 100,
+    fragmented_stack_bonus: Math.round(fragmentedStackBonus * 100) / 100,
+    platform_consolidation_bonus: Math.round(platformConsolidationBonus * 100) / 100,
+    anchor_drag: Math.round(anchorDrag * 100) / 100,
+    incumbent_lock_index: Math.round(clamp01((avgStickiness / 5) * 0.55 + (avgLockIn * 0.45)) * 100) / 100,
+    single_product_count: singleProductCount,
+    strong_incumbent_count: strongIncumbentCount,
+    product_coverage_count: productCoverageCount,
+    strategic_signal: strategicSignal,
+    detected_count: detected.length,
+  };
 }
 
 function detectQualificationSignals(text) {
@@ -2353,8 +2775,8 @@ export function scoreCompany(companyNumber) {
   const growth = scoreGrowth(filings);
   const employeesFromFiling = extractEmployeeCount(text);
   const employees = webSignals.employee_count_override || employeesFromFiling;
-  const competitorContextBase = scoreCompetitorContext(competitors);
-  const competitorScore = clamp01(competitorContextBase + Number(competitorMotionTuning.competitor_context_delta || 0));
+  const competitorContext = scoreCompetitorContext(competitors, motionScores, businessModel.classification);
+  const competitorScore = clamp01(Number(competitorContext.score || 0.5) + Number(competitorMotionTuning.competitor_context_delta || 0));
 
   const switchingFeasibility = scoreSwitchingFeasibility(
     text,
@@ -2366,7 +2788,8 @@ export function scoreCompany(companyNumber) {
       techStackSwitchingDelta: techSignals.switching_delta || 0,
       ownershipSwitchingDelta: ownershipSignals.switching_feasibility_delta || 0,
       integrationReady: !!techSignals.integration_ready,
-    }
+    },
+    competitorContext
   );
 
   const evidenceConfidenceRaw = computeEvidenceConfidence(text, filings, motionScores);
@@ -2524,7 +2947,17 @@ export function scoreCompany(companyNumber) {
       commercial_value: { score: commercialValue },
       pain_strength: { score: painScore },
       urgency: { score: urgencyScore, trend: growth.trend, growth_rate: growth.rate },
-      competitor_context: { score: competitorScore, detected: competitors },
+      competitor_context: {
+        score: competitorScore,
+        detected: competitors,
+        isolation_score: competitorContext.isolation_score,
+        holistic_score: competitorContext.holistic_score,
+        fragmented_stack_bonus: competitorContext.fragmented_stack_bonus,
+        platform_consolidation_bonus: competitorContext.platform_consolidation_bonus,
+        anchor_drag: competitorContext.anchor_drag,
+        incumbent_lock_index: competitorContext.incumbent_lock_index,
+        strategic_signal: competitorContext.strategic_signal,
+      },
       switching_feasibility: switchingFeasibility,
     },
     eligible_motions: eligibleMotions,
@@ -2615,6 +3048,7 @@ export function scoreCompany(companyNumber) {
       filing_decay: filingDecay,
       sparse_prior_adjustments: sparsePriors.adjustments,
       competitor_tuning: competitorMotionTuning,
+      competitor_context_model: competitorContext,
       cross_layer_penalty: correlationPenalty,
       industry_calibration: industryCalibration,
       industry_product_fit_hint: industryProductFitHint,
