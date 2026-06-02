@@ -509,6 +509,23 @@ export function parseCompanyNumbersCSV(csvContent) {
     return null;
   };
 
+  const parseCombinedNameNumberCell = (value) => {
+    const text = String(value || "").trim().replace(/^"|"$/g, "");
+    if (!text.includes(",")) return null;
+
+    const parts = text.split(",");
+    if (parts.length < 2) return null;
+
+    const maybeNumber = parts[parts.length - 1].trim();
+    const normalized = normalizeCandidateCompanyNumber(maybeNumber);
+    if (!normalized) return null;
+
+    return {
+      company_number: normalized,
+      company_name: parts.slice(0, -1).join(",").trim() || null,
+    };
+  };
+
   const headerCells = parseCsvRow(lines[0]).map((cell) => String(cell || "").toLowerCase());
   const hasHeader = headerCells.some((cell) =>
     cell.includes("company")
@@ -532,7 +549,14 @@ export function parseCompanyNumbersCSV(csvContent) {
     if (cells.length === 0) continue;
 
     let candidate = numberColIdx >= 0 ? cells[numberColIdx] : null;
-    if (!candidate) {
+    if (!candidate || !normalizeCandidateCompanyNumber(candidate)) {
+      const combined = cells.length === 1 ? parseCombinedNameNumberCell(cells[0]) : null;
+      if (combined) {
+        candidate = combined.company_number;
+      }
+    }
+
+    if (!candidate || !normalizeCandidateCompanyNumber(candidate)) {
       candidate = cells.find((cell) => !!normalizeCandidateCompanyNumber(cell)) || null;
     }
 

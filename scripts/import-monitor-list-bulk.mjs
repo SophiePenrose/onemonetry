@@ -4,7 +4,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { parseCompanyListCSV } from "../mock-backend/company-monitor.js";
-import { upsertMonitoredCompanies, getMonitoredCompanyCount, closeDb } from "../mock-backend/db.js";
+import {
+  upsertMonitoredCompanies,
+  getMonitoredCompanyCount,
+  listMonitoredCompanyNumbers,
+  listClosedWonCompanyNumbers,
+  closeDb,
+} from "../mock-backend/db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +23,9 @@ function printUsage() {
     "Options:",
     "  --source <value>   Source tag stored on company_monitor rows (default: csv_bulk_ingest)",
     "  --report <path>    Optional JSON summary output path",
+    "  --dry-run          Parse and report only, without writing to the database",
+    "  --new-only         Skip rows that already exist in company_monitor",
+    "  --include-closed-won  Include company numbers present in closed_won_registry",
     "  --help             Show this help",
     "",
     "Examples:",
@@ -29,6 +38,9 @@ function parseArgs(argv) {
   const options = {
     source: "csv_bulk_ingest",
     report: null,
+    dryRun: false,
+    newOnly: false,
+    includeClosedWon: false,
     help: false,
     files: [],
   };
@@ -47,6 +59,18 @@ function parseArgs(argv) {
     if (arg === "--report" && argv[i + 1]) {
       options.report = argv[i + 1];
       i += 1;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (arg === "--new-only") {
+      options.newOnly = true;
+      continue;
+    }
+    if (arg === "--include-closed-won") {
+      options.includeClosedWon = true;
       continue;
     }
     options.files.push(arg);
@@ -80,6 +104,15 @@ function main() {
   const startedAt = new Date().toISOString();
   const aggregate = new Map();
   const perFile = [];
+  const monitoredBefore = getMonitoredCompanyCount();
+  const existingMonitoredNumbers = new Set(listMonitoredCompanyNumbers());
+  const closedWonNumbers = options.includeClosedWon
+    ? new Set()
+    : new Set(listClosedWonCompanyNumbers());
+
+  let closedWonExcluded = 0;
+  let alreadyMonitoredInInput = 0;
+  let skippedExistingNewOnly = 0;
 
   for (const fileArg of options.files) {
     const resolvedPath = resolvePath(fileArg);
@@ -105,6 +138,19 @@ function main() {
         continue;
       }
 
+      if (closedWonNumbers.has(key)) {
+        closedWonExcluded += 1;
+        continue;
+      }
+
+      if (existingMonitoredNumbers.has(key)) {
+        alreadyMonitoredInInput += 1;
+        if (options.newOnly) {
+          skippedExistingNewOnly += 1;
+          continue;
+        }
+      }
+
       aggregate.set(key, {
         company_number: key,
         company_name: row.company_name || null,
@@ -127,15 +173,34 @@ function main() {
   }
 
   const rows = Array.from(aggregate.values());
-  const upsertResult = upsertMonitoredCompanies(rows, options.source);
-  const totalMonitored = getMonitoredCompanyCount();
+  const upsertResult = options.dryRun
+    ? {
+      received: rows.length,
+      upserted: 0,
+      skipped_invalid: 0,
+      source: options.source,
+      dry_run: true,
+      planned_upsert_rows: rows.length,
+    }
+    : upsertMonitoredCompanies(rows, options.source);
+  const totalMonitored = options.dryRun ? monitoredBefore : getMonitoredCompanyCount();
 
   const summary = {
     started_at: startedAt,
     completed_at: new Date().toISOString(),
+    mode: options.dryRun ? "dry_run" : "apply",
+    options: {
+      source: options.source,
+      new_only: options.newOnly,
+      include_closed_won: options.includeClosedWon,
+    },
     source: options.source,
     files_processed: perFile.length,
+    existing_monitored_before_import: monitoredBefore,
     total_unique_companies: rows.length,
+    closed_won_excluded: closedWonExcluded,
+    already_monitored_in_input: alreadyMonitoredInInput,
+    skipped_existing_due_to_new_only: skippedExistingNewOnly,
     upsert_result: upsertResult,
     total_monitored_after_import: totalMonitored,
     per_file: perFile,
@@ -148,7 +213,12 @@ function main() {
     summary.report_path = reportPath;
   }
 
-  console.log(`[monitor-import] files=${summary.files_processed} unique=${summary.total_unique_companies} upserted=${upsertResult.upserted}`);
+  if (options.dryRun) {
+    console.log(`[monitor-import] dry-run files=${summary.files_processed} unique=${summary.total_unique_companies} planned_upsert=${upsertResult.planned_upsert_rows}`);
+  } else {
+    console.log(`[monitor-import] files=${summary.files_processed} unique=${summary.total_unique_companies} upserted=${upsertResult.upserted}`);
+  }
+  console.log(`[monitor-import] closed_won_excluded=${summary.closed_won_excluded} already_monitored=${summary.already_monitored_in_input} new_only_skipped=${summary.skipped_existing_due_to_new_only}`);
   console.log(`[monitor-import] monitored_total=${summary.total_monitored_after_import}`);
   if (summary.report_path) {
     console.log(`[monitor-import] report=${summary.report_path}`);

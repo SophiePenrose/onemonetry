@@ -42,6 +42,19 @@ describe("csv import scale hardening", () => {
     assert.deepEqual(numbers, ["01234567", "OC123456", "00123456"]);
   });
 
+  it("parses single-cell quoted name+number rows", async () => {
+    const companiesHouse = await import(`../companies-house.js?csv_parse_single_cell=${Date.now()}`);
+
+    const csv = [
+      '"company_name,company_number"',
+      '"N & C Building Products Limited,00000140"',
+      '"HSBC Bank Plc,00014259"',
+    ].join("\n");
+
+    const numbers = companiesHouse.parseCompanyNumbersCSV(csv);
+    assert.deepEqual(numbers, ["00000140", "00014259"]);
+  });
+
   it("imports monitor-list CSV with quoted names and deduplicated company numbers", async () => {
     const tempDir = createTempDir("onemonetry-monitor-import-");
     process.env.DATABASE_PATH = path.join(tempDir, "monitor.db");
@@ -72,6 +85,22 @@ describe("csv import scale hardening", () => {
     assert.equal(bravo.company_name, "Bravo Ltd");
 
     db.closeDb();
+  });
+
+  it("parses monitor list from single-cell quoted name+number rows", async () => {
+    const companyMonitor = await import(`../company-monitor.js?csv_monitor_single_cell_parse=${Date.now()}`);
+
+    const csv = [
+      '"company_name,company_number"',
+      '"N & C Building Products Limited,00000140"',
+      '"HSBC Bank Plc,00014259"',
+    ].join("\n");
+
+    const rows = companyMonitor.parseCompanyListCSV(csv);
+    assert.deepEqual(rows, [
+      { company_number: "00000140", company_name: "N & C Building Products Limited" },
+      { company_number: "00014259", company_name: "HSBC Bank Plc" },
+    ]);
   });
 
   it("bulk monitored-company upsert skips invalid rows", async () => {
