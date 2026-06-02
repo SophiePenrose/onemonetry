@@ -71,6 +71,7 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
     const sign = numeric > 0 ? "+" : "";
     return `${sign}${numeric.toFixed(2)}`;
   };
+  const normalizedFinalScore = isFiniteNumber(finalScore) ? Number(finalScore) : null;
   const hasLayers = Boolean(scoreBreakdown)
     && Object.keys(LAYER_LABELS).some((key) => isFiniteNumber(scoreBreakdown[key]?.score));
 
@@ -78,7 +79,7 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
     <div style={{ border: "1px solid #e0e3e8", borderRadius: 8, padding: 16, background: "#fafbfc" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 32, fontWeight: 700, color: "#0075EB" }}>{finalScore?.toFixed(2) ?? "N/A"}</div>
+          <div style={{ fontSize: 32, fontWeight: 700, color: "#0075EB" }}>{normalizedFinalScore !== null ? normalizedFinalScore.toFixed(2) : "N/A"}</div>
           <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Composite</div>
         </div>
         <div style={{ flex: 1 }}>
