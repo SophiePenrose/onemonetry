@@ -17,6 +17,13 @@ const LAYER_COLORS = {
   competitor_context: "#6f42c1",
 };
 
+const NARRATIVE_ITEM_PROP_TYPE = PropTypes.oneOfType([
+  PropTypes.string,
+  PropTypes.shape({
+    text: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  }),
+]);
+
 function ScoreBar({ score, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
@@ -227,9 +234,9 @@ ScoreExplanation.propTypes = {
   explanation: PropTypes.string,
   scoreNarrative: PropTypes.shape({
     headline: PropTypes.string,
-    drivers: PropTypes.arrayOf(PropTypes.string),
-    risks: PropTypes.arrayOf(PropTypes.string),
-    evidence: PropTypes.arrayOf(PropTypes.string),
+    drivers: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
+    risks: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
+    evidence: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
   }),
 };
 

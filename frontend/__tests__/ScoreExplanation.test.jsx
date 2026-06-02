@@ -136,6 +136,27 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
   });
 
+  it("renders narrative object items that include text fields", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore={0.87}
+        explanation="Strong FX fit"
+        scoreNarrative={{
+          headline: "8.7/10 with medium confidence",
+          drivers: [{ text: "Best motion: FX" }],
+          evidence: [{ text: "Cross-border supplier payments mentioned in filings" }],
+          risks: [{ text: "Low switching feasibility" }],
+        }}
+      />
+    );
+
+    expect(screen.getByText("Best motion: FX")).toBeInTheDocument();
+    expect(screen.getByText("Cross-border supplier payments mentioned in filings")).toBeInTheDocument();
+    expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
+  });
+
   it("renders competitor context tuning details when provided", () => {
     render(
       <ScoreExplanation
