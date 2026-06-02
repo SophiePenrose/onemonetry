@@ -67,8 +67,17 @@ describe("competitor holistic context scoring", () => {
     assert.ok(Number(context.holistic_score || 0) > Number(context.isolation_score || 0));
     assert.ok(Number(context.platform_consolidation_bonus || 0) > 0);
     assert.ok(Number(context.fragmented_stack_bonus || 0) >= 0.07);
+    assert.ok(Number(context.holistic_tuning_delta || 0) > 0);
+    assert.ok(
+      Number(context.score || 0)
+      >= Number(context.base_score || 0) + Number(context.motion_tuning_delta || 0)
+    );
     assert.equal(
       ["fragmented_stack", "consolidation_play"].includes(context.strategic_signal),
+      true
+    );
+    assert.equal(
+      (context.holistic_tuning_adjustments || []).some((entry) => entry.reason === "fragmented_stack_holistic_lift"),
       true
     );
     assert.equal(
@@ -102,6 +111,15 @@ describe("competitor holistic context scoring", () => {
 
     assert.equal(anchorContext.strategic_signal, "anchor_heavy");
     assert.ok(Number(anchorContext.anchor_drag || 0) >= 0.12);
+    assert.ok(Number(anchorContext.holistic_tuning_delta || 0) < 0);
+    assert.ok(
+      Number(anchorContext.score || 0)
+      <= Number(anchorContext.base_score || 0) + Number(anchorContext.motion_tuning_delta || 0)
+    );
+    assert.equal(
+      (anchorContext.holistic_tuning_adjustments || []).some((entry) => entry.reason === "anchor_heavy_holistic_drag"),
+      true
+    );
     assert.ok(anchorAdjustment);
     assert.ok(Number(anchorAdjustment.impact || 0) < 0);
     assert.ok(
@@ -170,5 +188,31 @@ describe("competitor holistic context scoring", () => {
     assert.equal(names.has("Square"), true);
     assert.equal(names.has("Tide"), true);
     assert.equal(names.has("Ramp"), true);
+  });
+
+  it("detects and hydrates additional competitor profiles for cards and embedded finance", () => {
+    const companyNumber = "91000007";
+    const text = [
+      "Payment operations currently run through Barclaycard and Stripe Connect for marketplace collections.",
+      "The embedded treasury stack uses Modulr and ClearBank APIs for account rails and settlement.",
+      "Legacy travel-card and FX spend still routes through Caxton FX.",
+    ].join(" ");
+
+    seedScorableCompany(companyNumber, text);
+    const score = scoring.scoreCompany(companyNumber);
+    const detected = score.layers.competitor_context.detected || [];
+    const names = new Set(detected.map((entry) => entry.name));
+
+    assert.equal(names.has("Barclaycard"), true);
+    assert.equal(names.has("Stripe Connect"), true);
+    assert.equal(names.has("Modulr"), true);
+    assert.equal(names.has("ClearBank"), true);
+    assert.equal(names.has("Caxton"), true);
+    assert.equal(names.has("Stripe"), false);
+
+    const stripeConnect = detected.find((entry) => entry.name === "Stripe Connect");
+    assert.ok(stripeConnect);
+    assert.equal(stripeConnect.platform_type, "commerce_anchor");
+    assert.ok(Number(stripeConnect.lock_in_strength || 0) >= 0.8);
   });
 });
