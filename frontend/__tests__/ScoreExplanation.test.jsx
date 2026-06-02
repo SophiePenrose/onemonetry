@@ -126,4 +126,36 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText(/Holistic -0\.02/)).toBeInTheDocument();
     expect(screen.getByText(/strategic anchor heavy \(-0\.02\)/i)).toBeInTheDocument();
   });
+
+  it("renders score layers when evidence is missing but layer scores exist", () => {
+    const noEvidenceBreakdown = {
+      product_fit: { score: 0.88 },
+      commercial_value: { score: 0.67 },
+      pain_strength: { score: 0.49 },
+      urgency: { score: 0.53 },
+      competitor_context: {
+        score: 0.58,
+        base_score: 0.52,
+        motion_tuning_delta: 0.03,
+        holistic_tuning_delta: 0.03,
+        holistic_tuning_adjustments: [
+          { reason: "holistic_fragmented_stack", impact: 0.03 },
+        ],
+      },
+    };
+
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={noEvidenceBreakdown}
+        finalScore={0.79}
+        explanation="Layer scores present"
+      />
+    );
+
+    expect(screen.getByText("Score Layers")).toBeInTheDocument();
+    expect(screen.getByText("Current Stack Context")).toBeInTheDocument();
+    expect(screen.getByText("Context Tuning")).toBeInTheDocument();
+    expect(screen.queryByText("Score Breakdown:")).not.toBeInTheDocument();
+  });
 });

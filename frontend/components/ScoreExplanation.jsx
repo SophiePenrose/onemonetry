@@ -41,7 +41,6 @@ function ScoreBar({ score, color }) {
 ScoreBar.propTypes = { score: PropTypes.number.isRequired, color: PropTypes.string.isRequired };
 
 function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation, scoreNarrative }) {
-  const hasLayers = scoreBreakdown && Object.keys(scoreBreakdown).some((k) => scoreBreakdown[k]?.evidence);
   const renderEvidence = (evidence) => {
     if (Array.isArray(evidence)) {
       return evidence.map((item, idx) => (
@@ -72,6 +71,8 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
     const sign = numeric > 0 ? "+" : "";
     return `${sign}${numeric.toFixed(2)}`;
   };
+  const hasLayers = Boolean(scoreBreakdown)
+    && Object.keys(LAYER_LABELS).some((key) => isFiniteNumber(scoreBreakdown[key]?.score));
 
   return (
     <div style={{ border: "1px solid #e0e3e8", borderRadius: 8, padding: 16, background: "#fafbfc" }}>
@@ -137,7 +138,9 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
           </div>
           {Object.entries(LAYER_LABELS).map(([key, label]) => {
             const layer = scoreBreakdown[key];
-            if (!layer) return null;
+            if (!layer || !isFiniteNumber(layer.score)) return null;
+
+            const layerScore = Number(layer.score);
 
             const tuningAdjustments = key === "competitor_context" && Array.isArray(layer.holistic_tuning_adjustments)
               ? layer.holistic_tuning_adjustments
@@ -166,7 +169,7 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
               <div key={key} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: LAYER_COLORS[key], minWidth: 130 }}>{label}</span>
-                  <ScoreBar score={layer.score} color={LAYER_COLORS[key]} />
+                  <ScoreBar score={layerScore} color={LAYER_COLORS[key]} />
                 </div>
                 {layer.evidence && (
                   <div style={{ fontSize: 12, color: "#888", paddingLeft: 138 }}>
