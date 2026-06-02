@@ -8,7 +8,16 @@ describe("ScoreExplanation", () => {
     commercial_value: { score: 0.80, evidence: "High turnover" },
     pain_strength: { score: 0.70, evidence: "Manual processes" },
     urgency: { score: 0.60, evidence: "CFO reviewing options" },
-    competitor_context: { score: 0.50, evidence: "Weak incumbent" },
+    competitor_context: {
+      score: 0.50,
+      evidence: "Weak incumbent",
+      base_score: 0.50,
+      motion_tuning_delta: 0.04,
+      holistic_tuning_delta: -0.02,
+      holistic_tuning_adjustments: [
+        { reason: "strategic_anchor_heavy", impact: -0.02 },
+      ],
+    },
   };
 
   it("renders composite score", () => {
@@ -99,5 +108,22 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("Best motion: FX")).toBeInTheDocument();
     expect(screen.getByText("Cross-border supplier payments mentioned in filings")).toBeInTheDocument();
     expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
+  });
+
+  it("renders competitor context tuning details when provided", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore={0.87}
+        explanation="Strong FX fit"
+      />
+    );
+
+    expect(screen.getByText("Context Tuning")).toBeInTheDocument();
+    expect(screen.getByText(/Base 0\.50/)).toBeInTheDocument();
+    expect(screen.getByText(/Motion \+0\.04/)).toBeInTheDocument();
+    expect(screen.getByText(/Holistic -0\.02/)).toBeInTheDocument();
+    expect(screen.getByText(/strategic anchor heavy \(-0\.02\)/i)).toBeInTheDocument();
   });
 });
