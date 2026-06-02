@@ -66,6 +66,13 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
   const narrativeRisks = normalizeNarrativeItems(scoreNarrative?.risks, 3);
   const hasNarrative = narrativeDrivers.length > 0 || narrativeEvidence.length > 0 || narrativeRisks.length > 0;
 
+  const isFiniteNumber = (value) => Number.isFinite(Number(value));
+  const formatSignedScore = (value) => {
+    const numeric = Number(value || 0);
+    const sign = numeric > 0 ? "+" : "";
+    return `${sign}${numeric.toFixed(2)}`;
+  };
+
   return (
     <div style={{ border: "1px solid #e0e3e8", borderRadius: 8, padding: 16, background: "#fafbfc" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
@@ -131,6 +138,30 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
           {Object.entries(LAYER_LABELS).map(([key, label]) => {
             const layer = scoreBreakdown[key];
             if (!layer) return null;
+
+            const tuningAdjustments = key === "competitor_context" && Array.isArray(layer.holistic_tuning_adjustments)
+              ? layer.holistic_tuning_adjustments
+                .map((item) => ({
+                  reason: String(item?.reason || "").trim(),
+                  impact: Number(item?.impact || 0),
+                }))
+                .filter((item) => item.reason)
+              : [];
+
+            const tuningSummary = [];
+            if (isFiniteNumber(layer.base_score)) {
+              tuningSummary.push(`Base ${Number(layer.base_score).toFixed(2)}`);
+            }
+            if (isFiniteNumber(layer.motion_tuning_delta)) {
+              tuningSummary.push(`Motion ${formatSignedScore(layer.motion_tuning_delta)}`);
+            }
+            if (isFiniteNumber(layer.holistic_tuning_delta)) {
+              tuningSummary.push(`Holistic ${formatSignedScore(layer.holistic_tuning_delta)}`);
+            }
+
+            const hasCompetitorTuning = key === "competitor_context"
+              && (tuningSummary.length > 0 || tuningAdjustments.length > 0);
+
             return (
               <div key={key} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -140,6 +171,23 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
                 {layer.evidence && (
                   <div style={{ fontSize: 12, color: "#888", paddingLeft: 138 }}>
                     {renderEvidence(layer.evidence)}
+                  </div>
+                )}
+                {hasCompetitorTuning && (
+                  <div style={{ fontSize: 12, color: "#4b5563", paddingLeft: 138, marginTop: 6 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>Context Tuning</div>
+                    {tuningSummary.length > 0 && (
+                      <div>{tuningSummary.join(" | ")}</div>
+                    )}
+                    {tuningAdjustments.length > 0 && (
+                      <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                        {tuningAdjustments.slice(0, 4).map((item, idx) => (
+                          <li key={`adj-${idx}`}>
+                            {item.reason.replace(/_/g, " ")} ({formatSignedScore(item.impact)})
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
               </div>
