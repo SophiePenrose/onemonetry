@@ -106,6 +106,9 @@ export default function CompanyDetail({ companyId }) {
       : analysisStatus === "ready"
         ? "Ready"
         : "Pending";
+  const competitorContext = (company.all_motion_scores || [])
+    .map((motion) => motion?.score_breakdown?.competitor_context)
+    .find((layer) => layer && typeof layer === "object") || null;
 
   return (
     <div>
@@ -226,7 +229,13 @@ export default function CompanyDetail({ companyId }) {
       )}
 
       <div className="detail-two-column">
-        <CompetitorPanel competitors={company.competitors} companyId={companyId} onUpdated={refreshCompany} analysisStatus={analysisStatus} />
+        <CompetitorPanel
+          competitors={company.competitors}
+          companyId={companyId}
+          onUpdated={refreshCompany}
+          analysisStatus={analysisStatus}
+          competitorContext={competitorContext}
+        />
         <StakeholderPanel
           stakeholders={company.stakeholders}
           stakeholderAssessment={company.stakeholder_assessment}
