@@ -49,6 +49,28 @@ Run the same checks locally before pushing:
 (cd frontend && npm ci && npm run build && npm test)
 ```
 
+## Scoring Calibration Benchmark
+
+Use the benchmark runner to snapshot current ranking behavior and competitor-context diagnostics before/after scoring changes.
+
+```bash
+# auto-select active monitored companies with enough filing text
+npm run benchmark:scoring
+
+# run against a curated benchmark case set
+npm run benchmark:scoring -- --cases docs/scoring-calibration-cases.example.json
+
+# run against the current bootstrap baseline set
+npm run benchmark:scoring -- --cases docs/scoring-calibration-cases.bootstrap.json
+```
+
+Outputs:
+
+- Timestamped snapshot in `exports/`
+- Rolling latest snapshot at `exports/scoring-calibration-benchmark-latest.json`
+
+The optional case file supports `company_numbers` and `expected_order` so you can measure pairwise order agreement during calibration.
+
 ### Make CI a required merge gate (recommended)
 
 CI is currently advisory — a red run does not block merging. To turn it into a

@@ -7,6 +7,7 @@
     "start:backend": "npm --prefix ./mock-backend start",
     "start:frontend": "npm --prefix ./frontend run dev",
     "smoke:api": "bash ./scripts/smoke-api.sh",
+    "benchmark:scoring": "node ./scripts/scoring-calibration-benchmark.mjs",
     "logs": "bash -lc 'echo Backend: && tail -n 120 /tmp/onemonetry-backend.log && echo && echo Frontend: && tail -n 120 /tmp/onemonetry-frontend.log'",
     "logs:backend": "tail -n 120 /tmp/onemonetry-backend.log",
     "logs:frontend": "tail -n 120 /tmp/onemonetry-frontend.log",
