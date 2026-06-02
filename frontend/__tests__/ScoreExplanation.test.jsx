@@ -44,6 +44,32 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("strong")).toBeInTheDocument();
   });
 
+  it("renders composite score when finalScore is a numeric string", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore="0.85"
+        explanation="Test"
+      />
+    );
+
+    expect(screen.getByText("0.85")).toBeInTheDocument();
+  });
+
+  it("falls back to N/A when finalScore is not numeric", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore="not-a-number"
+        explanation="Test"
+      />
+    );
+
+    expect(screen.getByText("N/A")).toBeInTheDocument();
+  });
+
   it("renders all 5 scoring layers", () => {
     render(
       <ScoreExplanation
