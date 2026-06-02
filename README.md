@@ -100,12 +100,19 @@ npm run import:monitor-list -- data/source3-part1.csv data/source3-part2.csv dat
 
 # same import with explicit source tag and JSON report output
 npm run import:monitor-list -- --source source_3_csv --report exports/monitor-import-report.json data/source3-part1.csv data/source3-part2.csv data/source3-part3.csv data/source3-part4.csv
+
+# dry-run preview (no DB writes) before a large ingest
+npm run import:monitor-list -- --dry-run --source source_3_csv --report exports/monitor-import-dry-run.json data/source3-part1.csv data/source3-part2.csv data/source3-part3.csv data/source3-part4.csv
+
+# import only companies not already in company_monitor
+npm run import:monitor-list -- --new-only --source source_3_csv data/source3-part1.csv data/source3-part2.csv data/source3-part3.csv data/source3-part4.csv
 ```
 
 Notes:
 
 - This command updates `company_monitor` only (no Companies House lookup fan-out during import).
 - Company numbers are deduplicated across all provided files before database upsert.
+- Closed-won company numbers are excluded by default (use `--include-closed-won` to override).
 - The optional report captures per-file parse and dedupe counts.
 
 ### Make CI a required merge gate (recommended)

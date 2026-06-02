@@ -492,6 +492,10 @@ export function listClosedWonCompanies(limit = 200, offset = 0) {
   `).all(safeLimit, safeOffset);
 }
 
+export function listClosedWonCompanyNumbers() {
+  return db.prepare("SELECT company_number FROM closed_won_registry").all().map((row) => row.company_number);
+}
+
 // --- Cadence Log ---
 
 export function getCadenceLog(companyId) {
@@ -819,6 +823,10 @@ export function upsertMonitoredCompanies(rows, source = "csv") {
 
 export function getMonitoredCompany(companyNumber) {
   return db.prepare("SELECT * FROM company_monitor WHERE company_number = ?").get(companyNumber);
+}
+
+export function listMonitoredCompanyNumbers() {
+  return db.prepare("SELECT company_number FROM company_monitor").all().map((row) => row.company_number);
 }
 
 export function upsertCompanyChargeSummary(companyNumber, summary, source = "companies_house_api") {
