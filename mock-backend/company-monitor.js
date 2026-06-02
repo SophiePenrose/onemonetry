@@ -269,6 +269,23 @@ export function parseCompanyListCSV(csvContent) {
     return null;
   };
 
+  const parseCombinedNameNumberCell = (value) => {
+    const text = String(value || "").trim().replace(/^"|"$/g, "");
+    if (!text.includes(",")) return null;
+
+    const parts = text.split(",");
+    if (parts.length < 2) return null;
+
+    const maybeNumber = parts[parts.length - 1].trim();
+    const normalized = normalizeCompanyNumber(maybeNumber);
+    if (!normalized) return null;
+
+    return {
+      company_number: normalized,
+      company_name: parts.slice(0, -1).join(",").trim() || null,
+    };
+  };
+
   const headerCells = parseCsvRow(lines[0]).map((cell) => String(cell || "").toLowerCase().replace(/"/g, ""));
   const hasHeader = headerCells.some((cell) =>
     cell.includes("company")
@@ -296,16 +313,29 @@ export function parseCompanyListCSV(csvContent) {
     if (cells.length === 0) continue;
 
     let candidateNumber = numIdx >= 0 ? cells[numIdx] : null;
-    if (!candidateNumber) {
+    let combinedRow = null;
+
+    if (!candidateNumber || !normalizeCompanyNumber(candidateNumber)) {
+      combinedRow = cells.length === 1 ? parseCombinedNameNumberCell(cells[0]) : null;
+      if (combinedRow) {
+        candidateNumber = combinedRow.company_number;
+      }
+    }
+
+    if (!candidateNumber || !normalizeCompanyNumber(candidateNumber)) {
       candidateNumber = cells.find((cell) => !!normalizeCompanyNumber(cell)) || null;
     }
 
     const normalizedNumber = normalizeCompanyNumber(candidateNumber);
     if (!normalizedNumber || seen.has(normalizedNumber)) continue;
 
-    const candidateName = nameIdx >= 0
+    let candidateName = nameIdx >= 0
       ? cells[nameIdx]
       : cells.find((cell, idx) => idx !== numIdx && cell && !normalizeCompanyNumber(cell));
+
+    if (combinedRow?.company_name) {
+      candidateName = combinedRow.company_name;
+    }
 
     seen.add(normalizedNumber);
     companies.push({
