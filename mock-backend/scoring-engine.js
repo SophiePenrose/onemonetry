@@ -254,7 +254,9 @@ const COMPETITOR_PATTERNS = {
   "Starling Business": { regex: /\bStarling(?:\s+Business)?\b/i, products: ["Cards"], weakness: "scale_cliff", stickiness: 3.2 },
   "Monzo Business": { regex: /\bMonzo(?:\s+Business)?\b/i, products: ["Cards"], weakness: "scale_cliff", stickiness: 3.0 },
   "Worldpay": { regex: /\bWorldpay\b/i, products: ["Merchant Acquiring"], weakness: "legacy_pricing", stickiness: 4.0 },
-  "Stripe": { regex: /\bStripe\b/i, products: ["Merchant Acquiring", "API Integrations"], weakness: "slow_settlement", stickiness: 3.8 },
+  "Barclaycard": { regex: /\bBarclay\s*card\b/i, products: ["Merchant Acquiring", "Cards"], weakness: "legacy_pricing", stickiness: 4.1 },
+  "Stripe Connect": { regex: /\bStripe\s+Connect\b/i, products: ["Merchant Acquiring", "API Integrations"], weakness: "ecosystem_lock_in", stickiness: 4.1 },
+  "Stripe": { regex: /\bStripe\b(?!\s+Connect)\b/i, products: ["Merchant Acquiring", "API Integrations"], weakness: "slow_settlement", stickiness: 3.8 },
   "Adyen": { regex: /\bAdyen\b/i, products: ["Merchant Acquiring"], weakness: "enterprise_gated", stickiness: 4.0 },
   "Checkout.com": { regex: /\bCheckout\.com\b|\bCheckout\b/i, products: ["Merchant Acquiring"], weakness: "enterprise_gated", stickiness: 3.7 },
   "Square": {
@@ -277,7 +279,10 @@ const COMPETITOR_PATTERNS = {
   "Ebury": { regex: /\bEbury\b/i, products: ["FX", "FX Forwards"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
   "OFX": { regex: /\bOFX\b/i, products: ["FX", "FX Forwards"], weakness: "single_product_scope", stickiness: 2.5 },
   "Moneycorp": { regex: /\bMoneycorp\b/i, products: ["FX", "FX Forwards"], weakness: "single_product_scope", stickiness: 3.0 },
+  "Caxton": { regex: /\bCaxton(?:\s+FX)?\b/i, products: ["FX", "Cards"], weakness: "single_product_scope", stickiness: 2.7 },
   "CurrencyCloud": { regex: /\bCurrencyCloud\b/i, products: ["FX", "API Integrations"], weakness: "single_product_scope", stickiness: 2.8 },
+  "Modulr": { regex: /\bModulr\b/i, products: ["API Integrations", "Cards"], weakness: "no_credit_no_treasury", stickiness: 3.3 },
+  "ClearBank": { regex: /\bClear\s*Bank\b|\bClearBank\b/i, products: ["API Integrations", "Cards"], weakness: "no_credit_no_treasury", stickiness: 3.5 },
   "Pleo": { regex: /\bPleo\b/i, products: ["Cards", "Spend Management"], weakness: "expensive_fx", stickiness: 2.8 },
   "Payhawk": { regex: /\bPayhawk\b/i, products: ["Cards", "Spend Management"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
   "Spendesk": { regex: /\bSpendesk\b/i, products: ["Spend Management"], weakness: "no_banking_ecosystem", stickiness: 3.1 },
@@ -332,7 +337,10 @@ const COMPETITOR_INTELLIGENCE = {
   "Ebury": { isolation_score: 0.52, holistic_score: 0.74, lock_in_strength: 0.60, platform_type: "single_product", credit_anchor: false },
   "OFX": { isolation_score: 0.72, holistic_score: 0.82, lock_in_strength: 0.45, platform_type: "single_product", credit_anchor: false },
   "Moneycorp": { isolation_score: 0.68, holistic_score: 0.76, lock_in_strength: 0.56, platform_type: "single_product", credit_anchor: false },
+  "Caxton": { isolation_score: 0.70, holistic_score: 0.80, lock_in_strength: 0.44, platform_type: "single_product", credit_anchor: false },
   "CurrencyCloud": { isolation_score: 0.70, holistic_score: 0.78, lock_in_strength: 0.50, platform_type: "single_product", credit_anchor: false },
+  "Modulr": { isolation_score: 0.55, holistic_score: 0.74, lock_in_strength: 0.68, platform_type: "payments_platform", credit_anchor: false },
+  "ClearBank": { isolation_score: 0.50, holistic_score: 0.66, lock_in_strength: 0.74, platform_type: "payments_platform", credit_anchor: false },
   "Pleo": { isolation_score: 0.40, holistic_score: 0.86, lock_in_strength: 0.58, platform_type: "single_product", credit_anchor: false },
   "Payhawk": { isolation_score: 0.50, holistic_score: 0.78, lock_in_strength: 0.62, platform_type: "single_product", credit_anchor: false },
   "Spendesk": { isolation_score: 0.50, holistic_score: 0.76, lock_in_strength: 0.61, platform_type: "single_product", credit_anchor: false },
@@ -340,6 +348,8 @@ const COMPETITOR_INTELLIGENCE = {
   "SAP Concur": { isolation_score: 0.54, holistic_score: 0.61, lock_in_strength: 0.82, platform_type: "enterprise_suite", credit_anchor: false },
   "Coupa": { isolation_score: 0.48, holistic_score: 0.56, lock_in_strength: 0.82, platform_type: "enterprise_suite", credit_anchor: false },
   "Kyriba": { isolation_score: 0.52, holistic_score: 0.58, lock_in_strength: 0.84, platform_type: "enterprise_suite", credit_anchor: false },
+  "Stripe Connect": { isolation_score: 0.42, holistic_score: 0.62, lock_in_strength: 0.86, platform_type: "commerce_anchor", credit_anchor: false },
+  "Barclaycard": { isolation_score: 0.52, holistic_score: 0.66, lock_in_strength: 0.83, platform_type: "payments_platform", credit_anchor: false },
   "Stripe": { isolation_score: 0.34, holistic_score: 0.76, lock_in_strength: 0.82, platform_type: "payments_platform", credit_anchor: false },
   "Adyen": { isolation_score: 0.46, holistic_score: 0.68, lock_in_strength: 0.80, platform_type: "payments_platform", credit_anchor: false },
   "Checkout.com": { isolation_score: 0.50, holistic_score: 0.72, lock_in_strength: 0.72, platform_type: "payments_platform", credit_anchor: false },
@@ -412,10 +422,35 @@ const COMPETITOR_SCORING_EFFECTS = {
     competitor_context_delta: 0.06,
     switching_feasibility_delta: 0.03,
   },
+  "Barclaycard": {
+    motion_boosts: { "Merchant Acquiring": 0.07, "Cards": 0.05 },
+    competitor_context_delta: 0.03,
+    switching_feasibility_delta: -0.04,
+  },
+  "Stripe Connect": {
+    motion_boosts: { "Merchant Acquiring": 0.08, "API Integrations": 0.09 },
+    competitor_context_delta: 0.06,
+    switching_feasibility_delta: -0.05,
+  },
   "SAP Concur": {
     motion_boosts: { "Spend Management": 0.1 },
     competitor_context_delta: 0.05,
     switching_feasibility_delta: 0.03,
+  },
+  "Modulr": {
+    motion_boosts: { "API Integrations": 0.08, "Cards": 0.05 },
+    competitor_context_delta: 0.05,
+    switching_feasibility_delta: 0.02,
+  },
+  "ClearBank": {
+    motion_boosts: { "API Integrations": 0.07 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: -0.02,
+  },
+  "Caxton": {
+    motion_boosts: { "FX": 0.08, "Cards": 0.04 },
+    competitor_context_delta: 0.04,
+    switching_feasibility_delta: 0.04,
   },
   "Payhawk": {
     motion_boosts: { "Spend Management": 0.1, "Cards": 0.06 },
@@ -516,11 +551,15 @@ const COMPETITOR_SCORING_EFFECTS = {
 
 const TECH_STACK_MOTION_SIGNALS = {
   "Worldpay": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.25 }, switching: 0.08, competitor: true },
+  "Barclaycard": { motions: { "Merchant Acquiring": 0.28, "Cards": 0.14, "Revolut Pay": 0.16 }, switching: -0.03, competitor: true },
+  "Stripe Connect": { motions: { "Merchant Acquiring": 0.20, "Revolut Pay": 0.10, "API Integrations": 0.22 }, switching: -0.08, competitor: true },
   "Stripe": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20, "API Integrations": 0.15 }, switching: 0.12, competitor: true },
   "Adyen": { motions: { "Merchant Acquiring": 0.25, "Revolut Pay": 0.15 }, switching: -0.05, competitor: true },
   "PayPal": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.25 }, switching: 0.10, competitor: true },
   "Square": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.30 }, switching: 0.15, competitor: true },
   "SumUp": { motions: { "Merchant Acquiring": 0.35, "Revolut Pay": 0.30 }, switching: 0.18, competitor: true },
+  "Modulr": { motions: { "API Integrations": 0.20, "Cards": 0.12 }, switching: 0.03, competitor: true },
+  "ClearBank": { motions: { "API Integrations": 0.18, "Cards": 0.08 }, switching: -0.04, competitor: true },
   "Sage Pay": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20 }, switching: 0.06, competitor: true },
   "Global Payments": { motions: { "Merchant Acquiring": 0.30, "Revolut Pay": 0.20 }, switching: 0.05, competitor: true },
   "Xero": { motions: { "API Integrations": 0.15, "Spend Management": 0.10 }, switching: 0.12, integration_ready: true },
@@ -1001,14 +1040,28 @@ function extractTextEntries(payload, keys) {
 function resolveTechSignalKey(value) {
   const raw = normalizeCompactToken(value);
   if (!raw) return null;
+
+  let fallback = null;
+  let fallbackScore = 0;
+
   for (const key of Object.keys(TECH_STACK_MOTION_SIGNALS)) {
     const normalizedKey = normalizeCompactToken(key);
     if (!normalizedKey) continue;
-    if (raw === normalizedKey || raw.includes(normalizedKey) || normalizedKey.includes(raw)) {
+
+    if (raw === normalizedKey) {
       return key;
     }
+
+    if (raw.includes(normalizedKey) || normalizedKey.includes(raw)) {
+      const score = Math.min(raw.length, normalizedKey.length);
+      if (score > fallbackScore) {
+        fallback = key;
+        fallbackScore = score;
+      }
+    }
   }
-  return null;
+
+  return fallback;
 }
 
 function scoreTechStackSignals(techStack, freshnessScale = 1) {
@@ -2611,6 +2664,73 @@ function scoreCompetitorContext(competitors, motionScores = {}, businessModel = 
   };
 }
 
+function computeHolisticCompetitorScoreTuning(competitorContext = null) {
+  const context = competitorContext && typeof competitorContext === "object"
+    ? competitorContext
+    : {};
+
+  const detectedCount = Number(context.detected_count || 0);
+  if (detectedCount <= 0) {
+    return { delta: 0, adjustments: [] };
+  }
+
+  const adjustments = [];
+  let delta = 0;
+
+  const holisticScore = clamp01(Number(context.holistic_score || 0.5));
+  const isolationScore = clamp01(Number(context.isolation_score || 0.5));
+  const holisticGap = holisticScore - isolationScore;
+  const platformConsolidationBonus = clamp01(Number(context.platform_consolidation_bonus || 0));
+  const fragmentedStackBonus = clamp01(Number(context.fragmented_stack_bonus || 0));
+  const anchorDrag = clamp01(Number(context.anchor_drag || 0));
+  const incumbentLockIndex = clamp01(Number(context.incumbent_lock_index || 0.5));
+  const strategicSignal = String(context.strategic_signal || "none");
+
+  if (holisticGap >= 0.08 && platformConsolidationBonus >= 0.04) {
+    const impact = Math.min((holisticGap * 0.22) + (platformConsolidationBonus * 0.18), 0.05);
+    delta += impact;
+    adjustments.push({ reason: "holistic_consolidation_gap", impact: Math.round(impact * 100) / 100 });
+  }
+
+  if (fragmentedStackBonus >= 0.07) {
+    const impact = Math.min(fragmentedStackBonus * 0.3, 0.03);
+    delta += impact;
+    adjustments.push({ reason: "fragmented_stack_holistic_lift", impact: Math.round(impact * 100) / 100 });
+  }
+
+  if (anchorDrag >= 0.12) {
+    const impact = -Math.min(anchorDrag * 0.32, 0.06);
+    delta += impact;
+    adjustments.push({ reason: "anchor_heavy_holistic_drag", impact: Math.round(impact * 100) / 100 });
+  }
+
+  if (incumbentLockIndex >= 0.8 && platformConsolidationBonus < 0.05) {
+    const impact = -0.02;
+    delta += impact;
+    adjustments.push({ reason: "high_lockin_low_consolidation", impact });
+  }
+
+  if (strategicSignal === "consolidation_play") {
+    const impact = 0.02;
+    delta += impact;
+    adjustments.push({ reason: "strategic_consolidation_play", impact });
+  } else if (strategicSignal === "anchor_heavy") {
+    const impact = -0.02;
+    delta += impact;
+    adjustments.push({ reason: "strategic_anchor_heavy", impact });
+  }
+
+  const boundedDelta = Math.max(-0.08, Math.min(0.08, delta));
+  if (boundedDelta !== delta) {
+    adjustments.push({ reason: "holistic_tuning_cap", impact: Math.round((boundedDelta - delta) * 100) / 100 });
+  }
+
+  return {
+    delta: Math.round(boundedDelta * 100) / 100,
+    adjustments,
+  };
+}
+
 function detectQualificationSignals(text) {
   const positive = [];
   const negative = [];
@@ -2796,7 +2916,10 @@ export function scoreCompany(companyNumber) {
   const employeesFromFiling = extractEmployeeCount(text);
   const employees = webSignals.employee_count_override || employeesFromFiling;
   const competitorContext = scoreCompetitorContext(competitors, motionScores, businessModel.classification);
-  const competitorScore = clamp01(Number(competitorContext.score || 0.5) + Number(competitorMotionTuning.competitor_context_delta || 0));
+  const competitorHolisticTuning = computeHolisticCompetitorScoreTuning(competitorContext);
+  const competitorBaseScore = Number(competitorContext.score || 0.5);
+  const competitorMotionDelta = Number(competitorMotionTuning.competitor_context_delta || 0);
+  const competitorScore = clamp01(competitorBaseScore + competitorMotionDelta + Number(competitorHolisticTuning.delta || 0));
 
   const switchingFeasibility = scoreSwitchingFeasibility(
     text,
@@ -2969,6 +3092,10 @@ export function scoreCompany(companyNumber) {
       urgency: { score: urgencyScore, trend: growth.trend, growth_rate: growth.rate },
       competitor_context: {
         score: competitorScore,
+        base_score: Math.round(competitorBaseScore * 100) / 100,
+        motion_tuning_delta: Math.round(competitorMotionDelta * 100) / 100,
+        holistic_tuning_delta: Number(competitorHolisticTuning.delta || 0),
+        holistic_tuning_adjustments: competitorHolisticTuning.adjustments,
         detected: competitors,
         isolation_score: competitorContext.isolation_score,
         holistic_score: competitorContext.holistic_score,
