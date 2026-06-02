@@ -1,5 +1,7 @@
 // companies-house.js
 
+import { parseCsvRow, parseNonEmptyCsvLines } from "./csv-utils.js";
+
 function resolveConfiguredSecret(value) {
   const key = String(value || "").trim();
   if (!key) return null;
@@ -491,28 +493,57 @@ export async function lookupCompany(companyNumber, options = {}) {
 // --- CSV Import ---
 
 export function parseCompanyNumbersCSV(csvContent) {
-  const lines = csvContent.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = parseNonEmptyCsvLines(csvContent);
   if (lines.length === 0) return [];
 
-  const header = lines[0].toLowerCase();
-  let numberColIdx = 0;
+  const normalizeCandidateCompanyNumber = (value) => {
+    const cleaned = String(value || "")
+      .trim()
+      .replace(/^"|"$/g, "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
 
-  const cols = header.split(",").map((c) => c.trim().replace(/"/g, ""));
-  const numIdx = cols.findIndex(
-    (c) => c.includes("company") && (c.includes("number") || c.includes("num") || c.includes("no"))
+    if (!cleaned) return null;
+    if (/^\d{1,8}$/.test(cleaned)) return cleaned.padStart(8, "0");
+    if (/^[A-Z]{2}\d+$/.test(cleaned)) return cleaned;
+    return null;
+  };
+
+  const headerCells = parseCsvRow(lines[0]).map((cell) => String(cell || "").toLowerCase());
+  const hasHeader = headerCells.some((cell) =>
+    cell.includes("company")
+    || cell.includes("number")
+    || cell.includes("registration")
   );
-  if (numIdx >= 0) numberColIdx = numIdx;
+
+  const numberColIdx = hasHeader
+    ? headerCells.findIndex(
+      (cell) => cell.includes("company")
+        && (cell.includes("number") || cell.includes("num") || cell.includes("no") || cell.includes("registration"))
+    )
+    : -1;
+  const startIdx = hasHeader ? 1 : 0;
 
   const numbers = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(",").map((c) => c.trim().replace(/"/g, ""));
-    const num = cells[numberColIdx];
-    if (num && /^\d{6,8}$/.test(num.replace(/^0+/, "").padStart(1, "0")) || /^[A-Z]{2}\d+$/.test(num)) {
-      numbers.push(num.padStart(8, "0"));
+  const seen = new Set();
+
+  for (let i = startIdx; i < lines.length; i += 1) {
+    const cells = parseCsvRow(lines[i]).map((cell) => String(cell || "").trim());
+    if (cells.length === 0) continue;
+
+    let candidate = numberColIdx >= 0 ? cells[numberColIdx] : null;
+    if (!candidate) {
+      candidate = cells.find((cell) => !!normalizeCandidateCompanyNumber(cell)) || null;
     }
+
+    const normalized = normalizeCandidateCompanyNumber(candidate);
+    if (!normalized || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    numbers.push(normalized);
   }
 
-  return [...new Set(numbers)];
+  return numbers;
 }
 
 // --- Bulk Accounts Zip Processing ---
