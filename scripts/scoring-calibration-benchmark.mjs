@@ -21,6 +21,8 @@ function printUsage() {
     "  --cases <path>          Optional JSON file with company_numbers and expected_order",
     "  --out <path>            Output JSON path (default: exports/scoring-calibration-benchmark-<timestamp>.json)",
     "  --latest <path>         Also write/overwrite latest snapshot (default: exports/scoring-calibration-benchmark-latest.json)",
+    "  --review-csv <path>     Optional CSV review sheet for expected rank input",
+    "  --prefill-expected      Pre-fill CSV expected_rank from case file expected_order",
     "  --limit <n>             Number of companies to score when --cases is omitted (default: 40)",
     "  --pool-limit <n>        Max active monitored companies to scan for candidates (default: 500)",
     "  --min-text-length <n>   Minimum latest filing text length for candidate inclusion (default: 500)",
@@ -33,6 +35,8 @@ function parseArgs(argv) {
     cases: null,
     out: null,
     latest: "exports/scoring-calibration-benchmark-latest.json",
+    reviewCsv: null,
+    prefillExpected: false,
     limit: 40,
     poolLimit: 500,
     minTextLength: 500,
@@ -58,6 +62,15 @@ function parseArgs(argv) {
     if (arg === "--latest" && argv[i + 1]) {
       options.latest = argv[i + 1];
       i += 1;
+      continue;
+    }
+    if (arg === "--review-csv" && argv[i + 1]) {
+      options.reviewCsv = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg === "--prefill-expected") {
+      options.prefillExpected = true;
       continue;
     }
     if (arg === "--limit" && argv[i + 1]) {
@@ -179,6 +192,73 @@ function pairwiseAgreement(rows, expectedOrder) {
       ? Math.round((concordantPairs / comparablePairs) * 1000) / 1000
       : null,
   };
+}
+
+function csvEscape(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  if (!/[",\n]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function writeReviewCsv(rows, targetPath, expectedOrder, prefillExpected) {
+  const resolved = resolveOutputPath(
+    targetPath,
+    path.join(repoRoot, "exports", "scoring-calibration-review.csv"),
+  );
+  const expectedRankByCompany = new Map();
+  if (prefillExpected) {
+    uniqueCompanyNumbers(expectedOrder).forEach((companyNumber, idx) => {
+      expectedRankByCompany.set(String(companyNumber), idx + 1);
+    });
+  }
+
+  const headers = [
+    "company_number",
+    "company_name",
+    "model_rank",
+    "expected_rank",
+    "rank_delta",
+    "composite_score",
+    "fit_score",
+    "propensity_score",
+    "best_motion",
+    "competitor_signal",
+    "detected_competitors",
+    "turnover",
+    "latest_filing_date",
+    "notes",
+  ];
+
+  const lines = [headers.join(",")];
+  for (const row of rows) {
+    const expectedRank = expectedRankByCompany.get(String(row.company_number)) || "";
+    const rankDelta = expectedRank ? Number(row.rank) - Number(expectedRank) : "";
+    const detectedCompetitors = (row?.competitor_context?.detected_competitors || [])
+      .map((entry) => entry.name)
+      .filter(Boolean)
+      .join(" | ");
+
+    lines.push([
+      row.company_number,
+      row.company_name,
+      row.rank,
+      expectedRank,
+      rankDelta,
+      row.composite_score,
+      row.fit_score,
+      row.propensity_score,
+      row.best_motion,
+      row?.competitor_context?.strategic_signal || "",
+      detectedCompetitors,
+      row.turnover,
+      row.latest_filing_date,
+      "",
+    ].map(csvEscape).join(","));
+  }
+
+  ensureParentDir(resolved);
+  fs.writeFileSync(resolved, `${lines.join("\n")}\n`, "utf8");
+  return resolved;
 }
 
 function isSuspiciousCompetitorMatch(name, snippet) {
@@ -357,6 +437,9 @@ function main() {
   }
 
   const expectedOrderMetrics = pairwiseAgreement(rows, cases?.expected_order || []);
+  const reviewCsvPath = options.reviewCsv
+    ? writeReviewCsv(rows, options.reviewCsv, cases?.expected_order || [], options.prefillExpected)
+    : null;
 
   const output = {
     generated_at: new Date().toISOString(),
@@ -365,6 +448,7 @@ function main() {
     selection,
     summary: summarize(rows),
     expected_order_metrics: expectedOrderMetrics,
+    review_csv_path: reviewCsvPath,
     missing_company_scores: missing,
     suspicious_competitor_matches: suspiciousCompetitorMatches,
     rows,
@@ -382,6 +466,7 @@ function main() {
   console.log(`Suspicious competitor matches: ${suspiciousCompetitorMatches.length}`);
   console.log(`Output: ${outPath}`);
   if (latestPath) console.log(`Latest: ${latestPath}`);
+  if (reviewCsvPath) console.log(`Review CSV: ${reviewCsvPath}`);
   if (expectedOrderMetrics.comparable_pairs > 0) {
     console.log(`Expected-order agreement: ${expectedOrderMetrics.agreement_ratio}`);
   }
