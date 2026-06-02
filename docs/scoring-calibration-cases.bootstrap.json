@@ -1,0 +1,37 @@
+{
+  "label": "bootstrap-mm-benchmark-v1",
+  "notes": "Bootstrap baseline from current production scoring snapshot. Replace expected_order with sales-validated target ordering before final calibration decisions.",
+  "metadata": {
+    "source": "exports/scoring-calibration-benchmark-latest.json",
+    "intent": "regression and drift detection",
+    "created_at": "2026-06-02"
+  },
+  "company_numbers": [
+    "09532415",
+    "13540609",
+    "02237482",
+    "14553673",
+    "11539646",
+    "00218912",
+    "12363134",
+    "13157800",
+    "07569857",
+    "03583944",
+    "09523048",
+    "00375854"
+  ],
+  "expected_order": [
+    "09532415",
+    "13540609",
+    "02237482",
+    "14553673",
+    "11539646",
+    "00218912",
+    "12363134",
+    "13157800",
+    "07569857",
+    "03583944",
+    "09523048",
+    "00375854"
+  ]
+}

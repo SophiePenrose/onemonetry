@@ -134,4 +134,41 @@ describe("competitor holistic context scoring", () => {
     assert.ok(Number(stripe.isolation_score || 0) > 0);
     assert.ok(Number(stripe.holistic_score || 0) > Number(stripe.isolation_score || 0));
   });
+
+  it("avoids false positives for generic words like wise, square, tide, and ramp", () => {
+    const companyNumber = "91000005";
+    const text = [
+      "The engineering team plans to ramp up hiring over the next quarter.",
+      "Leadership agreed a wise approach to square footage optimisation across warehouse sites.",
+      "Seasonal tide levels affected delivery routes along the coast.",
+    ].join(" ");
+
+    seedScorableCompany(companyNumber, text);
+    const score = scoring.scoreCompany(companyNumber);
+    const names = new Set((score.layers.competitor_context.detected || []).map((entry) => entry.name));
+
+    assert.equal(names.has("Wise"), false);
+    assert.equal(names.has("Square"), false);
+    assert.equal(names.has("Tide"), false);
+    assert.equal(names.has("Ramp"), false);
+  });
+
+  it("detects those same competitors when financial product context is explicit", () => {
+    const companyNumber = "91000006";
+    const text = [
+      "Retail stores run on Square POS terminals and card payment acceptance.",
+      "Cross-border supplier transfers are processed via Wise Business for international payments.",
+      "The finance team is evaluating Ramp spend controls and approvals.",
+      "A legacy unit still uses Tide Business accounts for employee cards.",
+    ].join(" ");
+
+    seedScorableCompany(companyNumber, text);
+    const score = scoring.scoreCompany(companyNumber);
+    const names = new Set((score.layers.competitor_context.detected || []).map((entry) => entry.name));
+
+    assert.equal(names.has("Wise"), true);
+    assert.equal(names.has("Square"), true);
+    assert.equal(names.has("Tide"), true);
+    assert.equal(names.has("Ramp"), true);
+  });
 });

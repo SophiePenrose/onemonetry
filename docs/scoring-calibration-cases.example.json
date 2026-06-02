@@ -1,0 +1,15 @@
+{
+  "label": "uk-mm-calibration-v1",
+  "notes": "Fill company_numbers and expected_order with real accounts vetted by MM sales/strategy.",
+  "metadata": {
+    "owner": "mid-market-scoring",
+    "created_for": "P2 calibration benchmark",
+    "source_prompt": "docs/internal-info-request-prompt.md"
+  },
+  "company_numbers": [
+    "00000000"
+  ],
+  "expected_order": [
+    "00000000"
+  ]
+}
