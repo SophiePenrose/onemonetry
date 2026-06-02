@@ -743,16 +743,78 @@ export function getFilingCount() {
 
 // --- Company Monitor ---
 
+const stmtUpsertMonitoredCompany = db.prepare(`
+  INSERT INTO company_monitor (company_number, company_name, latest_turnover, status, source, updated_at)
+  VALUES (?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(company_number) DO UPDATE SET
+    company_name = COALESCE(excluded.company_name, company_monitor.company_name),
+    latest_turnover = COALESCE(excluded.latest_turnover, company_monitor.latest_turnover),
+    status = COALESCE(excluded.status, company_monitor.status),
+    updated_at = datetime('now')
+`);
+
+const txUpsertMonitoredCompanies = db.transaction((rows, defaultSource) => {
+  let upserted = 0;
+  let skippedInvalid = 0;
+
+  for (const row of rows) {
+    const companyNumber = normalizeCompanyNumber(
+      row?.company_number
+      || row?.companyNumber
+      || row?.number
+      || row
+    );
+
+    if (!companyNumber) {
+      skippedInvalid += 1;
+      continue;
+    }
+
+    const companyName = String(
+      row?.company_name
+      || row?.companyName
+      || row?.name
+      || ""
+    ).trim() || null;
+
+    const latestTurnover = row?.latest_turnover ?? row?.latestTurnover ?? row?.turnover ?? null;
+    const status = String(row?.status || "active").trim() || "active";
+    const source = String(row?.source || defaultSource || "csv").trim() || "csv";
+
+    stmtUpsertMonitoredCompany.run(companyNumber, companyName, latestTurnover, status, source);
+    upserted += 1;
+  }
+
+  return { upserted, skippedInvalid };
+});
+
 export function upsertMonitoredCompany(company) {
-  db.prepare(`
-    INSERT INTO company_monitor (company_number, company_name, latest_turnover, status, source, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(company_number) DO UPDATE SET
-      company_name = COALESCE(excluded.company_name, company_monitor.company_name),
-      latest_turnover = COALESCE(excluded.latest_turnover, company_monitor.latest_turnover),
-      status = COALESCE(excluded.status, company_monitor.status),
-      updated_at = datetime('now')
-  `).run(company.company_number, company.company_name, company.latest_turnover, company.status || "active", company.source || "csv");
+  stmtUpsertMonitoredCompany.run(
+    company.company_number,
+    company.company_name,
+    company.latest_turnover,
+    company.status || "active",
+    company.source || "csv"
+  );
+}
+
+export function upsertMonitoredCompanies(rows, source = "csv") {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return {
+      received: 0,
+      upserted: 0,
+      skipped_invalid: 0,
+      source,
+    };
+  }
+
+  const result = txUpsertMonitoredCompanies(rows, source);
+  return {
+    received: rows.length,
+    upserted: result.upserted,
+    skipped_invalid: result.skippedInvalid,
+    source,
+  };
 }
 
 export function getMonitoredCompany(companyNumber) {

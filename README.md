@@ -90,6 +90,24 @@ Recommended calibration loop:
 2. Apply the review CSV with `benchmark:apply-review` to update `expected_order`.
 3. Re-run the benchmark with `--cases` to compare model order vs sales truth.
 
+## Large CSV Monitor Import
+
+Use the bulk monitor-list importer when you need to ingest large company-number CSV sets (for example multiple source files totaling tens of thousands of rows).
+
+```bash
+# import multiple CSV files in one deduplicated batch
+npm run import:monitor-list -- data/source3-part1.csv data/source3-part2.csv data/source3-part3.csv data/source3-part4.csv
+
+# same import with explicit source tag and JSON report output
+npm run import:monitor-list -- --source source_3_csv --report exports/monitor-import-report.json data/source3-part1.csv data/source3-part2.csv data/source3-part3.csv data/source3-part4.csv
+```
+
+Notes:
+
+- This command updates `company_monitor` only (no Companies House lookup fan-out during import).
+- Company numbers are deduplicated across all provided files before database upsert.
+- The optional report captures per-file parse and dedupe counts.
+
 ### Make CI a required merge gate (recommended)
 
 CI is currently advisory — a red run does not block merging. To turn it into a

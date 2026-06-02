@@ -2,11 +2,12 @@ import {
   getMonitoredCompanies,
   updateMonitorCheck,
   upsertFiling,
-  upsertMonitoredCompany,
+  upsertMonitoredCompanies,
   getMonitorStats,
   getMonitoredCompanyCount,
 } from "./db.js";
 import { lookupCompany, isCompaniesHouseConfigured } from "./companies-house.js";
+import { parseCsvRow, parseNonEmptyCsvLines } from "./csv-utils.js";
 import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 
 const TURNOVER_THRESHOLD = 15_000_000;
@@ -252,29 +253,65 @@ export async function runStaleFilingFortnightlyBatch(batchSize = BATCH_SIZE) {
 }
 
 export function parseCompanyListCSV(csvContent) {
-  const lines = csvContent.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = parseNonEmptyCsvLines(csvContent);
   if (lines.length === 0) return [];
 
-  const header = lines[0].toLowerCase().replace(/"/g, "");
-  const cols = header.split(",").map((c) => c.trim());
+  const normalizeCompanyNumber = (value) => {
+    const cleaned = String(value || "")
+      .trim()
+      .replace(/^"|"$/g, "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
 
-  const numIdx = cols.findIndex((c) => c.includes("company") && (c.includes("number") || c.includes("num") || c.includes("no") || c.includes("registration")));
-  const nameIdx = cols.findIndex((c) => c.includes("company") && c.includes("name"));
+    if (!cleaned) return null;
+    if (/^\d{1,8}$/.test(cleaned)) return cleaned.padStart(8, "0");
+    if (/^[A-Z]{2}\d+$/.test(cleaned)) return cleaned;
+    return null;
+  };
+
+  const headerCells = parseCsvRow(lines[0]).map((cell) => String(cell || "").toLowerCase().replace(/"/g, ""));
+  const hasHeader = headerCells.some((cell) =>
+    cell.includes("company")
+    || cell.includes("number")
+    || cell.includes("registration")
+    || cell.includes("name")
+  );
+
+  const numIdx = hasHeader
+    ? headerCells.findIndex((cell) =>
+      cell.includes("company")
+      && (cell.includes("number") || cell.includes("num") || cell.includes("no") || cell.includes("registration"))
+    )
+    : -1;
+  const nameIdx = hasHeader
+    ? headerCells.findIndex((cell) => cell.includes("company") && cell.includes("name"))
+    : -1;
+  const startIdx = hasHeader ? 1 : 0;
 
   const companies = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
-    const num = cells[numIdx >= 0 ? numIdx : 0];
-    const name = nameIdx >= 0 ? cells[nameIdx] : null;
+  const seen = new Set();
 
-    if (!num) continue;
-    const cleaned = num.replace(/\s/g, "");
-    if (/^\d{1,8}$/.test(cleaned) || /^[A-Z]{2}\d+$/.test(cleaned)) {
-      companies.push({
-        company_number: cleaned.padStart(8, "0"),
-        company_name: name || null,
-      });
+  for (let i = startIdx; i < lines.length; i += 1) {
+    const cells = parseCsvRow(lines[i]).map((cell) => String(cell || "").trim());
+    if (cells.length === 0) continue;
+
+    let candidateNumber = numIdx >= 0 ? cells[numIdx] : null;
+    if (!candidateNumber) {
+      candidateNumber = cells.find((cell) => !!normalizeCompanyNumber(cell)) || null;
     }
+
+    const normalizedNumber = normalizeCompanyNumber(candidateNumber);
+    if (!normalizedNumber || seen.has(normalizedNumber)) continue;
+
+    const candidateName = nameIdx >= 0
+      ? cells[nameIdx]
+      : cells.find((cell, idx) => idx !== numIdx && cell && !normalizeCompanyNumber(cell));
+
+    seen.add(normalizedNumber);
+    companies.push({
+      company_number: normalizedNumber,
+      company_name: String(candidateName || "").trim() || null,
+    });
   }
 
   return companies;
@@ -282,23 +319,20 @@ export function parseCompanyListCSV(csvContent) {
 
 export async function importMonitorListFromCSV(csvContent, source) {
   const companies = parseCompanyListCSV(csvContent);
-  let imported = 0;
-  let skipped = 0;
+  const upsertResult = upsertMonitoredCompanies(
+    companies.map((company) => ({
+      ...company,
+      source: source || "csv_list",
+      status: "active",
+    })),
+    source || "csv_list"
+  );
 
-  for (const company of companies) {
-    try {
-      upsertMonitoredCompany({
-        company_number: company.company_number,
-        company_name: company.company_name,
-        source: source || "csv_list",
-      });
-      imported++;
-    } catch {
-      skipped++;
-    }
-  }
-
-  return { total_parsed: companies.length, imported, skipped };
+  return {
+    total_parsed: companies.length,
+    imported: upsertResult.upserted,
+    skipped: upsertResult.skipped_invalid,
+  };
 }
 
 // --- Weekly monitor scheduler ---
