@@ -68,6 +68,12 @@ npm run benchmark:scoring -- --cases docs/scoring-calibration-cases.bootstrap.js
 
 # same export, but pre-fill expected_rank from the case file expected_order
 npm run benchmark:scoring -- --cases docs/scoring-calibration-cases.bootstrap.json --review-csv exports/scoring-calibration-review-prefilled.csv --prefill-expected
+
+# apply expected_rank values from a filled review CSV into expected_order
+npm run benchmark:apply-review -- --cases docs/scoring-calibration-cases.bootstrap.json --review-csv exports/scoring-calibration-review.csv --out docs/scoring-calibration-cases.bootstrap.updated.json
+
+# overwrite the case file directly once reviewed
+npm run benchmark:apply-review -- --cases docs/scoring-calibration-cases.bootstrap.json --review-csv exports/scoring-calibration-review.csv --in-place
 ```
 
 Outputs:
@@ -81,7 +87,7 @@ The optional case file supports `company_numbers` and `expected_order` so you ca
 Recommended calibration loop:
 
 1. Export `--review-csv` and have MM sales/strategy fill `expected_rank` + notes.
-2. Update `expected_order` in your case file using ascending `expected_rank`.
+2. Apply the review CSV with `benchmark:apply-review` to update `expected_order`.
 3. Re-run the benchmark with `--cases` to compare model order vs sales truth.
 
 ### Make CI a required merge gate (recommended)
