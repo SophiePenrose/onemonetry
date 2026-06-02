@@ -8,13 +8,62 @@ const STRENGTH_META = {
   absent: { label: "None", color: "#6b7280", bg: "#f3f4f6" },
 };
 
-export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus }) {
+const STRATEGIC_SIGNAL_LABELS = {
+  none: "None",
+  balanced: "Balanced",
+  fragmented_stack: "Fragmented Stack",
+  consolidation_play: "Consolidation Play",
+  anchor_heavy: "Anchor-Heavy Incumbents",
+};
+
+export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus, competitorContext }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", product: "", strength: "medium", notes: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const waitingForAnalysis = analysisStatus === "queued";
   const analysisFailed = analysisStatus === "failed";
+
+  const toFiniteNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  const formatSigned = (value) => {
+    const numeric = Number(value || 0);
+    const sign = numeric > 0 ? "+" : "";
+    return `${sign}${numeric.toFixed(2)}`;
+  };
+
+  const contextScore = toFiniteNumber(competitorContext?.score);
+  const baseScore = toFiniteNumber(competitorContext?.base_score);
+  const motionDelta = toFiniteNumber(competitorContext?.motion_tuning_delta);
+  const holisticDelta = toFiniteNumber(competitorContext?.holistic_tuning_delta);
+  const strategicSignal = String(competitorContext?.strategic_signal || "none");
+  const strategicSignalLabel = STRATEGIC_SIGNAL_LABELS[strategicSignal]
+    || strategicSignal.replace(/_/g, " ");
+
+  const tuningAdjustments = Array.isArray(competitorContext?.holistic_tuning_adjustments)
+    ? competitorContext.holistic_tuning_adjustments
+      .map((item) => ({
+        reason: String(item?.reason || "").trim(),
+        impact: Number(item?.impact || 0),
+      }))
+      .filter((item) => item.reason)
+    : [];
+
+  const tuningSummaryParts = [];
+  if (baseScore !== null) tuningSummaryParts.push(`Base ${baseScore.toFixed(2)}`);
+  if (motionDelta !== null) tuningSummaryParts.push(`Motion ${formatSigned(motionDelta)}`);
+  if (holisticDelta !== null) tuningSummaryParts.push(`Holistic ${formatSigned(holisticDelta)}`);
+
+  const hasContextSummary = Boolean(competitorContext)
+    && (
+      contextScore !== null
+      || tuningSummaryParts.length > 0
+      || tuningAdjustments.length > 0
+      || strategicSignal !== "none"
+    );
 
   async function handleAdd(e) {
     e.preventDefault();
@@ -98,6 +147,41 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated, ana
 
       {error && <div style={{ color: "#c0392b", fontSize: 13, marginBottom: 10 }}>{error}</div>}
 
+      {hasContextSummary && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: "#f4f0ff", borderRadius: 6, border: "1px solid #e9ddff" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: 0.6 }}>
+              Stack Context Scoring
+            </div>
+            {contextScore !== null && (
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#5b21b6" }}>
+                {(contextScore * 100).toFixed(0)}%
+              </div>
+            )}
+          </div>
+
+          <div style={{ fontSize: 13, color: "#4b5563", marginBottom: tuningSummaryParts.length > 0 ? 4 : 0 }}>
+            Signal: <strong>{strategicSignalLabel}</strong>
+          </div>
+
+          {tuningSummaryParts.length > 0 && (
+            <div style={{ fontSize: 12, color: "#4b5563", marginBottom: tuningAdjustments.length > 0 ? 4 : 0 }}>
+              {tuningSummaryParts.join(" | ")}
+            </div>
+          )}
+
+          {tuningAdjustments.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#4b5563" }}>
+              {tuningAdjustments.slice(0, 4).map((item, idx) => (
+                <li key={`context-adjustment-${idx}`}>
+                  {item.reason.replace(/_/g, " ")} ({formatSigned(item.impact)})
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {(!competitors || competitors.length === 0) && !showForm && (
         <div style={{ color: "#888", fontSize: 13 }}>
           {waitingForAnalysis
@@ -156,4 +240,15 @@ CompetitorPanel.propTypes = {
   companyId: PropTypes.string,
   onUpdated: PropTypes.func,
   analysisStatus: PropTypes.string,
+  competitorContext: PropTypes.shape({
+    score: PropTypes.number,
+    base_score: PropTypes.number,
+    motion_tuning_delta: PropTypes.number,
+    holistic_tuning_delta: PropTypes.number,
+    strategic_signal: PropTypes.string,
+    holistic_tuning_adjustments: PropTypes.arrayOf(PropTypes.shape({
+      reason: PropTypes.string,
+      impact: PropTypes.number,
+    })),
+  }),
 };
