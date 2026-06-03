@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import ScoreExplanation from "../components/ScoreExplanation";
 
 describe("ScoreExplanation", () => {
@@ -14,6 +14,7 @@ describe("ScoreExplanation", () => {
       base_score: 0.50,
       motion_tuning_delta: 0.04,
       holistic_tuning_delta: -0.02,
+      strategic_signal: "anchor_heavy",
       holistic_tuning_adjustments: [
         { reason: "strategic_anchor_heavy", impact: -0.02 },
       ],
@@ -68,6 +69,43 @@ describe("ScoreExplanation", () => {
     );
 
     expect(screen.getByText("N/A")).toBeInTheDocument();
+  });
+
+  it("renders score layers when layer scores are numeric strings", () => {
+    const stringScoreBreakdown = {
+      product_fit: { score: "0.88", evidence: "Stringified score" },
+      commercial_value: { score: "0.67", evidence: "Stringified score" },
+    };
+
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={stringScoreBreakdown}
+        finalScore={0.79}
+        explanation="Layer scores present"
+      />
+    );
+
+    expect(screen.getByText("Score Layers")).toBeInTheDocument();
+    expect(screen.getByText("Product Fit")).toBeInTheDocument();
+  });
+
+  it("shows graceful fallback when scoreBreakdown payload is malformed", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown="malformed-payload"
+        finalScore={0.79}
+        explanation="Layer scores present"
+      />
+    );
+
+    expect(screen.getByText("Score Breakdown unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("Score Breakdown:")).not.toBeInTheDocument();
+
+    consoleErrorSpy.mockRestore();
   });
 
   it("renders all 5 scoring layers", () => {
@@ -136,6 +174,27 @@ describe("ScoreExplanation", () => {
     expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
   });
 
+  it("renders narrative object items that include text fields", () => {
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={mockBreakdown}
+        finalScore={0.87}
+        explanation="Strong FX fit"
+        scoreNarrative={{
+          headline: "8.7/10 with medium confidence",
+          drivers: [{ text: "Best motion: FX" }],
+          evidence: [{ text: "Cross-border supplier payments mentioned in filings" }],
+          risks: [{ text: "Low switching feasibility" }],
+        }}
+      />
+    );
+
+    expect(screen.getByText("Best motion: FX")).toBeInTheDocument();
+    expect(screen.getByText("Cross-border supplier payments mentioned in filings")).toBeInTheDocument();
+    expect(screen.getByText("Low switching feasibility")).toBeInTheDocument();
+  });
+
   it("renders competitor context tuning details when provided", () => {
     render(
       <ScoreExplanation
@@ -147,6 +206,8 @@ describe("ScoreExplanation", () => {
     );
 
     expect(screen.getByText("Context Tuning")).toBeInTheDocument();
+    expect(screen.getByText(/Signal:/)).toBeInTheDocument();
+    expect(screen.getByText("Anchor-Heavy Incumbents")).toBeInTheDocument();
     expect(screen.getByText(/Base 0\.50/)).toBeInTheDocument();
     expect(screen.getByText(/Motion \+0\.04/)).toBeInTheDocument();
     expect(screen.getByText(/Holistic -0\.02/)).toBeInTheDocument();

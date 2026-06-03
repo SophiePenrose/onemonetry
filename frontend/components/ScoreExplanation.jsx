@@ -17,6 +17,21 @@ const LAYER_COLORS = {
   competitor_context: "#6f42c1",
 };
 
+const NARRATIVE_ITEM_PROP_TYPE = PropTypes.oneOfType([
+  PropTypes.string,
+  PropTypes.shape({
+    text: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  }),
+]);
+
+const STRATEGIC_SIGNAL_LABELS = {
+  none: "None",
+  balanced: "Balanced",
+  fragmented_stack: "Fragmented Stack",
+  consolidation_play: "Consolidation Play",
+  anchor_heavy: "Anchor-Heavy Incumbents",
+};
+
 function ScoreBar({ score, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
@@ -66,13 +81,15 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
   const hasNarrative = narrativeDrivers.length > 0 || narrativeEvidence.length > 0 || narrativeRisks.length > 0;
 
   const isFiniteNumber = (value) => Number.isFinite(Number(value));
+  const isObjectRecord = (value) => value && typeof value === "object" && !Array.isArray(value);
   const formatSignedScore = (value) => {
     const numeric = Number(value || 0);
     const sign = numeric > 0 ? "+" : "";
     return `${sign}${numeric.toFixed(2)}`;
   };
   const normalizedFinalScore = isFiniteNumber(finalScore) ? Number(finalScore) : null;
-  const hasLayers = Boolean(scoreBreakdown)
+  const hasScoreBreakdownObject = isObjectRecord(scoreBreakdown);
+  const hasLayers = hasScoreBreakdownObject
     && Object.keys(LAYER_LABELS).some((key) => isFiniteNumber(scoreBreakdown[key]?.score));
 
   return (
@@ -163,8 +180,14 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
               tuningSummary.push(`Holistic ${formatSignedScore(layer.holistic_tuning_delta)}`);
             }
 
+            const strategicSignal = key === "competitor_context"
+              ? String(layer.strategic_signal || "none")
+              : "none";
+            const strategicSignalLabel = STRATEGIC_SIGNAL_LABELS[strategicSignal]
+              || strategicSignal.replace(/_/g, " ");
+
             const hasCompetitorTuning = key === "competitor_context"
-              && (tuningSummary.length > 0 || tuningAdjustments.length > 0);
+              && (tuningSummary.length > 0 || tuningAdjustments.length > 0 || strategicSignal !== "none");
 
             return (
               <div key={key} style={{ marginBottom: 12 }}>
@@ -180,6 +203,9 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
                 {hasCompetitorTuning && (
                   <div style={{ fontSize: 12, color: "#4b5563", paddingLeft: 138, marginTop: 6 }}>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>Context Tuning</div>
+                    {strategicSignal !== "none" && (
+                      <div>Signal: <strong>{strategicSignalLabel}</strong></div>
+                    )}
                     {tuningSummary.length > 0 && (
                       <div>{tuningSummary.join(" | ")}</div>
                     )}
@@ -200,7 +226,7 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
         </div>
       )}
 
-      {!hasLayers && scoreBreakdown && (
+      {!hasLayers && hasScoreBreakdownObject && (
         <div>
           <div style={{ fontSize: 13, color: "#888" }}>Score Breakdown:</div>
           <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
@@ -210,6 +236,12 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {!hasLayers && scoreBreakdown && !hasScoreBreakdownObject && (
+        <div style={{ fontSize: 13, color: "#888" }}>
+          Score Breakdown unavailable.
         </div>
       )}
     </div>
@@ -227,9 +259,9 @@ ScoreExplanation.propTypes = {
   explanation: PropTypes.string,
   scoreNarrative: PropTypes.shape({
     headline: PropTypes.string,
-    drivers: PropTypes.arrayOf(PropTypes.string),
-    risks: PropTypes.arrayOf(PropTypes.string),
-    evidence: PropTypes.arrayOf(PropTypes.string),
+    drivers: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
+    risks: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
+    evidence: PropTypes.arrayOf(NARRATIVE_ITEM_PROP_TYPE),
   }),
 };
 
