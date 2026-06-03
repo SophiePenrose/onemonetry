@@ -283,11 +283,11 @@ function classifyReachableCandidate(candidate, domain, pageTitle, pageText, comp
   confidence += textMatches > 1 ? 0.08 : 0;
   confidence = clamp(confidence, 0, 1);
 
-  const strongMatch = domainMatches > 0 && textMatches > 0;
   const acceptableNonGuess = !candidate.used_guess && (domainMatches > 0 || textMatches > 0 || tokens.length === 0);
-  const acceptableGuess = candidate.used_guess && (strongMatch || (domainMatches > 0 && textMatches > 1));
+  // Name guesses require stronger textual corroboration to reduce false-positive website matches.
+  const acceptableGuess = candidate.used_guess && domainMatches > 0 && textMatches > 1;
 
-  const classification = strongMatch || acceptableNonGuess
+  const classification = acceptableNonGuess
     ? "verified"
     : acceptableGuess
       ? "probable"
