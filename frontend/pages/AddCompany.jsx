@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 
 const VALID_MOTIONS = [
@@ -8,9 +8,25 @@ const VALID_MOTIONS = [
 
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 
-export default function AddCompany({ onCompanyAdded, onCancel }) {
-  const [industries, setIndustries] = useState([]);
-  const [form, setForm] = useState({
+const INPUT_STYLE = {
+  width: "100%",
+  padding: "8px 12px",
+  borderRadius: 6,
+  border: "1px solid #ddd",
+  fontSize: 14,
+  boxSizing: "border-box",
+};
+
+const LABEL_STYLE = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: "#555",
+  marginBottom: 4,
+  display: "block",
+};
+
+function createInitialForm() {
+  return {
     name: "",
     company_number: "",
     industry: "",
@@ -18,32 +34,87 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
     turnover: "",
     employee_count: "",
     motions: [],
-  });
+  };
+}
+
+function createDefaultLayers() {
+  return {
+    product_fit: { score: 0.5, evidence: "Pending assessment" },
+    commercial_value: { score: 0.5, evidence: "Pending assessment" },
+    pain_strength: { score: 0.5, evidence: "Pending assessment" },
+    urgency: { score: 0.5, evidence: "Pending assessment" },
+    competitor_context: { score: 0.5, evidence: "Pending assessment" },
+  };
+}
+
+function buildProductFit(motions) {
+  return (motions || []).reduce((accumulator, motion) => {
+    accumulator[motion] = {
+      eligible: true,
+      fit_level: "medium",
+      explanation: `Manually added — ${motion} relevance to be assessed.`,
+      layers: createDefaultLayers(),
+    };
+    return accumulator;
+  }, {});
+}
+
+export default function AddCompany({ onCompanyAdded, onCancel }) {
+  const [industries, setIndustries] = useState([]);
+  const [form, setForm] = useState(() => createInitialForm());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
   useEffect(() => {
-    fetch("/api/industries")
+    const controller = new AbortController();
+
+    fetch("/api/industries", { signal: controller.signal })
       .then((r) => r.json())
-      .then((d) => setIndustries(d.industries || []))
-      .catch(() => {});
+      .then((d) => setIndustries(Array.isArray(d.industries) ? d.industries : []))
+      .catch((err) => {
+        if (err?.name !== "AbortError") {
+          setIndustries([]);
+        }
+      });
+
+    return () => controller.abort();
   }, []);
 
-  function updateField(field, value) {
+  const updateField = useCallback((field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
-  }
+  }, []);
 
-  function toggleMotion(motion) {
+  const toggleMotion = useCallback((motion) => {
     setForm((prev) => ({
       ...prev,
       motions: prev.motions.includes(motion)
         ? prev.motions.filter((m) => m !== motion)
         : [...prev.motions, motion],
     }));
-  }
+  }, []);
 
-  async function handleSubmit(e) {
+  const handleMotionToggle = useCallback((e) => {
+    toggleMotion(e.currentTarget.dataset.motion);
+  }, [toggleMotion]);
+
+  const selectedMotions = useMemo(() => new Set(form.motions), [form.motions]);
+
+  const fieldChangeHandlers = useMemo(() => ({
+    name: (e) => updateField("name", e.target.value),
+    companyNumber: (e) => updateField("company_number", e.target.value),
+    industry: (e) => updateField("industry", e.target.value),
+    segment: (e) => updateField("segment", e.target.value),
+    turnover: (e) => updateField("turnover", e.target.value),
+    employeeCount: (e) => updateField("employee_count", e.target.value),
+  }), [updateField]);
+
+  const industryOptions = useMemo(
+    () => industries.map((industry) => <option key={industry} value={industry} />),
+    [industries],
+  );
+
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
     if (!form.name.trim() || !form.industry.trim()) {
       setError("Company name and industry are required.");
@@ -51,22 +122,9 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
     }
     setSubmitting(true);
     setError(null);
+    setSuccess(null);
 
-    const productFit = {};
-    for (const motion of form.motions) {
-      productFit[motion] = {
-        eligible: true,
-        fit_level: "medium",
-        explanation: `Manually added — ${motion} relevance to be assessed.`,
-        layers: {
-          product_fit: { score: 0.5, evidence: "Pending assessment" },
-          commercial_value: { score: 0.5, evidence: "Pending assessment" },
-          pain_strength: { score: 0.5, evidence: "Pending assessment" },
-          urgency: { score: 0.5, evidence: "Pending assessment" },
-          competitor_context: { score: 0.5, evidence: "Pending assessment" },
-        },
-      };
-    }
+    const productFit = buildProductFit(form.motions);
 
     try {
       const res = await fetch("/api/companies", {
@@ -85,21 +143,14 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
       }
       const data = await res.json();
       setSuccess(`${data.company.name} added successfully.`);
-      setForm({ name: "", company_number: "", industry: "", segment: "Mid-Market", turnover: "", employee_count: "", motions: [] });
+      setForm(createInitialForm());
       if (onCompanyAdded) onCompanyAdded(data.company);
     } catch (err) {
       setError(err.message);
     } finally {
       setSubmitting(false);
     }
-  }
-
-  const inputStyle = {
-    width: "100%", padding: "8px 12px", borderRadius: 6,
-    border: "1px solid #ddd", fontSize: 14, boxSizing: "border-box",
-  };
-
-  const labelStyle = { fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 4, display: "block" };
+  }, [form, onCompanyAdded]);
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", maxWidth: 640 }}>
@@ -126,32 +177,32 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
       <form onSubmit={handleSubmit}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
-            <label style={labelStyle}>Company Name *</label>
-            <input style={inputStyle} value={form.name} onChange={(e) => updateField("name", e.target.value)} placeholder="e.g. Acme Widgets Ltd" />
+            <label style={LABEL_STYLE}>Company Name *</label>
+            <input style={INPUT_STYLE} value={form.name} onChange={fieldChangeHandlers.name} placeholder="e.g. Acme Widgets Ltd" />
           </div>
           <div>
-            <label style={labelStyle}>Company Number</label>
-            <input style={inputStyle} value={form.company_number} onChange={(e) => updateField("company_number", e.target.value)} placeholder="e.g. 12345678" />
+            <label style={LABEL_STYLE}>Company Number</label>
+            <input style={INPUT_STYLE} value={form.company_number} onChange={fieldChangeHandlers.companyNumber} placeholder="e.g. 12345678" />
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
-            <label style={labelStyle}>Industry *</label>
+            <label style={LABEL_STYLE}>Industry *</label>
             <input
-              style={inputStyle}
+              style={INPUT_STYLE}
               list="industry-list"
               value={form.industry}
-              onChange={(e) => updateField("industry", e.target.value)}
+              onChange={fieldChangeHandlers.industry}
               placeholder="e.g. Manufacturing"
             />
             <datalist id="industry-list">
-              {industries.map((i) => <option key={i} value={i} />)}
+              {industryOptions}
             </datalist>
           </div>
           <div>
-            <label style={labelStyle}>Segment</label>
-            <select style={inputStyle} value={form.segment} onChange={(e) => updateField("segment", e.target.value)}>
+            <label style={LABEL_STYLE}>Segment</label>
+            <select style={INPUT_STYLE} value={form.segment} onChange={fieldChangeHandlers.segment}>
               {SEGMENTS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
@@ -159,25 +210,26 @@ export default function AddCompany({ onCompanyAdded, onCancel }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
           <div>
-            <label style={labelStyle}>Turnover (£)</label>
-            <input style={inputStyle} type="number" value={form.turnover} onChange={(e) => updateField("turnover", e.target.value)} placeholder="e.g. 5000000" />
+            <label style={LABEL_STYLE}>Turnover (£)</label>
+            <input style={INPUT_STYLE} type="number" value={form.turnover} onChange={fieldChangeHandlers.turnover} placeholder="e.g. 5000000" />
           </div>
           <div>
-            <label style={labelStyle}>Employee Count</label>
-            <input style={inputStyle} type="number" value={form.employee_count} onChange={(e) => updateField("employee_count", e.target.value)} placeholder="e.g. 50" />
+            <label style={LABEL_STYLE}>Employee Count</label>
+            <input style={INPUT_STYLE} type="number" value={form.employee_count} onChange={fieldChangeHandlers.employeeCount} placeholder="e.g. 50" />
           </div>
         </div>
 
         <div style={{ marginBottom: 20 }}>
-          <label style={labelStyle}>Relevant Product Motions</label>
+          <label style={LABEL_STYLE}>Relevant Product Motions</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
             {VALID_MOTIONS.map((m) => {
-              const selected = form.motions.includes(m);
+              const selected = selectedMotions.has(m);
               return (
                 <button
                   key={m}
                   type="button"
-                  onClick={() => toggleMotion(m)}
+                  data-motion={m}
+                  onClick={handleMotionToggle}
                   style={{
                     padding: "6px 14px", borderRadius: 16, fontSize: 13, fontWeight: 500,
                     border: selected ? "2px solid #0075EB" : "1px solid #ddd",
