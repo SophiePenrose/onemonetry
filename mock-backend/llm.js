@@ -1057,7 +1057,7 @@ function repairTruncatedJson(value) {
 }
 
 export function parseLlmJsonContent(content) {
-  const raw = String(content || "").replace(/\u0000/g, "");
+  const raw = String(content || "").replaceAll("\u0000", "");
   const cleaned = stripJsonCodeFences(raw).trim();
   const fenced = extractJsonFenceBody(raw);
   if (!cleaned && !fenced) throw new Error("Empty LLM response content");
