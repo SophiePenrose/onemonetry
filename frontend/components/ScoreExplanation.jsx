@@ -1,5 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
+import { getStrategicSignalLabel, normalizeStrategicSignal } from "../utils/strategicSignalLabels";
 
 const LAYER_LABELS = {
   product_fit: "Product Fit",
@@ -23,14 +24,6 @@ const NARRATIVE_ITEM_PROP_TYPE = PropTypes.oneOfType([
     text: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   }),
 ]);
-
-const STRATEGIC_SIGNAL_LABELS = {
-  none: "None",
-  balanced: "Balanced",
-  fragmented_stack: "Fragmented Stack",
-  consolidation_play: "Consolidation Play",
-  anchor_heavy: "Anchor-Heavy Incumbents",
-};
 
 function ScoreBar({ score, color }) {
   return (
@@ -181,10 +174,9 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
             }
 
             const strategicSignal = key === "competitor_context"
-              ? String(layer.strategic_signal || "none")
+              ? normalizeStrategicSignal(layer.strategic_signal)
               : "none";
-            const strategicSignalLabel = STRATEGIC_SIGNAL_LABELS[strategicSignal]
-              || strategicSignal.replace(/_/g, " ");
+            const strategicSignalLabel = getStrategicSignalLabel(strategicSignal);
 
             const hasCompetitorTuning = key === "competitor_context"
               && (tuningSummary.length > 0 || tuningAdjustments.length > 0 || strategicSignal !== "none");

@@ -1,19 +1,12 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { getStrategicSignalLabel, normalizeStrategicSignal } from "../utils/strategicSignalLabels";
 
 const STRENGTH_META = {
   strong: { label: "Strong", color: "#c0392b", bg: "#fee2e2" },
   medium: { label: "Medium", color: "#92400e", bg: "#fef3c7" },
   weak: { label: "Weak", color: "#0a8754", bg: "#d1fae5" },
   absent: { label: "None", color: "#6b7280", bg: "#f3f4f6" },
-};
-
-const STRATEGIC_SIGNAL_LABELS = {
-  none: "None",
-  balanced: "Balanced",
-  fragmented_stack: "Fragmented Stack",
-  consolidation_play: "Consolidation Play",
-  anchor_heavy: "Anchor-Heavy Incumbents",
 };
 
 export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus, competitorContext, competitorContextMotion }) {
@@ -39,9 +32,8 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated, ana
   const baseScore = toFiniteNumber(competitorContext?.base_score);
   const motionDelta = toFiniteNumber(competitorContext?.motion_tuning_delta);
   const holisticDelta = toFiniteNumber(competitorContext?.holistic_tuning_delta);
-  const strategicSignal = String(competitorContext?.strategic_signal || "none");
-  const strategicSignalLabel = STRATEGIC_SIGNAL_LABELS[strategicSignal]
-    || strategicSignal.replace(/_/g, " ");
+  const strategicSignal = normalizeStrategicSignal(competitorContext?.strategic_signal);
+  const strategicSignalLabel = getStrategicSignalLabel(strategicSignal);
 
   const tuningAdjustments = Array.isArray(competitorContext?.holistic_tuning_adjustments)
     ? competitorContext.holistic_tuning_adjustments
