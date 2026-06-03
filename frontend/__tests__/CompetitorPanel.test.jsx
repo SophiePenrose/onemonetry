@@ -41,12 +41,20 @@ describe("CompetitorPanel", () => {
       ],
     };
 
-    render(<CompetitorPanel competitors={[]} competitorContext={competitorContext} />);
+    render(
+      <CompetitorPanel
+        competitors={[]}
+        competitorContext={competitorContext}
+        competitorContextMotion="API Integrations"
+      />
+    );
 
     expect(screen.getByText("Stack Context Scoring")).toBeInTheDocument();
     expect(screen.getByText("61%")).toBeInTheDocument();
     expect(screen.getByText(/Signal:/)).toBeInTheDocument();
     expect(screen.getByText("Consolidation Play")).toBeInTheDocument();
+    expect(screen.getByText(/Reference motion:/)).toBeInTheDocument();
+    expect(screen.getByText("API Integrations")).toBeInTheDocument();
     expect(screen.getByText(/Base 0\.52 \| Motion \+0\.04 \| Holistic \+0\.05/)).toBeInTheDocument();
     expect(screen.getByText(/holistic consolidation gap \(\+0\.03\)/i)).toBeInTheDocument();
   });

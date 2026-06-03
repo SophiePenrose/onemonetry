@@ -16,7 +16,7 @@ const STRATEGIC_SIGNAL_LABELS = {
   anchor_heavy: "Anchor-Heavy Incumbents",
 };
 
-export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus, competitorContext }) {
+export default function CompetitorPanel({ competitors, companyId, onUpdated, analysisStatus, competitorContext, competitorContextMotion }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", product: "", strength: "medium", notes: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -164,6 +164,12 @@ export default function CompetitorPanel({ competitors, companyId, onUpdated, ana
             Signal: <strong>{strategicSignalLabel}</strong>
           </div>
 
+          {competitorContextMotion && (
+            <div style={{ fontSize: 12, color: "#4b5563", marginBottom: tuningSummaryParts.length > 0 || tuningAdjustments.length > 0 ? 4 : 0 }}>
+              Reference motion: <strong>{competitorContextMotion}</strong>
+            </div>
+          )}
+
           {tuningSummaryParts.length > 0 && (
             <div style={{ fontSize: 12, color: "#4b5563", marginBottom: tuningAdjustments.length > 0 ? 4 : 0 }}>
               {tuningSummaryParts.join(" | ")}
@@ -251,4 +257,5 @@ CompetitorPanel.propTypes = {
       impact: PropTypes.number,
     })),
   }),
+  competitorContextMotion: PropTypes.string,
 };
