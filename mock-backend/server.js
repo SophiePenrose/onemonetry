@@ -90,6 +90,7 @@ import {
   getShortlistCount,
   getMonitoredCompany,
   upsertMonitoredCompany,
+  clearMonitoredCompanyWebsiteHints,
   getCompanyChargeSummary,
   upsertCompanyChargeSummary,
   updateMonitorCheck,
@@ -6122,6 +6123,9 @@ app.post("/api/company/:id/website-resolution/manual", (req, res) => {
       return res.status(400).json(resolution);
     }
 
+    const shouldClearHints = resolution?.status === "no_site_confirmed"
+      || resolution?.status === "unresolved";
+
     if (resolution?.website_url || resolution?.domain) {
       upsertMonitoredCompany({
         company_number: context.company_number,
@@ -6132,6 +6136,8 @@ app.post("/api/company/:id/website-resolution/manual", (req, res) => {
         company_website: resolution.website_url || context.monitored?.company_website || null,
         company_domain: resolution.domain || context.monitored?.company_domain || null,
       });
+    } else if (shouldClearHints) {
+      clearMonitoredCompanyWebsiteHints(context.company_number);
     }
 
     const monitored = getMonitoredCompany(context.company_number);

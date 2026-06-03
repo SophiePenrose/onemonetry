@@ -884,6 +884,15 @@ const stmtUpsertMonitoredCompany = db.prepare(`
     updated_at = datetime('now')
 `);
 
+const stmtClearMonitoredCompanyWebsiteHints = db.prepare(`
+  UPDATE company_monitor
+  SET
+    company_domain = NULL,
+    company_website = NULL,
+    updated_at = datetime('now')
+  WHERE company_number = ?
+`);
+
 const txUpsertMonitoredCompanies = db.transaction((rows, defaultSource) => {
   let upserted = 0;
   let skippedInvalid = 0;
@@ -969,6 +978,12 @@ export function upsertMonitoredCompany(company) {
     company.status || "active",
     company.source || "csv"
   );
+}
+
+export function clearMonitoredCompanyWebsiteHints(companyNumber) {
+  const normalized = normalizeCompanyNumber(companyNumber);
+  if (!normalized) return 0;
+  return stmtClearMonitoredCompanyWebsiteHints.run(normalized).changes;
 }
 
 export function upsertMonitoredCompanies(rows, source = "csv") {
