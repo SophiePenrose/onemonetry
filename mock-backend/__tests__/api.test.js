@@ -493,6 +493,50 @@ describe("API endpoints", () => {
       assert.equal(invalid.data.status, "invalid_input");
       assert.equal(invalid.data.updated, false);
     });
+
+    it("clears stale monitored website hints on manual no-site confirmation", async () => {
+      const companyNumber = "94021005";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Manual Clear Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "SMB",
+          turnover: 2200000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const seeded = await fetchJSON(`/api/company/${companyNumber}/website-resolution/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "verified",
+          company_website: "stale-hint.example",
+        }),
+      });
+      assert.equal(seeded.status, 200);
+      assert.equal(seeded.data.monitored_company?.company_domain, "stale-hint.example");
+
+      const cleared = await fetchJSON(`/api/company/${companyNumber}/website-resolution/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "no_site_confirmed",
+          note: "operator confirmed no website",
+        }),
+      });
+      assert.equal(cleared.status, 200);
+      assert.equal(cleared.data.website_resolution?.status, "no_site_confirmed");
+
+      const cached = await fetchJSON(`/api/company/${companyNumber}/website-resolution`);
+      assert.equal(cached.status, 200);
+      assert.equal(cached.data.website_resolution?.status, "no_site_confirmed");
+      assert.equal(cached.data.monitored_company?.company_website, null);
+      assert.equal(cached.data.monitored_company?.company_domain, null);
+    });
   });
 
   describe("GET /api/integrations/status", () => {
