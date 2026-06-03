@@ -510,6 +510,65 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("Email company-id aliasing", () => {
+    it("accepts CH-prefixed company-number aliases for template generation", async () => {
+      const companyNumber = "91234567";
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Alias Generation Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 19000000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const generated = await fetchJSON("/api/email/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_id: `CH-${companyNumber}`,
+          stakeholder_name: "Taylor Jones",
+          stakeholder_role: "Finance Director",
+          stakeholder_email: "taylor.jones@example.com",
+          motion: "FX",
+        }),
+      });
+
+      assert.equal(generated.status, 201);
+      assert.equal(generated.data.source, "template");
+      assert.equal(typeof generated.data.sequence_id, "string");
+    });
+
+    it("accepts CH-prefixed company-number aliases for exclusion checks", async () => {
+      const companyNumber = "92345671";
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Alias Exclusion Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 12500000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const checked = await fetchJSON("/api/email/check-exclusion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company_id: `CH-${companyNumber}` }),
+      });
+
+      assert.equal(checked.status, 200);
+      assert.equal(typeof checked.data.excluded, "boolean");
+    });
+  });
+
   describe("Enrichment endpoints", () => {
     it("refreshes and reads enrichment snapshot", async () => {
       const websiteServer = http.createServer((req, res) => {
