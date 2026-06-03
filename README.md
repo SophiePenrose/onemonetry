@@ -49,6 +49,24 @@ Run the same checks locally before pushing:
 (cd frontend && npm ci && npm run build && npm test)
 ```
 
+## Lightweight Backend Runtime
+
+For low-memory validation workflows (for example API smoke checks, shortlist/detail payload checks, or large import dry-runs), start the backend in lightweight mode:
+
+```bash
+npm run start:backend:light
+```
+
+This sets `LIGHTWEIGHT_RUNTIME=true`, which disables background workers and schedulers such as:
+
+- analysis queue worker + auto-seed
+- tech enrichment auto-refresh seeding
+- daily/monthly auto-pull jobs
+- stale filing monitor
+- backfill autorun
+
+Use normal `npm run start:backend` for full-runtime behavior.
+
 ## Scoring Calibration Benchmark
 
 Use the benchmark runner to snapshot current ranking behavior and competitor-context diagnostics before/after scoring changes.

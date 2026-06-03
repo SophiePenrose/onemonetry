@@ -5,6 +5,7 @@
   "scripts": {
     "start": "bash ./start.sh",
     "start:backend": "npm --prefix ./mock-backend start",
+    "start:backend:light": "LIGHTWEIGHT_RUNTIME=true npm --prefix ./mock-backend start",
     "start:frontend": "npm --prefix ./frontend run dev",
     "smoke:api": "bash ./scripts/smoke-api.sh",
     "benchmark:scoring": "node ./scripts/scoring-calibration-benchmark.mjs",
