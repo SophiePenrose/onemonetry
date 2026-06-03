@@ -31,13 +31,21 @@ The current design focuses on:
 
 ## Continuous integration
 
-Every pull request and every push to `main` runs the CI workflow
-(`.github/workflows/ci.yml`) on Node 22:
+The CI workflow (`.github/workflows/ci.yml`) runs on Node 22.
+
+Core checks run on every pull request and every push to `main`:
 
 | Job | Working dir | Commands |
 |-----|-------------|----------|
-| `Backend (mock-backend tests)` | `mock-backend/` | `npm ci` then `npm test` (`node --test`, 85 tests) |
-| `Frontend (build + tests)` | `frontend/` | `npm ci`, `npm run build` (`vite build`), then `npm test` (`vitest run`) |
+| `Backend (mock-backend tests)` | `mock-backend/` | `npm ci` then `npm test` |
+| `Frontend (build + tests)` | `frontend/` | `npm ci`, `npm run build`, then `npm test` |
+| `Smoke (quick e2e)` | repo root | `npm ci` for backend+frontend, then `npm run smoke:e2e:quick` |
+
+Pull requests additionally run:
+
+| Job | Output |
+|-----|--------|
+| `Benchmark Delta (scoring)` | base-vs-head benchmark delta JSON + markdown artifact, plus an auto-updated PR comment summary |
 
 Run the same checks locally before pushing:
 
@@ -47,6 +55,9 @@ Run the same checks locally before pushing:
 
 # frontend build + tests
 (cd frontend && npm ci && npm run build && npm test)
+
+# quick e2e smoke (auto-starts backend/frontend if needed)
+npm run smoke:e2e:quick
 ```
 
 ## Lightweight Backend Runtime
@@ -124,6 +135,18 @@ Outputs:
 - Rolling latest snapshot at `exports/scoring-calibration-benchmark-latest.json`
 - Optional review CSV in `exports/` for manual expected-rank input
 
+Benchmark delta comparison helper:
+
+```bash
+npm run benchmark:delta -- \
+   --base exports/scoring-calibration-benchmark-base.json \
+   --head exports/scoring-calibration-benchmark-head.json \
+   --out exports/scoring-calibration-benchmark-delta.json \
+   --markdown exports/scoring-calibration-benchmark-delta.md
+```
+
+CI uses the same helper on pull requests to publish a benchmark-delta artifact and a sticky PR comment.
+
 The optional case file supports `company_numbers` and `expected_order` so you can measure pairwise order agreement during calibration.
 
 Recommended calibration loop:
@@ -163,9 +186,11 @@ CI is currently advisory — a red run does not block merging. To turn it into a
 hard gate, enable branch protection on `main`
 (**Settings → Branches → Add branch protection rule / ruleset**) and:
 
-1. **Require status checks to pass before merging**, then select both checks:
+1. **Require status checks to pass before merging**, then select these checks:
    - `Backend (mock-backend tests)`
    - `Frontend (build + tests)`
+   - `Smoke (quick e2e)`
+   - `Benchmark Delta (scoring)`
 2. **Require branches to be up to date before merging** (so checks run against the latest `main`).
 3. *(Optional)* **Require a pull request before merging** with at least one approving review.
 
