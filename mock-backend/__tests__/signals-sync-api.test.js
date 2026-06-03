@@ -128,6 +128,8 @@ describe("POST /api/signals/sync/:number", () => {
       assert.equal(data.status, "no_connectors_configured");
       assert.equal(data.updated, false);
       assert.equal(data.attempted, 0);
+      assert.equal(data.telemetry?.request_attempts_total, 0);
+      assert.equal(data.telemetry?.retry_attempts_total, 0);
     } finally {
       await ctx.stop();
     }
@@ -206,6 +208,8 @@ describe("POST /api/signals/sync/:number", () => {
       assert.equal(data.updated, true);
       assert.equal(data.succeeded, 1);
       assert.equal(data.failed, 0);
+      assert.equal(data.telemetry?.request_attempts_total >= 1, true);
+      assert.equal(data.telemetry?.retry_attempts_total >= 0, true);
       assert.ok(Array.isArray(data.keys_updated));
       assert.ok(data.keys_updated.includes("ownership_00000006"));
       assert.ok(data.keys_updated.includes("hiring_signals_00000006"));
@@ -216,6 +220,8 @@ describe("POST /api/signals/sync/:number", () => {
       assert.equal(connector.ownership_updated, true);
       assert.equal(connector.hiring_updated, true);
       assert.equal(connector.tech_updated, true);
+      assert.equal(typeof connector.request_attempts, "number");
+      assert.equal(typeof connector.retry_attempts, "number");
     } finally {
       await ctx.stop();
       connectorServer.close();

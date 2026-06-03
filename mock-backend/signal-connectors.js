@@ -508,13 +508,34 @@ function buildConnectorRuntimeStatus(definition, context, options = {}) {
   };
 }
 
+function classifyConnectorFailure(status, error) {
+  const normalizedError = String(error || "").trim().toLowerCase();
+  const statusCode = Number(status);
+
+  if (normalizedError === "missing_url_template") return "config_error";
+  if (normalizedError === "request_timeout") return "timeout";
+  if (normalizedError.startsWith("http_")) return "http_error";
+  if (Number.isFinite(statusCode) && statusCode >= 400) return "http_error";
+  if (normalizedError) return "request_error";
+  return "unknown";
+}
+
 async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
   const urls = Array.isArray(requestUrls) ? requestUrls.filter(Boolean) : [];
+  const startedAt = Date.now();
+  const attempts = [];
+
   if (urls.length === 0) {
     return {
       ok: false,
       status: null,
       error: "missing_url_template",
+      attempted_urls: [],
+      attempts,
+      attempt_count: 0,
+      retry_count: 0,
+      failed_attempt_count: 0,
+      request_duration_ms: 0,
     };
   }
 
@@ -528,6 +549,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
 
   for (const url of urls) {
     attemptedUrls.push(url);
+    const attemptStartedAt = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -553,16 +575,45 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
       }
 
       if (!response.ok) {
+        const error = payload?.error || payload?.message || `http_${response.status}`;
+        const durationMs = Math.max(0, Date.now() - attemptStartedAt);
+
+        attempts.push({
+          url,
+          ok: false,
+          status: response.status,
+          error,
+          timed_out: false,
+          duration_ms: durationMs,
+        });
+
         lastError = {
           ok: false,
           status: response.status,
-          error: payload?.error || payload?.message || `http_${response.status}`,
+          error,
           request_url: url,
           payload,
           attempted_urls: attemptedUrls,
+          attempts,
+          attempt_count: attempts.length,
+          retry_count: Math.max(0, attempts.length - 1),
+          failed_attempt_count: attempts.length,
+          request_duration_ms: Math.max(0, Date.now() - startedAt),
         };
         continue;
       }
+
+      const durationMs = Math.max(0, Date.now() - attemptStartedAt);
+      attempts.push({
+        url,
+        ok: true,
+        status: response.status,
+        error: null,
+        timed_out: false,
+        duration_ms: durationMs,
+      });
+
+      const failedAttemptCount = attempts.filter((entry) => entry.ok === false).length;
 
       return {
         ok: true,
@@ -570,21 +621,50 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
         request_url: url,
         attempted_urls: attemptedUrls,
         payload,
+        attempts,
+        attempt_count: attempts.length,
+        retry_count: Math.max(0, attempts.length - 1),
+        failed_attempt_count: failedAttemptCount,
+        request_duration_ms: Math.max(0, Date.now() - startedAt),
       };
     } catch (err) {
+      const error = err?.name === "AbortError" ? "request_timeout" : (err?.message || "request_failed");
+      const durationMs = Math.max(0, Date.now() - attemptStartedAt);
+
+      attempts.push({
+        url,
+        ok: false,
+        status: null,
+        error,
+        timed_out: error === "request_timeout",
+        duration_ms: durationMs,
+      });
+
       lastError = {
         ok: false,
         status: null,
-        error: err?.name === "AbortError" ? "request_timeout" : (err?.message || "request_failed"),
+        error,
         request_url: url,
         attempted_urls: attemptedUrls,
+        attempts,
+        attempt_count: attempts.length,
+        retry_count: Math.max(0, attempts.length - 1),
+        failed_attempt_count: attempts.length,
+        request_duration_ms: Math.max(0, Date.now() - startedAt),
       };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  return lastError;
+  return {
+    ...lastError,
+    attempts,
+    attempt_count: Number(lastError?.attempt_count || attempts.length || 0),
+    retry_count: Number(lastError?.retry_count || Math.max(0, attempts.length - 1)),
+    failed_attempt_count: Number(lastError?.failed_attempt_count || attempts.length || 0),
+    request_duration_ms: Number(lastError?.request_duration_ms || Math.max(0, Date.now() - startedAt)),
+  };
 }
 
 function asObjectArray(value) {
@@ -2183,12 +2263,27 @@ export async function syncExternalSignals(input = {}) {
       failed: 0,
       status_url_discovery_enabled: enableStatusDiscovery,
       connectors: runtimeStatuses,
+      telemetry: {
+        request_timeout_ms: timeoutMs,
+        request_attempts_total: 0,
+        retry_attempts_total: 0,
+        connectors_with_retries: 0,
+        timeout_failures: 0,
+        http_failures: 0,
+        request_failures: 0,
+      },
     };
   }
 
   const connectorResults = [];
   let succeeded = 0;
   let failed = 0;
+  let requestAttemptsTotal = 0;
+  let retryAttemptsTotal = 0;
+  let connectorsWithRetries = 0;
+  let timeoutFailures = 0;
+  let httpFailures = 0;
+  let requestFailures = 0;
   const keysUpdated = new Set();
 
   for (const status of enabled) {
@@ -2196,17 +2291,34 @@ export async function syncExternalSignals(input = {}) {
     if (!definition) continue;
 
     const fetched = await fetchConnectorPayload(definition, status.request_urls, timeoutMs);
+    const requestAttempts = Math.max(0, Number(fetched?.attempt_count || 0));
+    const retryAttempts = Math.max(0, Number(fetched?.retry_count || 0));
+
+    requestAttemptsTotal += requestAttempts;
+    retryAttemptsTotal += retryAttempts;
+    if (retryAttempts > 0) connectorsWithRetries += 1;
 
     if (!fetched.ok) {
       failed += 1;
+      const failureCategory = classifyConnectorFailure(fetched.status, fetched.error);
+
+      if (failureCategory === "timeout") timeoutFailures += 1;
+      if (failureCategory === "http_error") httpFailures += 1;
+      if (failureCategory === "request_error") requestFailures += 1;
+
       connectorResults.push({
         id: status.id,
         ok: false,
         auto_discovery_active: status.auto_discovery_active === true,
         status: fetched.status,
         error: fetched.error,
+        failure_category: failureCategory,
         request_url: fetched.request_url || null,
         attempted_urls: fetched.attempted_urls || [],
+        request_attempts: requestAttempts,
+        retry_attempts: retryAttempts,
+        request_duration_ms: Number(fetched?.request_duration_ms || 0),
+        attempts: Array.isArray(fetched?.attempts) ? fetched.attempts : [],
       });
       continue;
     }
@@ -2253,6 +2365,11 @@ export async function syncExternalSignals(input = {}) {
       status: fetched.status,
       request_url: fetched.request_url || null,
       attempted_urls: fetched.attempted_urls || [],
+      request_attempts: requestAttempts,
+      retry_attempts: retryAttempts,
+      failed_attempts_before_success: Number(fetched?.failed_attempt_count || 0),
+      request_duration_ms: Number(fetched?.request_duration_ms || 0),
+      attempts: Array.isArray(fetched?.attempts) ? fetched.attempts : [],
       ownership_updated: !!ownershipEnvelope,
       hiring_updated: !!hiringEnvelope,
       reputation_updated: !!reputationEnvelope,
@@ -2270,6 +2387,15 @@ export async function syncExternalSignals(input = {}) {
     attempted: enabled.length,
     succeeded,
     failed,
+    telemetry: {
+      request_timeout_ms: timeoutMs,
+      request_attempts_total: requestAttemptsTotal,
+      retry_attempts_total: retryAttemptsTotal,
+      connectors_with_retries: connectorsWithRetries,
+      timeout_failures: timeoutFailures,
+      http_failures: httpFailures,
+      request_failures: requestFailures,
+    },
     connectors: connectorResults,
     keys_updated: [...keysUpdated],
   };
