@@ -95,6 +95,9 @@ const EMAIL_LLM_MAX_PROMPT_CHARS = Math.max(7000, Math.min(20000,
 const EMAIL_LLM_MAX_TOKENS = Math.max(450, Math.min(1000,
   Number.parseInt(process.env.EMAIL_LLM_MAX_TOKENS || "700", 10) || 700
 ));
+const EMAIL_LLM_REQUEST_TIMEOUT_MS = Math.max(5000, Math.min(60000,
+  Number.parseInt(process.env.EMAIL_LLM_REQUEST_TIMEOUT_MS || "25000", 10) || 25000
+));
 const EMAIL_LLM_FAIL_CLOSED = ["1", "true", "yes", "on"].includes(
   String(process.env.EMAIL_LLM_FAIL_CLOSED ?? "true").trim().toLowerCase()
 );
@@ -124,6 +127,20 @@ function createRetryNeededError(reason, message) {
 
 function throwRetryNeeded(reason, message) {
   throw createRetryNeededError(reason, message);
+}
+
+async function fetchEmailLlmWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EMAIL_LLM_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildFailOpenFallbackResult(params, senderName, senderTitle, reason, detail) {
@@ -1450,20 +1467,55 @@ export async function generateLLMEmail(params) {
 
       let shouldRetryAttempt = false;
       for (const modelName of modelCandidates) {
-        const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
-          body: JSON.stringify({
-            model: modelName,
-            response_format: { type: "json_object" },
-            messages: [
-              ...buildSystemMessages(),
-              { role: "user", content: attemptPrompt },
-            ],
-            temperature: 0.55,
-            max_tokens: EMAIL_LLM_MAX_TOKENS,
-          }),
-        });
+        let response;
+        try {
+          response = await fetchEmailLlmWithTimeout(`${OPENAI_BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+            body: JSON.stringify({
+              model: modelName,
+              response_format: { type: "json_object" },
+              messages: [
+                ...buildSystemMessages(),
+                { role: "user", content: attemptPrompt },
+              ],
+              temperature: 0.55,
+              max_tokens: EMAIL_LLM_MAX_TOKENS,
+            }),
+          });
+        } catch (requestErr) {
+          const timeout = requestErr?.name === "AbortError";
+          const reason = timeout ? "upstream_timeout" : "upstream_request_error";
+          const detail = timeout
+            ? `Live email generation timed out after ${EMAIL_LLM_REQUEST_TIMEOUT_MS}ms.`
+            : "Live email generation request failed before a response was received.";
+
+          if (attempt < maxAttempts) {
+            retryReasons.push(reason);
+            shouldRetryAttempt = true;
+            break;
+          }
+
+          if (canUseEmailLlm()) {
+            if (!EMAIL_LLM_FAIL_CLOSED) {
+              return buildFailOpenFallbackResult(
+                params,
+                resolvedSenderName,
+                resolvedSenderTitle,
+                reason,
+                `${detail} Served deterministic fallback draft.`
+              );
+            }
+
+            throwRetryNeeded(reason, `${detail} Retry required.`);
+          }
+
+          return generateFallbackEmail({
+            ...params,
+            senderName: resolvedSenderName,
+            senderTitle: resolvedSenderTitle,
+          });
+        }
 
         if (!response.ok) {
           if (response.status === 401 || response.status === 403) {

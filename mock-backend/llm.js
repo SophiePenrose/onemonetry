@@ -24,10 +24,27 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const ANTHROPIC_API_KEY = resolveConfiguredSecret(process.env.ANTHROPIC_API_KEY);
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
+const LLM_REQUEST_TIMEOUT_MS = Math.max(1000, Math.min(90000,
+  Number.parseInt(process.env.LLM_REQUEST_TIMEOUT_MS || "30000", 10) || 30000
+));
 let openAiAuthDisabled = false;
 let openAiAuthLogged = false;
 let anthropicAuthDisabled = false;
 let anthropicAuthLogged = false;
+
+async function fetchWithLlmTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function getActiveProvider() {
   if (ANTHROPIC_API_KEY && !anthropicAuthDisabled) return "anthropic";
@@ -1234,7 +1251,7 @@ Token budget guardrail:
 
   try {
     const response = provider === "anthropic"
-      ? await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+      ? await fetchWithLlmTimeout(`${ANTHROPIC_BASE_URL}/v1/messages`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1249,7 +1266,7 @@ Token budget guardrail:
           messages: [{ role: "user", content: prompt }],
         }),
       })
-      : await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      : await fetchWithLlmTimeout(`${OPENAI_BASE_URL}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1294,8 +1311,16 @@ Token budget guardrail:
     const result = { ...enriched, source: "llm", model, analysed_at: new Date().toISOString() };
     return enrichSupplementaryContext(result, companyName, filingText);
   } catch (err) {
-    console.error("LLM analysis error:", err.message);
-    const fallback = { ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText), source: "fallback", error: err.message };
+    const isTimeout = err?.name === "AbortError";
+    const errorMessage = isTimeout
+      ? `LLM request timed out after ${LLM_REQUEST_TIMEOUT_MS}ms`
+      : err.message;
+    console.error("LLM analysis error:", errorMessage);
+    const fallback = {
+      ...generateFallbackAnalysis(companyName, companyNumber, turnover, filingText),
+      source: "fallback",
+      error: errorMessage,
+    };
     return enrichSupplementaryContext(fallback, companyName, filingText);
   }
 }
