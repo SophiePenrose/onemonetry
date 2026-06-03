@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 
 function formatTurnover(value) {
@@ -50,6 +50,15 @@ function sourceBucketForCompany(company) {
   return inferSourceBucket(company?.source, company?.latest_filing_date);
 }
 
+function sourceMetaForCompany(company) {
+  const sourceBucket = sourceBucketForCompany(company);
+  const sourceMeta = SOURCE_META[sourceBucket] || SOURCE_META["?"];
+  const sourceTitle = company?.source_family
+    ? String(company.source_family).replaceAll("_", " ")
+    : sourceMeta.title;
+  return { sourceMeta, sourceTitle };
+}
+
 const SOURCE_META = {
   "1a": { label: "1a", color: "#475569", title: "Monthly bulk backfill" },
   "1b": { label: "1b", color: "#0f766e", title: "Monthly scheduled filings" },
@@ -82,17 +91,25 @@ export default function Home({ onNavigateToCompany }) {
   const [landingLoading, setLandingLoading] = useState(false);
 
   useEffect(() => {
-    fetch("/api/dashboard")
+    const controller = new AbortController();
+
+    fetch("/api/dashboard", { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
         setData(d);
         setLandingCompanies(d.top_companies || []);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        if (err?.name !== "AbortError") setLoading(false);
+      });
+
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     setLandingLoading(true);
     const params = new URLSearchParams({
       limit: "150",
@@ -101,30 +118,57 @@ export default function Home({ onNavigateToCompany }) {
       turnover_band: turnoverBand,
     });
 
-    fetch(`/api/unified-shortlist?${params.toString()}`)
+    fetch(`/api/unified-shortlist?${params.toString()}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
         setLandingCompanies(d.companies || []);
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err?.name !== "AbortError") {
+          // Keep current rows visible if refresh fails.
+        }
+      })
       .finally(() => setLandingLoading(false));
+
+    return () => controller.abort();
   }, [turnoverBand, sortBy, sortDir]);
+
+  const turnoverDistEntries = useMemo(
+    () => Object.entries(data?.turnover_distribution || {}),
+    [data?.turnover_distribution],
+  );
+  const maxTurnoverCount = useMemo(
+    () => Math.max(...turnoverDistEntries.map(([, bucket]) => Number(bucket?.count || 0)), 1),
+    [turnoverDistEntries],
+  );
+
+  const normalizedSearch = companySearch.trim().toLowerCase();
+
+  const sourceFilteredLandingCompanies = useMemo(
+    () => (sourceFilter === "all"
+      ? landingCompanies
+      : landingCompanies.filter((c) => sourceBucketForCompany(c) === sourceFilter)),
+    [landingCompanies, sourceFilter],
+  );
+
+  const filteredLandingCompanies = useMemo(
+    () => (normalizedSearch
+      ? sourceFilteredLandingCompanies.filter((c) => {
+          const name = String(c.name || "").toLowerCase();
+          const companyNumber = String(c.company_number || "").toLowerCase();
+          return name.includes(normalizedSearch) || companyNumber.includes(normalizedSearch);
+        })
+      : sourceFilteredLandingCompanies),
+    [normalizedSearch, sourceFilteredLandingCompanies],
+  );
+
+  const visibleLandingCompanies = useMemo(
+    () => filteredLandingCompanies.slice(0, 20),
+    [filteredLandingCompanies],
+  );
 
   if (loading) return <div style={{ color: "#888", padding: 24 }}>Loading dashboard…</div>;
   if (!data) return <div style={{ color: "#c0392b", padding: 24 }}>Failed to load dashboard.</div>;
-
-  const turnoverDist = data.turnover_distribution || {};
-  const sourceFilteredLandingCompanies = sourceFilter === "all"
-    ? landingCompanies
-    : landingCompanies.filter((c) => sourceBucketForCompany(c) === sourceFilter);
-
-  const filteredLandingCompanies = companySearch.trim()
-    ? sourceFilteredLandingCompanies.filter((c) =>
-        String(c.name || "").toLowerCase().includes(companySearch.toLowerCase())
-        || String(c.company_number || "").toLowerCase().includes(companySearch.toLowerCase())
-      )
-    : sourceFilteredLandingCompanies;
-  const visibleLandingCompanies = filteredLandingCompanies.slice(0, 20);
 
   function handleColumnSort(field) {
     if (sortBy === field) {
@@ -169,9 +213,8 @@ export default function Home({ onNavigateToCompany }) {
       <div className="dashboard-insights-grid">
         <div className="dashboard-panel">
           <h4 className="dashboard-panel-title">Turnover Distribution</h4>
-          {Object.entries(turnoverDist).map(([label, bucket]) => {
-            const maxCount = Math.max(...Object.values(turnoverDist).map((b) => b.count), 1);
-            const width = (bucket.count / maxCount) * 100;
+          {turnoverDistEntries.map(([label, bucket]) => {
+            const width = (bucket.count / maxTurnoverCount) * 100;
             return (
               <div key={label} className="turnover-row">
                 <span className="turnover-label">{label}</span>
@@ -293,6 +336,7 @@ export default function Home({ onNavigateToCompany }) {
                     : c.segment === "Mid-Market"
                       ? "segment-pill-midmarket"
                       : "segment-pill-smb";
+                  const { sourceMeta, sourceTitle } = sourceMetaForCompany(c);
 
                   return (
                     <tr
@@ -320,11 +364,6 @@ export default function Home({ onNavigateToCompany }) {
                       </td>
                       <td className="align-right row-strong">{formatTurnover(c.turnover)}</td>
                       <td className="align-center">
-                    {(() => {
-                      const sourceBucket = sourceBucketForCompany(c);
-                      const sourceMeta = SOURCE_META[sourceBucket] || SOURCE_META["?"];
-                      const sourceTitle = c.source_family ? String(c.source_family).replaceAll("_", " ") : sourceMeta.title;
-                      return (
                         <span
                           title={sourceTitle}
                           className="source-pill"
@@ -332,8 +371,6 @@ export default function Home({ onNavigateToCompany }) {
                         >
                           {sourceMeta.label}
                         </span>
-                      );
-                    })()}
                       </td>
                       <td className="align-center row-muted">{filingAgeLabel(c.latest_filing_date)}</td>
                       <td className="align-center">{c.filing_count}</td>
