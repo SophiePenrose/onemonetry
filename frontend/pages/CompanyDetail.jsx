@@ -29,6 +29,30 @@ function Field({ label, children }) {
 
 Field.propTypes = { label: PropTypes.string.isRequired, children: PropTypes.node };
 
+export function selectCompetitorContextMotion(allMotionScores = []) {
+  const withContext = (Array.isArray(allMotionScores) ? allMotionScores : [])
+    .filter((motion) => {
+      const layer = motion?.score_breakdown?.competitor_context;
+      return layer && typeof layer === "object";
+    });
+
+  if (withContext.length === 0) return null;
+
+  return withContext.reduce((best, motion) => {
+    if (!best) return motion;
+
+    const bestScore = Number(best?.score);
+    const motionScore = Number(motion?.score);
+    const bestHasScore = Number.isFinite(bestScore);
+    const motionHasScore = Number.isFinite(motionScore);
+
+    if (motionHasScore && (!bestHasScore || motionScore > bestScore)) {
+      return motion;
+    }
+    return best;
+  }, null);
+}
+
 export default function CompanyDetail({ companyId }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -106,9 +130,9 @@ export default function CompanyDetail({ companyId }) {
       : analysisStatus === "ready"
         ? "Ready"
         : "Pending";
-  const competitorContext = (company.all_motion_scores || [])
-    .map((motion) => motion?.score_breakdown?.competitor_context)
-    .find((layer) => layer && typeof layer === "object") || null;
+  const competitorContextMotionData = selectCompetitorContextMotion(company.all_motion_scores || []);
+  const competitorContext = competitorContextMotionData?.score_breakdown?.competitor_context || null;
+  const competitorContextMotion = competitorContextMotionData?.motion || null;
 
   return (
     <div>
@@ -235,6 +259,7 @@ export default function CompanyDetail({ companyId }) {
           onUpdated={refreshCompany}
           analysisStatus={analysisStatus}
           competitorContext={competitorContext}
+          competitorContextMotion={competitorContextMotion}
         />
         <StakeholderPanel
           stakeholders={company.stakeholders}
