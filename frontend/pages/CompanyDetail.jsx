@@ -12,10 +12,38 @@ import EmailSequencePanel from "../components/EmailSequencePanel";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
 
-function formatTurnover(value) {
-  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
-  return `£${value}`;
+function toFiniteNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+export function formatTurnover(value) {
+  const numeric = toFiniteNumber(value);
+  if (numeric === null || numeric < 0) return "N/A";
+  if (numeric >= 1_000_000) return `£${(numeric / 1_000_000).toFixed(1)}M`;
+  if (numeric >= 1_000) return `£${(numeric / 1_000).toFixed(0)}K`;
+  return `£${numeric}`;
+}
+
+export function formatScore(value, digits = 2) {
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? "N/A" : numeric.toFixed(digits);
+}
+
+export function formatPercent(value, digits = 0) {
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? "N/A" : `${(numeric * 100).toFixed(digits)}%`;
+}
+
+export function formatBpsDelta(finalScore, baseScore) {
+  const finalNumeric = toFiniteNumber(finalScore);
+  const baseNumeric = toFiniteNumber(baseScore);
+  if (finalNumeric === null || baseNumeric === null) return "N/A";
+  const bps = (finalNumeric - baseNumeric) * 100;
+  const sign = bps > 0 ? "+" : "";
+  return `${sign}${bps.toFixed(0)}bps`;
 }
 
 function Field({ label, children }) {
@@ -155,6 +183,11 @@ export default function CompanyDetail({ companyId }) {
   const competitorContextMotionData = selectCompetitorContextMotion(company.all_motion_scores || []);
   const competitorContext = competitorContextMotionData?.score_breakdown?.competitor_context || null;
   const competitorContextMotion = competitorContextMotionData?.motion || null;
+  const propensityScore = toFiniteNumber(company.propensity?.score);
+  const propensityColor = propensityScore !== null
+    ? propensityScore >= 0.7 ? "#0a8754" : propensityScore >= 0.5 ? "#c27b00" : "#6b7280"
+    : "#6b7280";
+  const propensityDeltaLabel = formatBpsDelta(company.combined_score, company.base_score);
 
   return (
     <div>
@@ -163,7 +196,7 @@ export default function CompanyDetail({ companyId }) {
           <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Combined Score</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{company.combined_score?.toFixed(2)}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{formatScore(company.combined_score)}</div>
           </div>
         </div>
 
@@ -230,15 +263,15 @@ export default function CompanyDetail({ companyId }) {
                 {company.propensity.warmth === "hot" ? "🔥" : company.propensity.warmth === "warm" ? "☀️" : company.propensity.warmth === "cool" ? "🌤" : "❄️"}
               </span>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: company.propensity.score >= 0.7 ? "#0a8754" : company.propensity.score >= 0.5 ? "#c27b00" : "#6b7280" }}>
-                  {(company.propensity.score * 100).toFixed(0)}%
+                <div style={{ fontSize: 20, fontWeight: 700, color: propensityColor }}>
+                  {formatPercent(company.propensity.score)}
                 </div>
                 <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>{company.propensity.warmth}</div>
               </div>
             </div>
           </div>
           <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
-            Base score: {company.base_score?.toFixed(2)} · Propensity adjustment: {company.propensity.score >= 0.5 ? "+" : ""}{((company.combined_score - company.base_score) * 100).toFixed(0)}bps → Final: {company.combined_score?.toFixed(2)}
+            Base score: {formatScore(company.base_score)} · Propensity adjustment: {propensityDeltaLabel} → Final: {formatScore(company.combined_score)}
           </div>
           {company.propensity.signals?.length > 0 && (
             <div>
