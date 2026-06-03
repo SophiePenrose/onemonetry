@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import MotionScoresPanel from "../components/MotionScoresPanel";
 import WorkflowPanel from "../components/WorkflowPanel";
@@ -11,6 +11,8 @@ import EvidencePanel from "../components/EvidencePanel";
 import EmailSequencePanel from "../components/EmailSequencePanel";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
+
+const EMPTY_ARRAY = [];
 
 function toFiniteNumber(value) {
   if (value === null || value === undefined) return null;
@@ -108,6 +110,8 @@ export default function CompanyDetail({ companyId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [transitions, setTransitions] = useState({});
+  const companyRequestRef = useRef(0);
+  const companyPendingRequestsRef = useRef(0);
 
   useEffect(() => {
     fetch("/api/workflow-states")
@@ -116,13 +120,20 @@ export default function CompanyDetail({ companyId }) {
       .catch(() => {});
   }, []);
 
-  function loadCompanyDetail(background = false) {
+  const loadCompanyDetail = useCallback((background = false) => {
     if (!companyId) return;
+
+    if (background && companyPendingRequestsRef.current > 0) {
+      return;
+    }
+
+    const requestId = companyRequestRef.current + 1;
+    companyRequestRef.current = requestId;
+    companyPendingRequestsRef.current += 1;
 
     if (!background) {
       setLoading(true);
       setError(null);
-      setCompany(null);
     }
 
     fetch(`/api/company/${encodeURIComponent(companyId)}`)
@@ -134,45 +145,46 @@ export default function CompanyDetail({ companyId }) {
         return res.json();
       })
       .then((data) => {
-        setCompany(data.company);
-        if (!background) setLoading(false);
+        if (companyRequestRef.current === requestId) {
+          setCompany(data.company);
+        }
       })
       .catch((err) => {
-        if (!background) {
+        if (!background && companyRequestRef.current === requestId) {
           setError(err.message);
+        }
+      })
+      .finally(() => {
+        companyPendingRequestsRef.current = Math.max(0, companyPendingRequestsRef.current - 1);
+        if (!background && companyRequestRef.current === requestId) {
           setLoading(false);
         }
       });
-  }
+  }, [companyId]);
 
   useEffect(() => {
     loadCompanyDetail(false);
-  }, [companyId]);
+  }, [loadCompanyDetail]);
 
   useEffect(() => {
     if (!companyId) return undefined;
     const timer = setInterval(() => loadCompanyDetail(true), 20000);
     return () => clearInterval(timer);
-  }, [companyId]);
+  }, [companyId, loadCompanyDetail]);
 
-  function handleStateChange(data) {
+  const handleStateChange = useCallback((data) => {
     setCompany((prev) => prev ? {
       ...prev,
       workflow_state: data.new_state,
       workflow_history: data.history,
     } : prev);
-  }
+  }, []);
 
-  function refreshCompany() {
+  const refreshCompany = useCallback(() => {
     loadCompanyDetail(true);
-  }
+  }, [loadCompanyDetail]);
 
-  if (!companyId) return <div>Missing company ID.</div>;
-  if (loading) return <DetailSkeleton />;
-  if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
-  if (!company) return null;
-
-  const analysisStatus = company.analysis_status || (company.analysis ? "ready" : "none");
+  const analysisStatus = company?.analysis_status || (company?.analysis ? "ready" : "none");
   const analysisStatusLabel = analysisStatus === "queued"
     ? "In progress"
     : analysisStatus === "failed"
@@ -180,14 +192,35 @@ export default function CompanyDetail({ companyId }) {
       : analysisStatus === "ready"
         ? "Ready"
         : "Pending";
-  const competitorContextMotionData = selectCompetitorContextMotion(company.all_motion_scores || []);
+  const allMotionScores = company?.all_motion_scores || EMPTY_ARRAY;
+  const stakeholders = company?.stakeholders || EMPTY_ARRAY;
+  const filings = company?.filings || EMPTY_ARRAY;
+  const cadenceHistory = company?.cadence_history || EMPTY_ARRAY;
+  const workflowHistory = company?.workflow_history || EMPTY_ARRAY;
+  const keyPeople = company?.analysis?.key_people || EMPTY_ARRAY;
+
+  const eligibleMotionsLabel = useMemo(
+    () => allMotionScores.map((motion) => motion.motion).join(", "),
+    [allMotionScores],
+  );
+
+  const competitorContextMotionData = useMemo(
+    () => selectCompetitorContextMotion(allMotionScores),
+    [allMotionScores],
+  );
+
   const competitorContext = competitorContextMotionData?.score_breakdown?.competitor_context || null;
   const competitorContextMotion = competitorContextMotionData?.motion || null;
-  const propensityScore = toFiniteNumber(company.propensity?.score);
+  const propensityScore = toFiniteNumber(company?.propensity?.score);
   const propensityColor = propensityScore !== null
     ? propensityScore >= 0.7 ? "#0a8754" : propensityScore >= 0.5 ? "#c27b00" : "#6b7280"
     : "#6b7280";
-  const propensityDeltaLabel = formatBpsDelta(company.combined_score, company.base_score);
+  const propensityDeltaLabel = formatBpsDelta(company?.combined_score, company?.base_score);
+
+  if (!companyId) return <div>Missing company ID.</div>;
+  if (loading) return <DetailSkeleton />;
+  if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
+  if (!company) return null;
 
   return (
     <div>
@@ -226,9 +259,9 @@ export default function CompanyDetail({ companyId }) {
           </span>
         </Field>
         <Field label="Eligible Motions">
-          <span style={{ fontWeight: 600 }}>{company.all_motion_scores?.length || 0}</span>
+          <span style={{ fontWeight: 600 }}>{allMotionScores.length}</span>
           <span style={{ color: "#888", marginLeft: 8 }}>
-            {company.all_motion_scores?.map((m) => m.motion).join(", ")}
+            {eligibleMotionsLabel}
           </span>
         </Field>
         <Field label="Analysis Status">
@@ -287,16 +320,16 @@ export default function CompanyDetail({ companyId }) {
       )}
 
       <MotionScoresPanel
-        motionScores={company.all_motion_scores || []}
+        motionScores={allMotionScores}
         combinedScore={company.combined_score}
       />
 
-      {company.filings?.length > 0 && (
+      {filings.length > 0 && (
         <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
           <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>Companies House Filings Read</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {company.filings.slice(0, 5).map((filing, idx) => (
-              <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 10px", background: "#f8f9fb", borderRadius: 6, fontSize: 13 }}>
+            {filings.slice(0, 5).map((filing, idx) => (
+              <div key={`${filing.transaction_id || filing.balance_sheet_date || filing.description || "filing"}-${idx}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 10px", background: "#f8f9fb", borderRadius: 6, fontSize: 13 }}>
                 <span>{filing.description || "Accounts filing"} {filing.balance_sheet_date ? `(${filing.balance_sheet_date})` : ""}</span>
                 <span style={{ color: filing.has_content ? "#0a8754" : "#888", fontWeight: 600 }}>
                   {filing.has_content ? "Text extracted" : "Metadata only"}
@@ -317,7 +350,7 @@ export default function CompanyDetail({ companyId }) {
           competitorContextMotion={competitorContextMotion}
         />
         <StakeholderPanel
-          stakeholders={company.stakeholders}
+          stakeholders={stakeholders}
           stakeholderAssessment={company.stakeholder_assessment}
           companyId={companyId}
           onUpdated={refreshCompany}
@@ -335,26 +368,26 @@ export default function CompanyDetail({ companyId }) {
       <EvidencePanel
         companyId={companyId}
         initialAnalysis={company.analysis}
-        motions={company.all_motion_scores || []}
+        motions={allMotionScores}
         statusSignals={company.reputation_signals || null}
       />
 
       <EmailSequencePanel
         companyId={companyId}
         companyName={company.name}
-        stakeholders={company.stakeholders || []}
-        keyPeople={company.analysis?.key_people || []}
-        motions={company.all_motion_scores || []}
+        stakeholders={stakeholders}
+        keyPeople={keyPeople}
+        motions={allMotionScores}
       />
 
       <NotesPanel companyId={companyId} initialNotes={company.notes} />
 
-      <CadenceLog cadenceHistory={company.cadence_history} companyId={companyId} onEntryAdded={refreshCompany} />
+      <CadenceLog cadenceHistory={cadenceHistory} companyId={companyId} onEntryAdded={refreshCompany} />
 
       <WorkflowPanel
         companyId={companyId}
         currentState={company.workflow_state || "new_candidate"}
-        history={company.workflow_history || []}
+        history={workflowHistory}
         transitions={transitions}
         onStateChange={handleStateChange}
       />
