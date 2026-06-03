@@ -60,6 +60,8 @@ describe("external signal connectors", () => {
 
     assert.equal(result.status, "no_connectors_configured");
     assert.equal(result.updated, false);
+    assert.equal(result.telemetry?.request_attempts_total, 0);
+    assert.equal(result.telemetry?.retry_attempts_total, 0);
   });
 
   it("syncs configured connector payload into ownership and hiring envelopes", async () => {
@@ -108,6 +110,15 @@ describe("external signal connectors", () => {
     assert.equal(result.status, "updated");
     assert.equal(result.updated, true);
     assert.equal(result.succeeded, 1);
+    assert.equal(result.telemetry?.request_attempts_total, 1);
+    assert.equal(result.telemetry?.retry_attempts_total, 0);
+    assert.equal(result.telemetry?.connectors_with_retries, 0);
+
+    const endoleConnector = (result.connectors || []).find((entry) => entry.id === "endole");
+    assert.ok(endoleConnector);
+    assert.equal(endoleConnector.request_attempts, 1);
+    assert.equal(endoleConnector.retry_attempts, 0);
+    assert.equal(endoleConnector.request_duration_ms >= 0, true);
 
     const ownership = db.getSetting("ownership_99111111", null);
     const hiring = db.getSetting("hiring_signals_99111111", null);
@@ -421,6 +432,16 @@ describe("external signal connectors", () => {
       const urlString = String(url || "");
       if (urlString === "https://status.example.co.uk/api/v2/summary.json") {
         return {
+          ok: false,
+          status: 404,
+          async text() {
+            return JSON.stringify({ error: "not_found" });
+          },
+        };
+      }
+
+      if (urlString === "https://example.co.uk.statuspage.io/api/v2/summary.json") {
+        return {
           ok: true,
           status: 200,
           async text() {
@@ -457,10 +478,58 @@ describe("external signal connectors", () => {
     assert.equal(result.status, "updated");
     assert.equal(result.updated, true);
     assert.equal(result.succeeded >= 1, true);
+    assert.equal(result.telemetry?.request_attempts_total >= 2, true);
+    assert.equal(result.telemetry?.retry_attempts_total >= 1, true);
+    assert.equal(result.telemetry?.connectors_with_retries >= 1, true);
+    assert.equal(result.telemetry?.http_failures >= 1, true);
 
     const discoveredConnector = (result.connectors || []).find((entry) => entry.id === "statuspage");
     assert.ok(discoveredConnector);
     assert.equal(discoveredConnector.ok, true);
     assert.equal(discoveredConnector.auto_discovery_active, true);
+    assert.equal(discoveredConnector.request_attempts >= 2, true);
+    assert.equal(discoveredConnector.retry_attempts >= 1, true);
+    assert.equal(discoveredConnector.failed_attempts_before_success >= 1, true);
+  });
+
+  it("captures failure telemetry when connector responds with upstream error", async () => {
+    process.env.ENDOLE_API_KEY = "test-endole-key";
+    process.env.ENDOLE_URL_TEMPLATE = "https://signals.example.test/company/{company_number}";
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async () => ({
+      ok: false,
+      status: 503,
+      async text() {
+        return JSON.stringify({ error: "upstream_unavailable" });
+      },
+    });
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111118",
+      companyName: "Example Failure Co",
+      companyDomain: "example.co.uk",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.updated, false);
+    assert.equal(result.succeeded, 0);
+    assert.equal(result.failed, 1);
+    assert.equal(result.telemetry?.request_attempts_total, 1);
+    assert.equal(result.telemetry?.retry_attempts_total, 0);
+    assert.equal(result.telemetry?.http_failures, 1);
+
+    const endoleConnector = (result.connectors || []).find((entry) => entry.id === "endole");
+    assert.ok(endoleConnector);
+    assert.equal(endoleConnector.ok, false);
+    assert.equal(endoleConnector.failure_category, "http_error");
+    assert.equal(endoleConnector.request_attempts, 1);
+    assert.equal(endoleConnector.retry_attempts, 0);
   });
 });
