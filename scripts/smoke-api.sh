@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKEND_BASE="http://localhost:8000"
-FRONTEND_BASE="http://localhost:5173"
+BACKEND_BASE="${BACKEND_BASE:-http://localhost:8000}"
+FRONTEND_BASE="${FRONTEND_BASE:-http://localhost:5173}"
+CURL_TIMEOUT="${CURL_TIMEOUT:-6}"
 
 pass_count=0
 fail_count=0
@@ -11,7 +12,7 @@ check_endpoint() {
   local name="$1"
   local url="$2"
 
-  if curl -fsS --max-time 6 "$url" >/dev/null; then
+  if curl -fsS --max-time "$CURL_TIMEOUT" "$url" >/dev/null; then
     echo "PASS  $name -> $url"
     pass_count=$((pass_count + 1))
   else

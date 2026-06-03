@@ -8,6 +8,7 @@
     "start:backend:light": "LIGHTWEIGHT_RUNTIME=true npm --prefix ./mock-backend start",
     "start:frontend": "npm --prefix ./frontend run dev",
     "smoke:api": "bash ./scripts/smoke-api.sh",
+    "smoke:e2e:quick": "bash ./scripts/smoke-e2e-quick.sh",
     "benchmark:scoring": "node ./scripts/scoring-calibration-benchmark.mjs",
     "benchmark:apply-review": "node ./scripts/scoring-calibration-apply-review.mjs",
     "import:monitor-list": "node ./scripts/import-monitor-list-bulk.mjs",
