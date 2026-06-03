@@ -802,7 +802,7 @@ function stripSignatureAndFooterForYamm(text) {
     .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
 
   const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
-  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!.\s-]*$/i.test(line.trim())
     || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
 
   while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
@@ -817,7 +817,7 @@ function stripSignatureAndFooterForYamm(text) {
 
   if (removedSignatureMarkers && lines.length > 0) {
     const candidate = lines[lines.length - 1].trim();
-    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+    if (/^[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}$/.test(candidate)) {
       lines.pop();
     }
   }
@@ -2250,7 +2250,7 @@ function generateFallbackEmail(params) {
   const signals = deriveFallbackSignals(analysis, company, trigger);
   const industryLabel = compactWhitespace(company?.industry || "mid-market").toLowerCase();
   const mirrorsDirectorsLanguage = signals.directorsLanguage
-    ? `Using directors' own language, \"${signals.directorsLanguage}\", the execution risk usually sits in consistency rather than intent.`
+    ? `Using directors' own language, "${signals.directorsLanguage}", the execution risk usually sits in consistency rather than intent.`
     : "Execution risk usually sits in consistency rather than intent once operations scale.";
 
   if (resolvedStepType === "nudge_1") {

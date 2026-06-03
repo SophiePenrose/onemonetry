@@ -206,7 +206,7 @@ function evaluateVoiceGate(email, meta = {}) {
   const aiTellHits = AI_TELL_PATTERNS.reduce((sum, pattern) => sum + countMatches(body, pattern), 0);
   const aiTellPass = aiTellHits === 0;
 
-  const threeItemListPattern = /\b(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:and\s+)?(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+\b/gi;
+  const threeItemListPattern = /\b(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+,\s+(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+,\s+(?:and\s+)?(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+\b/gi;
   const threeItemListPass = countMatches(body, threeItemListPattern) === 0;
 
   const emDashCount = countMatches(body, /—|--/g);
