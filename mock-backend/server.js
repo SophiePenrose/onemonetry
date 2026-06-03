@@ -105,6 +105,7 @@ import {
   getClosedWonCompany,
   getClosedWonRegistryCount,
   listClosedWonCompanies,
+  getWebsiteResolution,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
 import {
@@ -6030,6 +6031,70 @@ app.post("/api/company/:id/enrichment/refresh", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to refresh enrichment", detail: err.message });
+  }
+});
+
+app.get("/api/company/:id/website-resolution", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const resolution = getWebsiteResolution(context.company_number, null);
+  const monitored = getMonitoredCompany(context.company_number);
+
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    website_resolution: resolution,
+    monitored_company: {
+      company_website: monitored?.company_website || context.company_website || null,
+      company_domain: monitored?.company_domain || context.company_domain || null,
+    },
+  });
+});
+
+app.post("/api/company/:id/website-resolution", async (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  try {
+    const resolution = await resolveCompanyWebsite({
+      companyNumber: context.company_number,
+      companyName: context.company_name,
+      companyWebsite: context.company_website,
+      companyDomain: context.company_domain,
+      enableNameGuesses: parseBooleanInput(req.body?.discover_website, true),
+      force: parseBooleanInput(req.body?.force, false),
+      timeoutMs: req.body?.timeout_ms,
+      maxCandidates: req.body?.max_candidates,
+    });
+
+    if (resolution?.website_url || resolution?.domain) {
+      upsertMonitoredCompany({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        latest_turnover: context.monitored?.latest_turnover ?? context.turnover,
+        status: context.monitored?.status || "active",
+        source: context.monitored?.source || "website_resolution_api",
+        company_website: resolution.website_url || context.monitored?.company_website || null,
+        company_domain: resolution.domain || context.monitored?.company_domain || null,
+      });
+    }
+
+    const monitored = getMonitoredCompany(context.company_number);
+
+    res.json({
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      company_name: context.company_name,
+      website_resolution: resolution,
+      monitored_company: {
+        company_website: monitored?.company_website || context.company_website || null,
+        company_domain: monitored?.company_domain || context.company_domain || null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Website resolution failed", detail: err?.message || "unknown_error" });
   }
 });
 

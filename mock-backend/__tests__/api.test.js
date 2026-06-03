@@ -337,6 +337,98 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("website-resolution API", () => {
+    it("resolves and returns cached website resolution for a company number", async () => {
+      const companyNumber = "94021001";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Website Endpoint Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 26000000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const websiteServer = http.createServer((_req, res) => {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(`
+          <html>
+            <head><title>Website Endpoint Co</title></head>
+            <body>
+              <h1>Website Endpoint Co platform</h1>
+              <p>Website Endpoint Co supports payments and FX operations.</p>
+            </body>
+          </html>
+        `);
+      });
+
+      await new Promise((resolve) => websiteServer.listen(0, "127.0.0.1", resolve));
+      const websitePort = websiteServer.address().port;
+      const websiteUrl = `http://127.0.0.1:${websitePort}`;
+
+      try {
+        const resolved = await fetchJSON(`/api/company/${companyNumber}/website-resolution`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company_website: websiteUrl,
+            discover_website: true,
+            force: true,
+          }),
+        });
+
+        assert.equal(resolved.status, 200);
+        assert.ok(["verified", "probable"].includes(resolved.data.website_resolution?.status));
+        assert.equal(typeof resolved.data.website_resolution?.website_url, "string");
+
+        const cached = await fetchJSON(`/api/company/ch-${companyNumber}/website-resolution`);
+        assert.equal(cached.status, 200);
+        assert.ok(["verified", "probable"].includes(cached.data.website_resolution?.status));
+        assert.equal(typeof cached.data.website_resolution?.website_url, "string");
+        assert.equal(typeof cached.data.monitored_company?.company_website, "string");
+      } finally {
+        websiteServer.close();
+      }
+    });
+
+    it("supports explicit no-site confirmation without running full analysis", async () => {
+      const companyNumber = "94021002";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "SMB",
+          turnover: 1500000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const resolved = await fetchJSON(`/api/company/${companyNumber}/website-resolution`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discover_website: false,
+          force: true,
+        }),
+      });
+
+      assert.equal(resolved.status, 200);
+      assert.equal(resolved.data.website_resolution?.status, "no_site_confirmed");
+      assert.equal(resolved.data.website_resolution?.website_url, null);
+
+      const cached = await fetchJSON(`/api/company/${companyNumber}/website-resolution`);
+      assert.equal(cached.status, 200);
+      assert.equal(cached.data.website_resolution?.status, "no_site_confirmed");
+    });
+  });
+
   describe("GET /api/integrations/status", () => {
     it("includes enrichment runtime and scheduler controls", async () => {
       const { status, data } = await fetchJSON("/api/integrations/status");
