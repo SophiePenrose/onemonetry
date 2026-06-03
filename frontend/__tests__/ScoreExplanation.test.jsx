@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import ScoreExplanation from "../components/ScoreExplanation";
 
 describe("ScoreExplanation", () => {
@@ -68,6 +68,43 @@ describe("ScoreExplanation", () => {
     );
 
     expect(screen.getByText("N/A")).toBeInTheDocument();
+  });
+
+  it("renders score layers when layer scores are numeric strings", () => {
+    const stringScoreBreakdown = {
+      product_fit: { score: "0.88", evidence: "Stringified score" },
+      commercial_value: { score: "0.67", evidence: "Stringified score" },
+    };
+
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown={stringScoreBreakdown}
+        finalScore={0.79}
+        explanation="Layer scores present"
+      />
+    );
+
+    expect(screen.getByText("Score Layers")).toBeInTheDocument();
+    expect(screen.getByText("Product Fit")).toBeInTheDocument();
+  });
+
+  it("shows graceful fallback when scoreBreakdown payload is malformed", () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <ScoreExplanation
+        productFit={{ fit_level: "strong" }}
+        scoreBreakdown="malformed-payload"
+        finalScore={0.79}
+        explanation="Layer scores present"
+      />
+    );
+
+    expect(screen.getByText("Score Breakdown unavailable.")).toBeInTheDocument();
+    expect(screen.queryByText("Score Breakdown:")).not.toBeInTheDocument();
+
+    consoleErrorSpy.mockRestore();
   });
 
   it("renders all 5 scoring layers", () => {
