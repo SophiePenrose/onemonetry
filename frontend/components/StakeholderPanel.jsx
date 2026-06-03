@@ -1,6 +1,8 @@
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 
+const EMPTY_ARRAY = [];
+
 function normalizePersonKey(value) {
   return String(value || "")
     .toLowerCase()
@@ -24,7 +26,7 @@ export default function StakeholderPanel({ stakeholders, stakeholderAssessment, 
   const readiness = stakeholderAssessment?.readiness;
   const waitingForAnalysis = analysisStatus === "queued";
   const analysisFailed = analysisStatus === "failed";
-  const supplementaryPeople = supplementary?.people_research || supplementary?.people_targets || [];
+  const supplementaryPeople = supplementary?.people_research || supplementary?.people_targets || EMPTY_ARRAY;
 
   const supplementaryPeopleByName = React.useMemo(() => {
     const map = new Map();

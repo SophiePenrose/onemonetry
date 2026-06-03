@@ -27,7 +27,7 @@ function stripSignatureAndLegacyFooter(text) {
     .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
 
   const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided is not intended to be|As part of our sales process|For more details, please refer to our privacy notice|revolut\.com\/business|\[Title\]\s*\|\s*Revolut Business|Sophie Louise Penrose|---)/i.test(line.trim());
-  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!.\s-]*$/i.test(line.trim())
     || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
 
   while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
@@ -42,7 +42,7 @@ function stripSignatureAndLegacyFooter(text) {
 
   if (removedSignatureMarkers && lines.length > 0) {
     const candidate = lines[lines.length - 1].trim();
-    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+    if (/^[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}$/.test(candidate)) {
       lines.pop();
     }
   }

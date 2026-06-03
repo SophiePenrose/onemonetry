@@ -346,7 +346,7 @@ function stripSignatureAndFooterForYamm(text) {
     .map((line) => line.replace(/\[(?:Your\s+Name|AE_NAME|Your\s+Title|AE_TITLE)\]/gi, "").trimEnd());
 
   const isLegalLine = (line) => /^(To manage your sales outreach preferences|Any information provided does not constitute)/i.test(line.trim());
-  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!\.\s-]*$/i.test(line.trim())
+  const isSignatureLine = (line) => /^(Best|Thanks|Kind regards|Regards|Sincerely|Cheers|Many thanks)[,!.\s-]*$/i.test(line.trim())
     || /^(Revolut Business Team|Account Executive\s*\|\s*Revolut Business|revolut\.com\/business)$/i.test(line.trim());
 
   while (lines.length > 0 && (lines[lines.length - 1].trim() === "" || isLegalLine(lines[lines.length - 1]))) {
@@ -361,7 +361,7 @@ function stripSignatureAndFooterForYamm(text) {
 
   if (removedSignatureMarkers && lines.length > 0) {
     const candidate = lines[lines.length - 1].trim();
-    if (/^[A-Za-z][A-Za-z'\.-]*(?:\s+[A-Za-z][A-Za-z'\.-]*){0,3}$/.test(candidate)) {
+    if (/^[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}$/.test(candidate)) {
       lines.pop();
     }
   }
@@ -523,7 +523,7 @@ function firstOrFallback(items, fallback) {
 function sanitizeHolisticBodyForVoice(body, options = {}) {
   const emDashLimit = options.isInitialOutreach ? 2 : 1;
   let emDashCount = 0;
-  const threeItemListPattern = /\b(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+,\s+(?:and\s+)?(?:[a-z0-9'\/-]+\s+){0,2}[a-z0-9'\/-]+\b/gi;
+  const threeItemListPattern = /\b(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+,\s+(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+,\s+(?:and\s+)?(?:[a-z0-9'/-]+\s+){0,2}[a-z0-9'/-]+\b/gi;
 
   return String(body || "")
     .replace(threeItemListPattern, (match) => {
