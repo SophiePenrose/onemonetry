@@ -114,7 +114,11 @@ import {
   getTechEnrichmentRuntimeConfig,
 } from "./tech-enrichment.js";
 import { syncExternalSignals } from "./signal-connectors.js";
-import { resolveCompanyWebsite, getWebsiteResolverRuntimeConfig } from "./website-resolver.js";
+import {
+  resolveCompanyWebsite,
+  getWebsiteResolverRuntimeConfig,
+  setManualWebsiteResolution,
+} from "./website-resolver.js";
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -6095,6 +6099,55 @@ app.post("/api/company/:id/website-resolution", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Website resolution failed", detail: err?.message || "unknown_error" });
+  }
+});
+
+app.post("/api/company/:id/website-resolution/manual", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  try {
+    const resolution = setManualWebsiteResolution({
+      companyNumber: context.company_number,
+      companyName: context.company_name,
+      status: req.body?.status,
+      companyWebsite: req.body?.company_website || req.body?.website || req.body?.website_url || null,
+      companyDomain: req.body?.company_domain || req.body?.domain || null,
+      confidenceScore: req.body?.confidence_score,
+      nextRetryAt: req.body?.next_retry_at,
+      note: req.body?.note,
+    });
+
+    if (resolution?.status === "invalid_input") {
+      return res.status(400).json(resolution);
+    }
+
+    if (resolution?.website_url || resolution?.domain) {
+      upsertMonitoredCompany({
+        company_number: context.company_number,
+        company_name: context.company_name,
+        latest_turnover: context.monitored?.latest_turnover ?? context.turnover,
+        status: context.monitored?.status || "active",
+        source: context.monitored?.source || "website_resolution_manual",
+        company_website: resolution.website_url || context.monitored?.company_website || null,
+        company_domain: resolution.domain || context.monitored?.company_domain || null,
+      });
+    }
+
+    const monitored = getMonitoredCompany(context.company_number);
+
+    res.json({
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      company_name: context.company_name,
+      website_resolution: resolution,
+      monitored_company: {
+        company_website: monitored?.company_website || context.company_website || null,
+        company_domain: monitored?.company_domain || context.company_domain || null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Manual website resolution failed", detail: err?.message || "unknown_error" });
   }
 });
 

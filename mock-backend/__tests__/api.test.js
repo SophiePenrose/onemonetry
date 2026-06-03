@@ -427,6 +427,72 @@ describe("API endpoints", () => {
       assert.equal(cached.status, 200);
       assert.equal(cached.data.website_resolution?.status, "no_site_confirmed");
     });
+
+    it("supports manual website-resolution overrides", async () => {
+      const companyNumber = "94021003";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Manual Override Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 17500000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const manual = await fetchJSON(`/api/company/${companyNumber}/website-resolution/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "verified",
+          company_website: "manual-override.example",
+          note: "operator validated",
+        }),
+      });
+
+      assert.equal(manual.status, 200);
+      assert.equal(manual.data.website_resolution?.status, "verified");
+      assert.equal(manual.data.website_resolution?.source, "manual_override");
+      assert.equal(typeof manual.data.website_resolution?.website_url, "string");
+      assert.equal(manual.data.website_resolution?.domain, "manual-override.example");
+
+      const cached = await fetchJSON(`/api/company/${companyNumber}/website-resolution`);
+      assert.equal(cached.status, 200);
+      assert.equal(cached.data.website_resolution?.status, "verified");
+      assert.equal(cached.data.website_resolution?.source, "manual_override");
+      assert.equal(cached.data.monitored_company?.company_domain, "manual-override.example");
+    });
+
+    it("rejects invalid manual verified overrides without website/domain", async () => {
+      const companyNumber = "94021004";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Manual Invalid Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "SMB",
+          turnover: 1200000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const invalid = await fetchJSON(`/api/company/${companyNumber}/website-resolution/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "verified",
+        }),
+      });
+
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.data.status, "invalid_input");
+      assert.equal(invalid.data.updated, false);
+    });
   });
 
   describe("GET /api/integrations/status", () => {

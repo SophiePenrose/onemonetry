@@ -12,6 +12,13 @@ const DEFAULT_MAX_CANDIDATES = Math.max(
 
 const DEFAULT_ENABLE_NAME_GUESSES = String(process.env.WEBSITE_RESOLUTION_ENABLE_NAME_GUESSES || "true").trim().toLowerCase() !== "false";
 
+const MANUAL_ALLOWED_STATUSES = new Set([
+  "verified",
+  "probable",
+  "unresolved",
+  "no_site_confirmed",
+]);
+
 const STOPWORDS = new Set([
   "ltd",
   "limited",
@@ -154,6 +161,13 @@ function nextRetryAtForStatus(status, checkedAtIso) {
   if (status === "probable") return addDaysIso(checkedAtIso, 14);
   if (status === "no_site_confirmed") return addDaysIso(checkedAtIso, 30);
   return addDaysIso(checkedAtIso, 3);
+}
+
+function manualNextRetryAtForStatus(status, checkedAtIso) {
+  if (status === "verified") return addDaysIso(checkedAtIso, 90);
+  if (status === "probable") return addDaysIso(checkedAtIso, 45);
+  if (status === "no_site_confirmed") return addDaysIso(checkedAtIso, 180);
+  return addDaysIso(checkedAtIso, 14);
 }
 
 function retryDue(cacheEntry) {
@@ -385,6 +399,94 @@ export function getWebsiteResolverRuntimeConfig() {
     max_candidates: DEFAULT_MAX_CANDIDATES,
     enable_name_guesses: DEFAULT_ENABLE_NAME_GUESSES,
   };
+}
+
+export function setManualWebsiteResolution(input = {}) {
+  const companyNumber = normalizeCompanyNumber(input.companyNumber || input.company_number || input.number);
+  if (!companyNumber) {
+    return {
+      status: "invalid_input",
+      updated: false,
+      error: "company_number is required",
+    };
+  }
+
+  const status = String(input.status || "").trim().toLowerCase();
+  if (!MANUAL_ALLOWED_STATUSES.has(status)) {
+    return {
+      status: "invalid_input",
+      updated: false,
+      error: "manual status must be one of verified|probable|unresolved|no_site_confirmed",
+    };
+  }
+
+  const companyName = String(input.companyName || input.company_name || "").trim() || null;
+  const checkedAt = new Date().toISOString();
+  const normalizedWebsite = normalizeWebsiteUrl(
+    input.companyWebsite || input.company_website || input.website || input.website_url
+  );
+  const normalizedDomain = normalizeDomain(
+    input.companyDomain || input.company_domain || input.domain || normalizedWebsite
+  );
+
+  if (["verified", "probable"].includes(status) && !normalizedWebsite && !normalizedDomain) {
+    return {
+      status: "invalid_input",
+      updated: false,
+      error: "verified/probable manual status requires website_url or domain",
+    };
+  }
+
+  const websiteUrl = status === "no_site_confirmed" || status === "unresolved"
+    ? null
+    : normalizedWebsite;
+  const domain = status === "no_site_confirmed" || status === "unresolved"
+    ? null
+    : normalizedDomain;
+
+  const defaultConfidence =
+    status === "verified"
+      ? 1
+      : status === "probable"
+        ? 0.75
+        : 0;
+  const confidenceScore = clamp(
+    Number(input.confidenceScore ?? input.confidence_score ?? defaultConfidence) || 0,
+    0,
+    1
+  );
+
+  const note = String(input.note || "").trim() || null;
+  const nextRetryAt = String(input.nextRetryAt || input.next_retry_at || "").trim()
+    || manualNextRetryAtForStatus(status, checkedAt);
+
+  const persisted = upsertWebsiteResolution({
+    company_number: companyNumber,
+    status,
+    website_url: websiteUrl,
+    domain,
+    confidence_score: confidenceScore,
+    source: String(input.source || "manual_override").trim() || "manual_override",
+    checked_at: checkedAt,
+    next_retry_at: nextRetryAt,
+    details: {
+      manual_override: true,
+      note,
+    },
+  });
+
+  return toPublicResolutionResult(
+    {
+      ...(persisted || {}),
+      company_number: companyNumber,
+      company_name: companyName,
+    },
+    {
+      cache_hit: false,
+      updated: true,
+      attempts: [],
+    }
+  );
 }
 
 export async function resolveCompanyWebsite(input = {}) {
