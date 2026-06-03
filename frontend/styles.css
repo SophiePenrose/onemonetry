@@ -891,7 +891,6 @@ body {
     text-overflow: ellipsis;
   }
 }
-
 .this-week-grid {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 380px;
