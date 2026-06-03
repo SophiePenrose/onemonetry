@@ -1100,6 +1100,27 @@ function companyNumberFromId(id) {
   return normalized.startsWith("ch-") ? normalized.replace("ch-", "") : normalized;
 }
 
+function resolveCompanyNumberFromInput(companyId) {
+  const normalized = normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(companyId)));
+  if (normalized) return normalized;
+
+  const fallback = String(companyNumberFromId(canonicalCompanyId(companyId)) || "").trim();
+  return fallback || null;
+}
+
+function findCompanyByIdOrNumber(companies, companyId, normalizedCompanyNumber = null) {
+  if (!Array.isArray(companies)) return null;
+
+  const rawId = String(companyId || "").trim();
+  if (!rawId) return null;
+
+  const direct = companies.find((company) => company.id === rawId);
+  if (direct) return direct;
+
+  if (!normalizedCompanyNumber) return null;
+  return companies.find((company) => normalizeCompanyNumber(company.company_number) === normalizedCompanyNumber) || null;
+}
+
 function parseBooleanInput(value, fallback = false) {
   if (value === undefined || value === null) return fallback;
   if (typeof value === "boolean") return value;
@@ -5374,8 +5395,8 @@ app.post("/api/email/generate", async (req, res) => {
     return res.status(400).json({ error: "company_id and stakeholder_name are required" });
   }
 
-  const companyNumber = normalizeCompanyNumber(companyNumberFromId(canonicalCompanyId(company_id)))
-    || company_id.replace("ch-", "");
+  const companyNumber = resolveCompanyNumberFromInput(company_id);
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
   if (isClosedWonCompanyNumber(companyNumber)) {
     return res.status(409).json({
       error: "Company is in closed-won registry and excluded from outreach sequencing.",
@@ -5384,12 +5405,19 @@ app.post("/api/email/generate", async (req, res) => {
     });
   }
   const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === company_id);
+  let company = findCompanyByIdOrNumber(COMPANIES, company_id, normalizedCompanyNumber);
 
-  if (!company) {
-    const monitored = getMonitoredCompany(companyNumber);
+  if (!company && normalizedCompanyNumber) {
+    const monitored = getMonitoredCompany(normalizedCompanyNumber);
     if (monitored) {
-      company = { id: company_id, name: formatMonitorName(monitored.company_name, companyNumber), company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—" };
+      company = {
+        id: company_id,
+        name: formatMonitorName(monitored.company_name, normalizedCompanyNumber),
+        company_number: normalizedCompanyNumber,
+        turnover: monitored.latest_turnover,
+        employee_count: 0,
+        industry: "—",
+      };
     }
   }
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -5569,7 +5597,8 @@ app.post("/api/email/generate-advanced", async (req, res) => {
     return res.status(400).json({ error: "company_id and stakeholder_name required" });
   }
 
-  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  const companyNumber = resolveCompanyNumberFromInput(company_id);
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
   if (isClosedWonCompanyNumber(companyNumber)) {
     return res.status(409).json({
       error: "Company is in closed-won registry and excluded from outreach sequencing.",
@@ -5591,12 +5620,20 @@ app.post("/api/email/generate-advanced", async (req, res) => {
   }
 
   const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === company_id);
+  let company = findCompanyByIdOrNumber(COMPANIES, company_id, normalizedCompanyNumber);
 
-  if (!company) {
-    const monitored = getMonitoredCompany(companyNumber);
+  if (!company && normalizedCompanyNumber) {
+    const monitored = getMonitoredCompany(normalizedCompanyNumber);
     if (monitored) {
-      company = { id: company_id, name: formatMonitorName(monitored.company_name, companyNumber), company_number: companyNumber, turnover: monitored.latest_turnover, employee_count: 0, industry: "—", segment: "Mid-Market" };
+      company = {
+        id: company_id,
+        name: formatMonitorName(monitored.company_name, normalizedCompanyNumber),
+        company_number: normalizedCompanyNumber,
+        turnover: monitored.latest_turnover,
+        employee_count: 0,
+        industry: "—",
+        segment: "Mid-Market",
+      };
     }
   }
   if (!company) return res.status(404).json({ error: "Company not found" });
@@ -5642,7 +5679,8 @@ app.post("/api/email/generate-advanced/shadow", async (req, res) => {
     return res.status(400).json({ error: "company_id and stakeholder_name required" });
   }
 
-  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  const companyNumber = resolveCompanyNumberFromInput(company_id);
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
   if (isClosedWonCompanyNumber(companyNumber)) {
     return res.status(409).json({
       error: "Company is in closed-won registry and excluded from outreach sequencing.",
@@ -5660,15 +5698,15 @@ app.post("/api/email/generate-advanced/shadow", async (req, res) => {
   }
 
   const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === company_id);
+  let company = findCompanyByIdOrNumber(COMPANIES, company_id, normalizedCompanyNumber);
 
-  if (!company) {
-    const monitored = getMonitoredCompany(companyNumber);
+  if (!company && normalizedCompanyNumber) {
+    const monitored = getMonitoredCompany(normalizedCompanyNumber);
     if (monitored) {
       company = {
         id: company_id,
-        name: formatMonitorName(monitored.company_name, companyNumber),
-        company_number: companyNumber,
+        name: formatMonitorName(monitored.company_name, normalizedCompanyNumber),
+        company_number: normalizedCompanyNumber,
         turnover: monitored.latest_turnover,
         employee_count: 0,
         industry: "—",
@@ -5772,12 +5810,13 @@ app.post("/api/email/check-exclusion", (req, res) => {
   const { company_id } = req.body;
   if (!company_id) return res.status(400).json({ error: "company_id required" });
 
-  const companyNumber = companyNumberFromId(canonicalCompanyId(company_id));
+  const companyNumber = resolveCompanyNumberFromInput(company_id);
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
   const COMPANIES = loadCompanies();
-  let company = COMPANIES.find((c) => c.id === company_id);
+  let company = findCompanyByIdOrNumber(COMPANIES, company_id, normalizedCompanyNumber);
 
-  if (!company) {
-    const monitored = getMonitoredCompany(companyNumber);
+  if (!company && normalizedCompanyNumber) {
+    const monitored = getMonitoredCompany(normalizedCompanyNumber);
     if (monitored) {
       company = { turnover: monitored.latest_turnover, status: monitored.status, industry: "—" };
     }
