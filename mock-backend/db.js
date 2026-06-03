@@ -112,6 +112,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS company_monitor (
     company_number TEXT PRIMARY KEY,
     company_name TEXT,
+    company_domain TEXT,
+    company_website TEXT,
     last_checked_at TEXT,
     last_filing_date TEXT,
     stale_filing_checked_at TEXT,
@@ -129,6 +131,23 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_monitor_status ON company_monitor(status);
   CREATE INDEX IF NOT EXISTS idx_monitor_threshold ON company_monitor(below_threshold);
+
+  CREATE TABLE IF NOT EXISTS website_resolution_cache (
+    company_number TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    website_url TEXT,
+    domain TEXT,
+    confidence_score REAL DEFAULT 0,
+    source TEXT,
+    details_json TEXT,
+    checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    next_retry_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_website_resolution_status ON website_resolution_cache(status);
+  CREATE INDEX IF NOT EXISTS idx_website_resolution_retry ON website_resolution_cache(next_retry_at);
 
   CREATE TABLE IF NOT EXISTS company_charge_summary (
     company_number TEXT PRIMARY KEY,
@@ -277,6 +296,13 @@ ensureAnalysisQueueSchema();
 function ensureCompanyMonitorSchema() {
   const columns = db.prepare("PRAGMA table_info(company_monitor)").all();
   const names = new Set(columns.map((col) => col.name));
+
+  if (!names.has("company_domain")) {
+    db.exec("ALTER TABLE company_monitor ADD COLUMN company_domain TEXT");
+  }
+  if (!names.has("company_website")) {
+    db.exec("ALTER TABLE company_monitor ADD COLUMN company_website TEXT");
+  }
 
   if (!names.has("stale_filing_checked_at")) {
     db.exec("ALTER TABLE company_monitor ADD COLUMN stale_filing_checked_at TEXT");
@@ -712,6 +738,96 @@ export function setSetting(key, value) {
   ).run(key, JSON.stringify(value));
 }
 
+// --- Website Resolution Cache ---
+
+const stmtGetWebsiteResolution = db.prepare("SELECT * FROM website_resolution_cache WHERE company_number = ?");
+const stmtUpsertWebsiteResolution = db.prepare(`
+  INSERT INTO website_resolution_cache (
+    company_number,
+    status,
+    website_url,
+    domain,
+    confidence_score,
+    source,
+    details_json,
+    checked_at,
+    next_retry_at,
+    updated_at
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, datetime('now'))
+  ON CONFLICT(company_number) DO UPDATE SET
+    status = excluded.status,
+    website_url = excluded.website_url,
+    domain = excluded.domain,
+    confidence_score = excluded.confidence_score,
+    source = excluded.source,
+    details_json = excluded.details_json,
+    checked_at = excluded.checked_at,
+    next_retry_at = excluded.next_retry_at,
+    updated_at = datetime('now')
+`);
+
+function parseWebsiteResolutionRow(row) {
+  if (!row) return null;
+  let details = null;
+  if (row.details_json) {
+    try {
+      details = JSON.parse(row.details_json);
+    } catch {
+      details = null;
+    }
+  }
+
+  return {
+    company_number: row.company_number,
+    status: row.status || "unresolved",
+    website_url: row.website_url || null,
+    domain: row.domain || null,
+    confidence_score: Number(row.confidence_score || 0),
+    source: row.source || null,
+    details,
+    checked_at: row.checked_at || null,
+    next_retry_at: row.next_retry_at || null,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+export function getWebsiteResolution(companyNumber, defaultValue = null) {
+  const normalized = normalizeCompanyNumber(companyNumber);
+  if (!normalized) return defaultValue;
+  const row = stmtGetWebsiteResolution.get(normalized);
+  return row ? parseWebsiteResolutionRow(row) : defaultValue;
+}
+
+export function upsertWebsiteResolution(entry = {}) {
+  const normalized = normalizeCompanyNumber(entry.company_number || entry.companyNumber || entry.number);
+  if (!normalized) return null;
+
+  const status = String(entry.status || "unresolved").trim() || "unresolved";
+  const websiteUrl = String(entry.website_url || entry.websiteUrl || "").trim() || null;
+  const domain = String(entry.domain || "").trim().toLowerCase().replace(/^www\./, "") || null;
+  const confidenceScore = Math.max(0, Math.min(Number(entry.confidence_score ?? entry.confidenceScore ?? 0) || 0, 1));
+  const source = String(entry.source || "website_resolver").trim() || "website_resolver";
+  const checkedAt = String(entry.checked_at || entry.checkedAt || "").trim() || null;
+  const nextRetryAt = String(entry.next_retry_at || entry.nextRetryAt || "").trim() || null;
+  const details = entry.details && typeof entry.details === "object" ? entry.details : null;
+
+  stmtUpsertWebsiteResolution.run(
+    normalized,
+    status,
+    websiteUrl,
+    domain,
+    confidenceScore,
+    source,
+    details ? JSON.stringify(details) : null,
+    checkedAt,
+    nextRetryAt
+  );
+
+  return getWebsiteResolution(normalized, null);
+}
+
 // --- Company Filings ---
 
 export function upsertFiling(filing) {
@@ -748,10 +864,21 @@ export function getFilingCount() {
 // --- Company Monitor ---
 
 const stmtUpsertMonitoredCompany = db.prepare(`
-  INSERT INTO company_monitor (company_number, company_name, latest_turnover, status, source, updated_at)
-  VALUES (?, ?, ?, ?, ?, datetime('now'))
+  INSERT INTO company_monitor (
+    company_number,
+    company_name,
+    company_domain,
+    company_website,
+    latest_turnover,
+    status,
+    source,
+    updated_at
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT(company_number) DO UPDATE SET
     company_name = COALESCE(excluded.company_name, company_monitor.company_name),
+    company_domain = COALESCE(excluded.company_domain, company_monitor.company_domain),
+    company_website = COALESCE(excluded.company_website, company_monitor.company_website),
     latest_turnover = COALESCE(excluded.latest_turnover, company_monitor.latest_turnover),
     status = COALESCE(excluded.status, company_monitor.status),
     updated_at = datetime('now')
@@ -781,11 +908,35 @@ const txUpsertMonitoredCompanies = db.transaction((rows, defaultSource) => {
       || ""
     ).trim() || null;
 
+    const companyDomain = String(
+      row?.company_domain
+      || row?.companyDomain
+      || row?.domain
+      || ""
+    ).trim().toLowerCase().replace(/^www\./, "") || null;
+
+    const companyWebsite = String(
+      row?.company_website
+      || row?.companyWebsite
+      || row?.website
+      || row?.website_url
+      || row?.websiteUrl
+      || ""
+    ).trim() || null;
+
     const latestTurnover = row?.latest_turnover ?? row?.latestTurnover ?? row?.turnover ?? null;
     const status = String(row?.status || "active").trim() || "active";
     const source = String(row?.source || defaultSource || "csv").trim() || "csv";
 
-    stmtUpsertMonitoredCompany.run(companyNumber, companyName, latestTurnover, status, source);
+    stmtUpsertMonitoredCompany.run(
+      companyNumber,
+      companyName,
+      companyDomain,
+      companyWebsite,
+      latestTurnover,
+      status,
+      source
+    );
     upserted += 1;
   }
 
@@ -793,9 +944,27 @@ const txUpsertMonitoredCompanies = db.transaction((rows, defaultSource) => {
 });
 
 export function upsertMonitoredCompany(company) {
+  const companyDomain = String(
+    company?.company_domain
+    || company?.companyDomain
+    || company?.domain
+    || ""
+  ).trim().toLowerCase().replace(/^www\./, "") || null;
+
+  const companyWebsite = String(
+    company?.company_website
+    || company?.companyWebsite
+    || company?.website
+    || company?.website_url
+    || company?.websiteUrl
+    || ""
+  ).trim() || null;
+
   stmtUpsertMonitoredCompany.run(
     company.company_number,
     company.company_name,
+    companyDomain,
+    companyWebsite,
     company.latest_turnover,
     company.status || "active",
     company.source || "csv"

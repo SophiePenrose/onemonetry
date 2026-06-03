@@ -8,6 +8,7 @@ import {
   resetProcessingAnalysisQueueItems,
   getAnalysisQueueCounts,
   getMonitoredCompany,
+  upsertMonitoredCompany,
   getSetting,
   setSetting,
 } from "./db.js";
@@ -16,6 +17,7 @@ import { scoreCompany, integrateAnalysis } from "./scoring-engine.js";
 import { runCompanyTechEnrichment } from "./tech-enrichment.js";
 import { isCompaniesHouseConfigured, lookupCompanyOwnership } from "./companies-house.js";
 import { syncExternalSignals } from "./signal-connectors.js";
+import { resolveCompanyWebsite } from "./website-resolver.js";
 
 function parseBoundedPositiveInt(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -66,6 +68,7 @@ const DEFAULT_ENRICHMENT_MAX_PAGES = parseOptionalBoundedPositiveInt(process.env
 const DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS = parseOptionalBoundedPositiveInt(process.env.ANALYSIS_QUEUE_ENRICHMENT_REFRESH_DAYS, 1, 365);
 const DEFAULT_ENRICHMENT_TIMEOUT_MS = parseOptionalBoundedPositiveInt(process.env.ANALYSIS_QUEUE_ENRICHMENT_TIMEOUT_MS, 1000, 20000);
 const DEFAULT_EXTERNAL_SIGNAL_SYNC = parseOptionalBoolean(process.env.ANALYSIS_QUEUE_EXTERNAL_SIGNAL_SYNC) ?? false;
+const DEFAULT_QUEUE_WEBSITE_GUESS = parseOptionalBoolean(process.env.ANALYSIS_QUEUE_WEBSITE_GUESS) ?? false;
 
 let queueTimer = null;
 let processing = false;
@@ -80,6 +83,7 @@ function getEnrichmentWorkerConfig() {
     refresh_window_days: DEFAULT_ENRICHMENT_REFRESH_WINDOW_DAYS,
     timeout_ms: DEFAULT_ENRICHMENT_TIMEOUT_MS,
     external_signal_sync: DEFAULT_EXTERNAL_SIGNAL_SYNC,
+    website_guess: DEFAULT_QUEUE_WEBSITE_GUESS,
   };
 }
 
@@ -149,11 +153,42 @@ async function processClaimedQueueItem(next) {
     let enrichmentResult = null;
     let ownershipResult = null;
     let externalSignalSyncResult = null;
+    let websiteResolution = null;
+
+    try {
+      websiteResolution = await resolveCompanyWebsite({
+        companyNumber,
+        companyName,
+        companyWebsite: knownAnalysis?.company_website || monitored?.company_website || null,
+        companyDomain: knownAnalysis?.company_domain || monitored?.company_domain || null,
+        enableNameGuesses: DEFAULT_QUEUE_WEBSITE_GUESS,
+      });
+
+      if (websiteResolution?.website_url || websiteResolution?.domain) {
+        upsertMonitoredCompany({
+          company_number: companyNumber,
+          company_name: monitored?.company_name || companyName,
+          latest_turnover: monitored?.latest_turnover ?? turnover,
+          status: monitored?.status || "active",
+          source: monitored?.source || "analysis_queue",
+          company_website: websiteResolution.website_url || monitored?.company_website || null,
+          company_domain: websiteResolution.domain || monitored?.company_domain || null,
+        });
+      }
+    } catch (err) {
+      websiteResolution = {
+        status: "error",
+        updated: false,
+        error: err?.message || "website_resolution_failed",
+      };
+    }
 
     try {
       const enrichmentInput = {
         companyNumber,
         companyName,
+        companyWebsite: websiteResolution?.website_url || knownAnalysis?.company_website || monitored?.company_website || null,
+        companyDomain: websiteResolution?.domain || knownAnalysis?.company_domain || monitored?.company_domain || null,
         turnover,
       };
 
@@ -216,7 +251,7 @@ async function processClaimedQueueItem(next) {
         externalSignalSyncResult = await syncExternalSignals({
           companyNumber,
           companyName,
-          companyDomain: knownAnalysis?.company_domain || monitored?.company_domain || null,
+          companyDomain: websiteResolution?.domain || knownAnalysis?.company_domain || monitored?.company_domain || null,
         });
       } catch (err) {
         externalSignalSyncResult = {
@@ -244,6 +279,9 @@ async function processClaimedQueueItem(next) {
       enrichment_updated: enrichmentResult?.updated === true,
       enrichment_scan_mode: enrichmentResult?.scan_mode || null,
       enrichment_deep_scan_mode: enrichmentResult?.deep_scan_mode || null,
+      website_resolution_status: websiteResolution?.status || null,
+      website_resolution_updated: websiteResolution?.updated === true,
+      website_resolution_cache_hit: websiteResolution?.cache_hit === true,
       ownership_status: ownershipResult?.status || "skipped",
       ownership_non_uk_significant_corporate_count:
         ownershipResult?.non_uk_significant_corporate_controllers_count ?? null,

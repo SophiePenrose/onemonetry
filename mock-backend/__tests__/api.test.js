@@ -268,6 +268,75 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("POST /api/llm/analyse website resolution", () => {
+    it("returns no_site_confirmed and still produces analysis when website discovery is disabled", async () => {
+      const { status, data } = await fetchJSON("/api/llm/analyse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_number: "93010001",
+          company_name: "Co",
+          discover_website: false,
+          run_enrichment: true,
+          force_enrichment: true,
+          run_external_sync: false,
+        }),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.website_resolution?.status, "no_site_confirmed");
+      assert.equal(data.website_resolution?.cache_hit, false);
+      assert.equal(data.enrichment?.status, "no_site_hint");
+      assert.equal(typeof data.analysis?.summary, "string");
+    });
+
+    it("returns verified or probable website resolution when a live site is reachable", async () => {
+      const websiteServer = http.createServer((_req, res) => {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(`
+          <html>
+            <head>
+              <title>Acme Resolver Ltd</title>
+              <script src="https://js.stripe.com/v3/"></script>
+            </head>
+            <body>
+              <h1>Acme Resolver platform</h1>
+              <p>We support B2C checkout and international card payments.</p>
+            </body>
+          </html>
+        `);
+      });
+
+      await new Promise((resolve) => websiteServer.listen(0, "127.0.0.1", resolve));
+      const websitePort = websiteServer.address().port;
+      const websiteUrl = `http://127.0.0.1:${websitePort}`;
+
+      try {
+        const { status, data } = await fetchJSON("/api/llm/analyse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company_number: "93010002",
+            company_name: "Acme Resolver Ltd",
+            company_website: websiteUrl,
+            discover_website: true,
+            run_enrichment: true,
+            force_enrichment: true,
+            run_external_sync: false,
+          }),
+        });
+
+        assert.equal(status, 200);
+        assert.ok(["verified", "probable"].includes(data.website_resolution?.status));
+        assert.equal(typeof data.website_resolution?.website_url, "string");
+        assert.equal(data.enrichment?.updated, true);
+        assert.equal(data.enrichment?.status, "updated");
+      } finally {
+        websiteServer.close();
+      }
+    });
+  });
+
   describe("GET /api/integrations/status", () => {
     it("includes enrichment runtime and scheduler controls", async () => {
       const { status, data } = await fetchJSON("/api/integrations/status");
@@ -279,9 +348,11 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.status_instatus, "object");
       assert.equal(typeof data.integrations.status_cachet, "object");
       assert.equal(typeof data.integrations.status_url_discovery, "object");
+      assert.equal(typeof data.integrations.website_resolution, "object");
       assert.equal(typeof data.integrations.llm.request_timeout_ms, "number");
       assert.equal(typeof data.integrations.email_generation_llm.runtime?.request_timeout_ms, "number");
       assert.equal(typeof data.integrations.tech_enrichment.defaults?.deep_scan_mode, "string");
+      assert.equal(typeof data.integrations.website_resolution.defaults?.timeout_ms, "number");
       assert.ok(Array.isArray(data.env_template));
       assert.ok(data.env_template.includes("LLM_REQUEST_TIMEOUT_MS=30000"));
       assert.ok(data.env_template.includes("OPENAI_MODEL_FALLBACK=gpt-4o-mini"));
@@ -293,6 +364,8 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
       assert.ok(data.env_template.includes("STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json"));
       assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
+      assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
+      assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
     });
   });
 
