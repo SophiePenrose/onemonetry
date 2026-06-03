@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { TableSkeleton } from "../components/LoadingSkeleton";
 
@@ -113,6 +113,8 @@ const POST_EXPORT_STATE_OPTIONS = [
 ];
 
 const CARRYOVER_ACTIVE_STATES = new Set(["new_candidate", "shortlisted", "selected_for_outreach"]);
+const REVIEWED_WORKFLOW_STATES = new Set(["selected_for_outreach", "in_cadence", "active_opportunity", "closed_won", "closed_lost", "revisit_later", "held_for_review"]);
+const EXPORTED_WORKFLOW_STATES = new Set(["in_cadence", "active_opportunity", "closed_won"]);
 const FORBIDDEN_SEND_MINUTES = new Set([0, 15, 30, 45]);
 const STALE_SEQUENCE_DRAFT_DAYS = 14;
 
@@ -285,7 +287,7 @@ function buildYammCsv(rows) {
   function escapeCsv(value) {
     const str = String(value || "");
     if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
-      return `\"${str.replace(/\"/g, "\"\"")}\"`;
+      return `"${str.replace(/"/g, "\"\"")}"`;
     }
     return str;
   }
@@ -347,7 +349,7 @@ function buildMissingEmailCsv(rows) {
   const escapeCsv = (value) => {
     const str = String(value || "");
     if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
-      return `\"${str.replace(/\"/g, "\"\"")}\"`;
+      return `"${str.replace(/"/g, "\"\"")}"`;
     }
     return str;
   };
@@ -593,7 +595,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const [exportError, setExportError] = useState(null);
   const [exportResult, setExportResult] = useState(null);
 
-  async function fetchData(suppressedFlag = showSuppressed, sortByValue = sortBy, sortDirValue = sortDir, turnoverBandValue = turnoverBand) {
+  const fetchData = useCallback(async (suppressedFlag, sortByValue, sortDirValue, turnoverBandValue) => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
@@ -624,23 +626,31 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    fetchData(false, sortBy, sortDir, turnoverBand);
-  }, []);
+    fetchData(false, "priority_score", "desc", "all");
+  }, [fetchData]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       fetchData(showSuppressed, sortBy, sortDir, turnoverBand);
     }, 20000);
     return () => clearInterval(timer);
-  }, [showSuppressed, sortBy, sortDir, turnoverBand]);
+  }, [fetchData, showSuppressed, sortBy, sortDir, turnoverBand]);
 
-  const weekStart = addDays(getWeekStartMonday(), weekOffset * 7);
-  const weekEnd = addDays(weekStart, 6);
-  const weekLabel = weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  const weekEndLabel = weekEnd.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const weekContext = useMemo(() => {
+    const start = addDays(getWeekStartMonday(), weekOffset * 7);
+    const end = addDays(start, 6);
+    return {
+      weekStart: start,
+      weekEnd: end,
+      weekLabel: start.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+      weekEndLabel: end.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+    };
+  }, [weekOffset]);
+
+  const { weekStart, weekEnd, weekLabel, weekEndLabel } = weekContext;
 
   const normalizedCompanies = useMemo(
     () => companies.map((c) => ({
@@ -654,11 +664,8 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   );
 
   const weeklyCompanies = useMemo(() => {
-    const thisWeekStart = addDays(getWeekStartMonday(), weekOffset * 7);
-    const thisWeekEnd = addDays(thisWeekStart, 6);
-
     return normalizedCompanies.map((company) => {
-      const isNewThisWeek = isDateInsideWeek(company.latest_filing_date, thisWeekStart, thisWeekEnd);
+      const isNewThisWeek = isDateInsideWeek(company.latest_filing_date, weekStart, weekEnd);
       const isCarryover = !isNewThisWeek && CARRYOVER_ACTIVE_STATES.has(company.workflow_state);
       const carryoverDays = isCarryover ? (daysSince(company.latest_filing_date) ?? 0) : 0;
 
@@ -670,7 +677,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         carryover_priority: isCarryover ? computeCarryoverPriority(company, carryoverDays) : 0,
       };
     });
-  }, [normalizedCompanies, weekOffset]);
+  }, [normalizedCompanies, weekStart, weekEnd]);
 
   const stateCounts = useMemo(() => {
     const counts = {};
@@ -1111,7 +1118,6 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   }
 
   function toggleSelectAllVisible() {
-    const allVisibleSelected = filteredCompanies.every((c) => selectedCompanyIds.has(c.id));
     setSelectedCompanyIds((prev) => {
       const next = new Set(prev);
       if (allVisibleSelected) {
@@ -1147,7 +1153,12 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     }
   }
 
-  const activeCompany = weeklyCompanies.find((c) => c.id === activeCompanyId) || null;
+  const weeklyCompanyById = useMemo(
+    () => new Map(weeklyCompanies.map((company) => [company.id, company])),
+    [weeklyCompanies],
+  );
+
+  const activeCompany = activeCompanyId ? weeklyCompanyById.get(activeCompanyId) || null : null;
 
   const latestSequence = useMemo(() => {
     if (!Array.isArray(sequences) || sequences.length === 0) return null;
@@ -1164,34 +1175,104 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     return [...steps].sort((a, b) => Number(a.step_number || 0) - Number(b.step_number || 0));
   }, [latestSequence]);
 
-  const reviewedStates = new Set(["selected_for_outreach", "in_cadence", "active_opportunity", "closed_won", "closed_lost", "revisit_later", "held_for_review"]);
-  const exportedStates = new Set(["in_cadence", "active_opportunity", "closed_won"]);
-  const reviewedCount = weeklyCompanies.filter((c) => reviewedStates.has(c.workflow_state)).length;
-  const exportedCount = weeklyCompanies.filter((c) => exportedStates.has(c.workflow_state)).length;
-  const tierACount = weeklyCompanies.filter((c) => c.score_tier === "A").length;
-  const tierBCount = weeklyCompanies.filter((c) => c.score_tier === "B").length;
+  const weeklySummary = useMemo(() => {
+    let reviewedCount = 0;
+    let exportedCount = 0;
+    let tierACount = 0;
+    let tierBCount = 0;
+    let sourceFreshCount = 0;
+    let newThisWeekCount = 0;
 
-  const sourceFreshCount = weeklyCompanies.filter((c) => c.source_bucket === "2" || c.source_bucket === "1b").length;
-  const newThisWeekCount = weeklyCompanies.filter((c) => c.is_new_this_week).length;
-  const carryoverCompanies = [...weeklyCompanies]
-    .filter((c) => c.is_carryover)
-    .sort((a, b) => Number(b.carryover_priority || 0) - Number(a.carryover_priority || 0));
-  const carryoverCount = carryoverCompanies.length;
-  const carryoverSpotlight = carryoverCompanies.slice(0, 3);
+    const carryoverCompanies = [];
 
-  const selectedVisibleCount = filteredCompanies.filter((c) => selectedCompanyIds.has(c.id)).length;
-  const selectedTotalCount = weeklyCompanies.filter((c) => selectedCompanyIds.has(c.id)).length;
-  const allVisibleSelected = filteredCompanies.length > 0 && filteredCompanies.every((c) => selectedCompanyIds.has(c.id));
+    for (const company of weeklyCompanies) {
+      if (REVIEWED_WORKFLOW_STATES.has(company.workflow_state)) reviewedCount += 1;
+      if (EXPORTED_WORKFLOW_STATES.has(company.workflow_state)) exportedCount += 1;
+      if (company.score_tier === "A") tierACount += 1;
+      if (company.score_tier === "B") tierBCount += 1;
+      if (company.source_bucket === "2" || company.source_bucket === "1b") sourceFreshCount += 1;
+      if (company.is_new_this_week) newThisWeekCount += 1;
+      if (company.is_carryover) carryoverCompanies.push(company);
+    }
 
-  const briefSignals = buildBriefSignals(activeCompany || {}, companyDetail || {});
-  const briefStatusSignals = companyDetail?.reputation_signals || activeCompany || {};
-  const briefStatusBand = normalizeStatusBand(briefStatusSignals.status_health_band);
-  const briefStatusMeta = STATUS_HEALTH_META[briefStatusBand] || STATUS_HEALTH_META.unknown;
-  const briefStatusSeverity = formatStatusSeverityPercent(briefStatusSignals.status_incident_severity_score);
-  const briefStatusIncidentAge = formatStatusIncidentAge(briefStatusSignals.status_recent_incident_age_days);
-  const briefStatusOpenIncidents = Math.max(0, Number(briefStatusSignals.status_incidents_open || 0));
-  const briefStatusMajorIncidents = Math.max(0, Number(briefStatusSignals.status_major_incidents_open || 0));
-  const briefStatusDegradedComponents = Math.max(0, Number(briefStatusSignals.status_degraded_components || 0));
+    carryoverCompanies.sort((a, b) => Number(b.carryover_priority || 0) - Number(a.carryover_priority || 0));
+
+    return {
+      reviewedCount,
+      exportedCount,
+      tierACount,
+      tierBCount,
+      sourceFreshCount,
+      newThisWeekCount,
+      carryoverCount: carryoverCompanies.length,
+      carryoverSpotlight: carryoverCompanies.slice(0, 3),
+    };
+  }, [weeklyCompanies]);
+
+  const {
+    reviewedCount,
+    exportedCount,
+    tierACount,
+    tierBCount,
+    sourceFreshCount,
+    newThisWeekCount,
+    carryoverCount,
+    carryoverSpotlight,
+  } = weeklySummary;
+
+  const selectionSummary = useMemo(() => {
+    let selectedVisibleCount = 0;
+    let selectedTotalCount = 0;
+    let allVisibleSelected = filteredCompanies.length > 0;
+
+    for (const company of filteredCompanies) {
+      if (selectedCompanyIds.has(company.id)) selectedVisibleCount += 1;
+      else allVisibleSelected = false;
+    }
+
+    for (const company of weeklyCompanies) {
+      if (selectedCompanyIds.has(company.id)) selectedTotalCount += 1;
+    }
+
+    return {
+      selectedVisibleCount,
+      selectedTotalCount,
+      allVisibleSelected,
+    };
+  }, [filteredCompanies, weeklyCompanies, selectedCompanyIds]);
+
+  const { selectedVisibleCount, selectedTotalCount, allVisibleSelected } = selectionSummary;
+
+  const briefSignals = useMemo(
+    () => buildBriefSignals(activeCompany || {}, companyDetail || {}),
+    [activeCompany, companyDetail],
+  );
+
+  const briefStatus = useMemo(() => {
+    const briefStatusSignals = companyDetail?.reputation_signals || activeCompany || {};
+    const briefStatusBand = normalizeStatusBand(briefStatusSignals.status_health_band);
+    const briefStatusMeta = STATUS_HEALTH_META[briefStatusBand] || STATUS_HEALTH_META.unknown;
+
+    return {
+      briefStatusBand,
+      briefStatusMeta,
+      briefStatusSeverity: formatStatusSeverityPercent(briefStatusSignals.status_incident_severity_score),
+      briefStatusIncidentAge: formatStatusIncidentAge(briefStatusSignals.status_recent_incident_age_days),
+      briefStatusOpenIncidents: Math.max(0, Number(briefStatusSignals.status_incidents_open || 0)),
+      briefStatusMajorIncidents: Math.max(0, Number(briefStatusSignals.status_major_incidents_open || 0)),
+      briefStatusDegradedComponents: Math.max(0, Number(briefStatusSignals.status_degraded_components || 0)),
+    };
+  }, [activeCompany, companyDetail]);
+
+  const {
+    briefStatusBand,
+    briefStatusMeta,
+    briefStatusSeverity,
+    briefStatusIncidentAge,
+    briefStatusOpenIncidents,
+    briefStatusMajorIncidents,
+    briefStatusDegradedComponents,
+  } = briefStatus;
 
   if (loading && weeklyCompanies.length === 0) {
     return <TableSkeleton rows={8} />;
