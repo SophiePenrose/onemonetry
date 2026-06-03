@@ -537,6 +537,55 @@ describe("API endpoints", () => {
       assert.equal(cached.data.monitored_company?.company_website, null);
       assert.equal(cached.data.monitored_company?.company_domain, null);
     });
+
+    it("supports force_clear_hints on non-manual website resolution runs", async () => {
+      const companyNumber = "94021006";
+      const create = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Force Clear Hints Co",
+          company_number: companyNumber,
+          industry: "Technology",
+          segment: "SMB",
+          turnover: 2300000,
+        }),
+      });
+      assert.equal(create.status, 201);
+
+      const seeded = await fetchJSON(`/api/company/${companyNumber}/website-resolution/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "verified",
+          company_website: "force-clear-hints.example",
+        }),
+      });
+      assert.equal(seeded.status, 200);
+      assert.equal(seeded.data.monitored_company?.company_domain, "force-clear-hints.example");
+
+      const resolved = await fetchJSON(`/api/company/${companyNumber}/website-resolution`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_website: "http://127.0.0.1:9",
+          discover_website: false,
+          force: true,
+          force_clear_hints: true,
+          max_candidates: 1,
+          timeout_ms: 500,
+        }),
+      });
+
+      assert.equal(resolved.status, 200);
+      assert.equal(resolved.data.website_resolution?.status, "unresolved");
+
+      const cached = await fetchJSON(`/api/company/${companyNumber}/website-resolution`);
+      assert.equal(cached.status, 200);
+      assert.equal(cached.data.website_resolution?.status, "unresolved");
+      assert.equal(cached.data.monitored_company?.company_website, null);
+      assert.equal(cached.data.monitored_company?.company_domain, null);
+    });
   });
 
   describe("GET /api/integrations/status", () => {
