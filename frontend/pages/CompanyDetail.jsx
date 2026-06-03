@@ -48,9 +48,9 @@ export function formatBpsDelta(finalScore, baseScore) {
 
 function Field({ label, children }) {
   return (
-    <div style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 12 }}>
-      <span style={{ color: "#888", fontSize: 13, minWidth: 140, flexShrink: 0 }}>{label}</span>
-      <span style={{ fontSize: 14 }}>{children}</span>
+    <div className="company-detail-field">
+      <span className="company-detail-field-label">{label}</span>
+      <span className="company-detail-field-value">{children}</span>
     </div>
   );
 }
@@ -188,15 +188,25 @@ export default function CompanyDetail({ companyId }) {
     ? propensityScore >= 0.7 ? "#0a8754" : propensityScore >= 0.5 ? "#c27b00" : "#6b7280"
     : "#6b7280";
   const propensityDeltaLabel = formatBpsDelta(company.combined_score, company.base_score);
+  const segmentClass = company.segment === "Enterprise"
+    ? "segment-pill-enterprise"
+    : company.segment === "Mid-Market"
+      ? "segment-pill-midmarket"
+      : "segment-pill-smb";
+  const analysisTone = analysisStatus === "ready"
+    ? { color: "#0a8754", background: "#d1fae5" }
+    : analysisStatus === "failed"
+      ? { color: "#7f1d1d", background: "#fee2e2" }
+      : { color: "#92400e", background: "#fef3c7" };
 
   return (
-    <div>
-      <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Combined Score</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{formatScore(company.combined_score)}</div>
+    <div className="company-detail-page">
+      <div className="company-detail-card">
+        <div className="company-detail-header">
+          <h2 className="company-detail-title">{company.name}</h2>
+          <div className="company-detail-score-block">
+            <div className="company-detail-score-label">Combined Score</div>
+            <div className="company-detail-score-value">{formatScore(company.combined_score)}</div>
           </div>
         </div>
 
@@ -205,7 +215,7 @@ export default function CompanyDetail({ companyId }) {
             href={`https://find-and-update.company-information.service.gov.uk/company/${company.company_number}`}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "#0075EB" }}
+            className="company-detail-link"
           >
             {company.company_number}
           </a>
@@ -214,40 +224,28 @@ export default function CompanyDetail({ companyId }) {
         <Field label="Turnover">{formatTurnover(company.turnover)}</Field>
         <Field label="Employees">{company.employee_count?.toLocaleString()}</Field>
         <Field label="Annual Report">
-          <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" style={{ color: "#0075EB" }}>View report →</a>
+          <a href={company.latest_annual_report_url} target="_blank" rel="noopener noreferrer" className="company-detail-link">View report</a>
         </Field>
         <Field label="Segment">
-          <span style={{
-            display: "inline-block", padding: "2px 10px", borderRadius: 10,
-            fontSize: 12, fontWeight: 600, color: "#fff",
-            background: company.segment === "Enterprise" ? "#6f42c1" : company.segment === "Mid-Market" ? "#0075EB" : "#6b7280",
-          }}>
+          <span className={`segment-pill ${segmentClass}`}>
             {company.segment}
           </span>
         </Field>
         <Field label="Eligible Motions">
-          <span style={{ fontWeight: 600 }}>{company.all_motion_scores?.length || 0}</span>
-          <span style={{ color: "#888", marginLeft: 8 }}>
+          <span className="company-detail-inline-strong">{company.all_motion_scores?.length || 0}</span>
+          <span className="company-detail-inline-muted">
             {company.all_motion_scores?.map((m) => m.motion).join(", ")}
           </span>
         </Field>
         <Field label="Analysis Status">
-          <span style={{
-            display: "inline-block",
-            padding: "2px 10px",
-            borderRadius: 10,
-            fontSize: 12,
-            fontWeight: 600,
-            color: analysisStatus === "ready" ? "#0a8754" : analysisStatus === "failed" ? "#7f1d1d" : "#92400e",
-            background: analysisStatus === "ready" ? "#d1fae5" : analysisStatus === "failed" ? "#fee2e2" : "#fef3c7",
-          }}>
+          <span className="company-detail-status-pill" style={analysisTone}>
             {analysisStatusLabel}
           </span>
         </Field>
         {company.stakeholder_priority && (
           <Field label="Stakeholder Priority">
-            <span style={{ fontWeight: 600 }}>+{Math.round(company.stakeholder_priority.boost * 100)} pts</span>
-            <span style={{ color: "#888", marginLeft: 8 }}>
+            <span className="company-detail-inline-strong">+{Math.round(company.stakeholder_priority.boost * 100)} pts</span>
+            <span className="company-detail-inline-muted">
               {company.stakeholder_priority.readiness?.reason}
             </span>
           </Field>
@@ -255,30 +253,30 @@ export default function CompanyDetail({ companyId }) {
       </div>
 
       {company.propensity && (
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <h3 style={{ fontSize: 16, margin: 0 }}>Response Propensity</h3>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 24 }}>
+        <div className="company-detail-subcard">
+          <div className="company-detail-subcard-header">
+            <h3 className="company-detail-subcard-title">Response Propensity</h3>
+            <div className="company-detail-propensity-summary">
+              <span className="company-detail-propensity-emoji">
                 {company.propensity.warmth === "hot" ? "🔥" : company.propensity.warmth === "warm" ? "☀️" : company.propensity.warmth === "cool" ? "🌤" : "❄️"}
               </span>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: propensityColor }}>
+              <div className="company-detail-propensity-values">
+                <div className="company-detail-propensity-score" style={{ color: propensityColor }}>
                   {formatPercent(company.propensity.score)}
                 </div>
-                <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>{company.propensity.warmth}</div>
+                <div className="company-detail-propensity-warmth">{company.propensity.warmth}</div>
               </div>
             </div>
           </div>
-          <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
+          <div className="company-detail-propensity-meta">
             Base score: {formatScore(company.base_score)} · Propensity adjustment: {propensityDeltaLabel} → Final: {formatScore(company.combined_score)}
           </div>
           {company.propensity.signals?.length > 0 && (
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#555", marginBottom: 6 }}>Signals</div>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <div className="company-detail-signals-title">Signals</div>
+              <ul className="company-detail-signals-list">
                 {company.propensity.signals.map((s, idx) => (
-                  <li key={idx} style={{ fontSize: 13, color: "#555", marginBottom: 3 }}>{s}</li>
+                  <li key={idx}>{s}</li>
                 ))}
               </ul>
             </div>
@@ -292,13 +290,13 @@ export default function CompanyDetail({ companyId }) {
       />
 
       {company.filings?.length > 0 && (
-        <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
-          <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>Companies House Filings Read</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="company-detail-subcard">
+          <h3 className="company-detail-subcard-title company-detail-subcard-title-block">Companies House Filings Read</h3>
+          <div className="company-detail-filings-list">
             {company.filings.slice(0, 5).map((filing, idx) => (
-              <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 10px", background: "#f8f9fb", borderRadius: 6, fontSize: 13 }}>
+              <div key={idx} className="company-detail-filing-row">
                 <span>{filing.description || "Accounts filing"} {filing.balance_sheet_date ? `(${filing.balance_sheet_date})` : ""}</span>
-                <span style={{ color: filing.has_content ? "#0a8754" : "#888", fontWeight: 600 }}>
+                <span className={filing.has_content ? "company-detail-filing-ready" : "company-detail-filing-muted"}>
                   {filing.has_content ? "Text extracted" : "Metadata only"}
                 </span>
               </div>

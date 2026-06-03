@@ -285,7 +285,7 @@ function buildYammCsv(rows) {
   function escapeCsv(value) {
     const str = String(value || "");
     if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
-      return `\"${str.replace(/\"/g, "\"\"")}\"`;
+      return `"${str.replace(/"/g, "\"\"")}"`;
     }
     return str;
   }
@@ -347,7 +347,7 @@ function buildMissingEmailCsv(rows) {
   const escapeCsv = (value) => {
     const str = String(value || "");
     if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
-      return `\"${str.replace(/\"/g, "\"\"")}\"`;
+      return `"${str.replace(/"/g, "\"\"")}"`;
     }
     return str;
   };
@@ -429,16 +429,8 @@ function trimSentence(value, max = 170) {
 function Badge({ text, bg }) {
   return (
     <span
-      style={{
-        display: "inline-block",
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        color: "#fff",
-        background: bg || "#888",
-        whiteSpace: "nowrap",
-      }}
+      className="shortlist-badge"
+      style={{ background: bg || "#888" }}
     >
       {text}
     </span>
@@ -455,15 +447,8 @@ function SourceBadge({ bucket }) {
   return (
     <span
       title={meta.title}
-      style={{
-        display: "inline-block",
-        borderRadius: 999,
-        padding: "2px 7px",
-        fontSize: 10,
-        fontWeight: 700,
-        color: "#fff",
-        background: meta.color,
-      }}
+      className="shortlist-source-pill"
+      style={{ background: meta.color }}
     >
       {meta.label}
     </span>
@@ -1182,6 +1167,8 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   const selectedVisibleCount = filteredCompanies.filter((c) => selectedCompanyIds.has(c.id)).length;
   const selectedTotalCount = weeklyCompanies.filter((c) => selectedCompanyIds.has(c.id)).length;
   const allVisibleSelected = filteredCompanies.length > 0 && filteredCompanies.every((c) => selectedCompanyIds.has(c.id));
+  const canDownloadPreparedRows = Boolean(exportResult && exportResult.rows_exportable > 0);
+  const canDownloadMissingRows = Boolean(exportResult && exportResult.rows_needing_email > 0);
 
   const briefSignals = buildBriefSignals(activeCompany || {}, companyDetail || {});
   const briefStatusSignals = companyDetail?.reputation_signals || activeCompany || {};
@@ -1198,78 +1185,69 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: 14, background: "#eef6ff", border: "1px solid #cfe2ff", borderRadius: 10, padding: "10px 14px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <strong style={{ fontSize: 14, color: "#1d4e89" }}>Week of {weekLabel} to {weekEndLabel}</strong>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div className="shortlist-page">
+      <div className="shortlist-week-banner">
+        <div className="shortlist-week-banner-top">
+          <strong className="shortlist-week-banner-title">Week of {weekLabel} to {weekEndLabel}</strong>
+          <div className="shortlist-week-nav">
             <button
               type="button"
               onClick={() => setWeekOffset((prev) => prev - 1)}
-              style={{ border: "1px solid #cddcf2", borderRadius: 8, background: "#fff", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}
+              className="shortlist-week-nav-button"
             >
               Prev
             </button>
             <button
               type="button"
               onClick={() => setWeekOffset((prev) => prev + 1)}
-              style={{ border: "1px solid #cddcf2", borderRadius: 8, background: "#fff", padding: "4px 8px", cursor: "pointer", fontSize: 12 }}
+              className="shortlist-week-nav-button"
             >
               Next
             </button>
           </div>
         </div>
-        <div style={{ marginTop: 6, fontSize: 12, color: "#35506c" }}>
+        <div className="shortlist-week-banner-stats">
           {weeklyCompanies.length} prospects · {tierACount} Tier A · {tierBCount} Tier B · {newThisWeekCount} new this week · {carryoverCount} carryover · {reviewedCount} reviewed · {exportedCount} exported · {sourceFreshCount} fresh-source prospects
         </div>
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div className="shortlist-week-focus-row">
           {[{ value: "all", label: "All" }, { value: "new", label: `New this week (${newThisWeekCount})` }, { value: "carryover", label: `Carryover (${carryoverCount})` }].map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => setWeekFocus(opt.value)}
-              style={{
-                border: weekFocus === opt.value ? "1px solid #2563eb" : "1px solid #cddcf2",
-                borderRadius: 999,
-                background: weekFocus === opt.value ? "#eff6ff" : "#fff",
-                color: weekFocus === opt.value ? "#1d4ed8" : "#33557a",
-                padding: "4px 10px",
-                cursor: "pointer",
-                fontSize: 12,
-                fontWeight: 600,
-              }}
+              className={weekFocus === opt.value ? "shortlist-week-focus-button shortlist-week-focus-button-active" : "shortlist-week-focus-button"}
             >
               {opt.label}
             </button>
           ))}
         </div>
         {carryoverSpotlight.length > 0 && (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
+          <div className="shortlist-week-spotlight">
             Carryover priority: {carryoverSpotlight.map((company) => `${company.name} (${Math.round(company.carryover_priority)})`).join(" · ")}
           </div>
         )}
       </div>
 
       {!loading && !error && queueStatus && (
-        <div style={{ marginBottom: 12, background: "#fff", border: "1px solid #eceff3", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#555" }}>
-              <strong style={{ fontSize: 13 }}>Analysis Queue</strong>
-              <span style={{ background: queueStatus.enabled ? "#dcfce7" : "#f3f4f6", color: queueStatus.enabled ? "#166534" : "#4b5563", padding: "2px 8px", borderRadius: 999 }}>
+        <div className="shortlist-queue-banner">
+          <div className="shortlist-queue-banner-main">
+            <div className="shortlist-queue-status">
+              <strong>Analysis Queue</strong>
+              <span className={queueStatus.enabled ? "shortlist-queue-pill shortlist-queue-pill-on" : "shortlist-queue-pill shortlist-queue-pill-off"}>
                 {queueStatus.enabled ? "Worker On" : "Worker Off"}
               </span>
               <span>{queueStatus.counts?.queued || 0} queued</span>
               <span>{queueStatus.counts?.ready || 0} ready</span>
               {(queueStatus.counts?.failed || 0) > 0 && (
-                <span style={{ color: "#b91c1c", fontWeight: 600 }}>{queueStatus.counts.failed} failed</span>
+                <span className="shortlist-queue-failed">{queueStatus.counts.failed} failed</span>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="shortlist-queue-actions">
               <button
                 type="button"
                 onClick={handleProcessQueueNow}
                 disabled={queueBusy}
-                style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #d5d9df", background: "#fff", cursor: queueBusy ? "wait" : "pointer", fontSize: 12 }}
+                className="shortlist-queue-action"
               >
                 {queueBusy ? "Working..." : "Process Now"}
               </button>
@@ -1277,7 +1255,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 type="button"
                 onClick={() => handleRetryFailed()}
                 disabled={queueBusy || (queueStatus.counts?.failed || 0) === 0}
-                style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #d5d9df", background: "#fff", cursor: (queueBusy || (queueStatus.counts?.failed || 0) === 0) ? "not-allowed" : "pointer", fontSize: 12 }}
+                className="shortlist-queue-action"
               >
                 Retry Failed
               </button>
@@ -1286,19 +1264,19 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontSize: 20 }}>This Week</h2>
-          <span style={{ color: "#6b7280", fontSize: 13 }}>{filteredCompanies.length} visible</span>
+      <div className="shortlist-toolbar">
+        <div className="shortlist-toolbar-title-wrap">
+          <h2 className="shortlist-toolbar-title">This Week</h2>
+          <span className="shortlist-toolbar-sub">{filteredCompanies.length} visible</span>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="shortlist-toolbar-controls">
           <input
             type="text"
             placeholder="Search company or number"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, minWidth: 220 }}
+            className="dashboard-control dashboard-control-search shortlist-toolbar-search"
           />
           <select
             value={turnoverBand}
@@ -1307,7 +1285,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               setTurnoverBand(nextBand);
               fetchData(showSuppressed, sortBy, sortDir, nextBand);
             }}
-            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, background: "#fff" }}
+            className="dashboard-control"
           >
             {TURNOVER_BANDS.map((band) => (
               <option key={band.value} value={band.value}>{band.label}</option>
@@ -1320,7 +1298,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               const nextSortDir = sortBy === nextSortBy ? sortDir : "desc";
               applySort(nextSortBy, nextSortDir);
             }}
-            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13, background: "#fff" }}
+            className="dashboard-control"
           >
             {SORT_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1329,14 +1307,14 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
           <button
             type="button"
             onClick={() => applySort(sortBy, sortDir === "desc" ? "asc" : "desc")}
-            style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 13 }}
+            className="dashboard-control dashboard-control-button"
           >
             {sortDir === "desc" ? "Desc" : "Asc"}
           </button>
           <button
             type="button"
             onClick={() => fetchData(showSuppressed, sortBy, sortDir, turnoverBand)}
-            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 13 }}
+            className="dashboard-control dashboard-control-button"
           >
             Refresh
           </button>
@@ -1344,7 +1322,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <button
               type="button"
               onClick={onShowAddCompany}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#0075EB", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+              className="shortlist-primary-button"
             >
               Add Company
             </button>
@@ -1352,22 +1330,22 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         </div>
       </div>
 
-      {error && <div style={{ color: "#c0392b", marginBottom: 12 }}>Error: {error}</div>}
+      {error && <div className="shortlist-inline-error">Error: {error}</div>}
 
       {!loading && !error && meta && (meta.excluded > 0 || meta.suppressed > 0) && (
-        <div style={{ fontSize: 12, color: "#888", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="shortlist-meta-row">
           {meta.excluded > 0 && (
-            <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+            <span className="shortlist-meta-chip shortlist-meta-chip-danger">
               {meta.excluded} excluded
             </span>
           )}
           {meta.suppressed > 0 && (
-            <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 10, fontWeight: 500 }}>
+            <span className="shortlist-meta-chip shortlist-meta-chip-warn">
               {meta.suppressed} suppressed
             </span>
           )}
-          <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            <input type="checkbox" checked={showSuppressed} onChange={toggleSuppressed} style={{ cursor: "pointer" }} />
+          <label className="shortlist-meta-toggle">
+            <input type="checkbox" checked={showSuppressed} onChange={toggleSuppressed} />
             <span>Show suppressed</span>
           </label>
         </div>
@@ -1375,25 +1353,25 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
 
       <div className="this-week-grid">
         <section className="this-week-pane this-week-queue-pane">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-            <h3 style={{ margin: 0, fontSize: 14 }}>Prospects</h3>
-            <span style={{ fontSize: 12, color: "#64748b" }}>{filteredCompanies.length} items</span>
+          <div className="shortlist-pane-header">
+            <h3 className="shortlist-pane-title">Prospects</h3>
+            <span className="shortlist-pane-meta">{filteredCompanies.length} items</span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-            <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 12, background: "#fff" }}>
+          <div className="shortlist-prospect-filters">
+            <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} className="shortlist-pane-select">
               {TIER_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
-            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 12, background: "#fff" }}>
+            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="shortlist-pane-select">
               {SOURCE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}{opt.value !== "all" ? ` (${sourceCounts[opt.value] || 0})` : ""}
                 </option>
               ))}
             </select>
-            <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} style={{ gridColumn: "1 / span 2", padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 12, background: "#fff" }}>
+            <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} className="shortlist-pane-select shortlist-pane-select-full">
               <option value="all">All statuses ({weeklyCompanies.length})</option>
               {Object.entries(STATE_META).map(([stateId, sm]) => {
                 const count = stateCounts[stateId] || 0;
@@ -1403,24 +1381,24 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             </select>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569" }}>
+          <div className="shortlist-pane-actions">
+            <label className="shortlist-checkbox-label">
               <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} />
               Select all visible
             </label>
-            <a href="/api/export/shortlist?format=csv" download style={{ fontSize: 12, color: "#0075EB", textDecoration: "none" }}>Download CSV</a>
+            <a href="/api/export/shortlist?format=csv" download className="shortlist-inline-link">Download CSV</a>
           </div>
 
           {loading && <TableSkeleton rows={6} />}
 
           {!loading && filteredCompanies.length === 0 && (
-            <div style={{ color: "#64748b", fontSize: 13, padding: 12, border: "1px dashed #d4dce6", borderRadius: 8 }}>
+            <div className="shortlist-empty-note">
               No prospects match current filters.
             </div>
           )}
 
           {!loading && filteredCompanies.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 620, overflowY: "auto", paddingRight: 2 }}>
+            <div className="shortlist-prospect-list">
               {filteredCompanies.map((company) => {
                 const isActive = company.id === activeCompanyId;
                 const isChecked = selectedCompanyIds.has(company.id);
@@ -1441,16 +1419,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                     key={company.id}
                     type="button"
                     onClick={() => setActiveCompanyId(company.id)}
-                    style={{
-                      textAlign: "left",
-                      border: isActive ? "2px solid #0075EB" : "1px solid #dde3eb",
-                      borderRadius: 10,
-                      padding: 10,
-                      background: isActive ? "#f3f8ff" : "#fff",
-                      cursor: "pointer",
-                    }}
+                    className={isActive ? "shortlist-prospect-card shortlist-prospect-card-active" : "shortlist-prospect-card"}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div className="shortlist-prospect-top">
                       <input
                         type="checkbox"
                         checked={isChecked}
@@ -1460,11 +1431,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                         }}
                         onClick={(event) => event.stopPropagation()}
                       />
-                      <strong style={{ fontSize: 13, color: "#1f2937", flex: 1, minWidth: 0 }}>{company.name}</strong>
-                      <span style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>{Number(company.combined_score || company.composite_score || 0).toFixed(2)}</span>
+                      <strong className="shortlist-prospect-name">{company.name}</strong>
+                      <span className="shortlist-prospect-score">{Number(company.combined_score || company.composite_score || 0).toFixed(2)}</span>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                    <div className="shortlist-prospect-badges">
                       <Badge text={`Tier ${company.score_tier}`} bg={company.score_tier === "A" ? "#047857" : company.score_tier === "B" ? "#2563eb" : "#6b7280"} />
                       <Badge text={analysisMeta.label} bg={analysisMeta.color} />
                       <Badge text={state.label} bg={state.color} />
@@ -1478,10 +1449,10 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                           bg={company.carryover_days >= 30 ? "#b45309" : "#64748b"}
                         />
                       )}
-                      <span style={{ fontSize: 11, color: "#475569", marginLeft: "auto" }}>#{company.rank || "-"}</span>
+                      <span className="shortlist-prospect-rank">#{company.rank || "-"}</span>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#5b6676" }}>
+                    <div className="shortlist-prospect-meta">
                       <SourceBadge bucket={company.source_bucket} />
                       <span title={sourceTitle}>Source {sourceMeta.label}</span>
                       <span>•</span>
@@ -1489,13 +1460,13 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                       {company.filter_reason && (
                         <>
                           <span>•</span>
-                          <span title="Backend filter reason" style={{ textTransform: "capitalize" }}>{String(company.filter_reason).replaceAll("_", " ")}</span>
+                          <span title="Backend filter reason" className="shortlist-prospect-filter-reason">{String(company.filter_reason).replaceAll("_", " ")}</span>
                         </>
                       )}
                       {(statusBand !== "unknown" || statusSeverity || statusIncidentAge || statusOpenIncidents > 0) && (
                         <>
                           <span>•</span>
-                          <span title="Status health signal" style={{ color: statusMeta.text }}>
+                          <span title="Status health signal" className="shortlist-prospect-status-detail" style={{ color: statusMeta.text }}>
                             {statusSeverity ? `Severity ${statusSeverity}` : statusMeta.label}
                             {statusIncidentAge ? ` · ${statusIncidentAge}` : ""}
                             {statusOpenIncidents > 0 ? ` · ${statusOpenIncidents} open` : ""}
@@ -1509,23 +1480,14 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             </div>
           )}
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ fontSize: 12, color: "#475569" }}>{selectedVisibleCount} visible selected · {selectedTotalCount} total selected</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="shortlist-pane-footer">
+            <span className="shortlist-selection-count">{selectedVisibleCount} visible selected · {selectedTotalCount} total selected</span>
+            <div className="shortlist-pane-footer-actions">
               <button
                 type="button"
                 onClick={openBatchExportModal}
                 disabled={selectedTotalCount === 0}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #2563eb",
-                  background: selectedTotalCount === 0 ? "#f8fafc" : "#eff6ff",
-                  color: selectedTotalCount === 0 ? "#9ca3af" : "#1d4ed8",
-                  fontSize: 12,
-                  cursor: selectedTotalCount === 0 ? "not-allowed" : "pointer",
-                  fontWeight: 600,
-                }}
+                className={selectedTotalCount === 0 ? "shortlist-action-button shortlist-action-button-primary shortlist-action-button-disabled" : "shortlist-action-button shortlist-action-button-primary"}
               >
                 Prepare export
               </button>
@@ -1534,7 +1496,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 onClick={() => {
                   if (activeCompanyId && onSelectCompany) onSelectCompany(activeCompanyId);
                 }}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, cursor: "pointer" }}
+                className="shortlist-action-button"
               >
                 Open full view
               </button>
@@ -1543,22 +1505,22 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         </section>
 
         <section className="this-week-pane this-week-brief-pane">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-            <h3 style={{ margin: 0, fontSize: 14 }}>Company Brief</h3>
-            {activeCompany && <span style={{ fontSize: 12, color: "#64748b" }}>{activeCompany.company_number || ""}</span>}
+          <div className="shortlist-pane-header">
+            <h3 className="shortlist-pane-title">Company Brief</h3>
+            {activeCompany && <span className="shortlist-pane-meta">{activeCompany.company_number || ""}</span>}
           </div>
 
           {!activeCompany && (
-            <div style={{ color: "#64748b", fontSize: 13, padding: 12, border: "1px dashed #d4dce6", borderRadius: 8 }}>
+            <div className="shortlist-empty-note">
               Select a prospect to view its brief.
             </div>
           )}
 
           {activeCompany && (
-            <div>
-              <div style={{ marginBottom: 10 }}>
-                <h4 style={{ margin: "0 0 4px", fontSize: 18 }}>{activeCompany.name}</h4>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "#5b6676" }}>
+            <div className="shortlist-brief-content">
+              <div className="shortlist-brief-company">
+                <h4 className="shortlist-brief-company-title">{activeCompany.name}</h4>
+                <div className="shortlist-brief-company-meta">
                   <span>{activeCompany.industry || "Unknown industry"}</span>
                   <span>•</span>
                   <span>{formatTurnover(activeCompany.turnover)}</span>
@@ -1567,80 +1529,80 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 </div>
               </div>
 
-              {detailLoading && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Loading brief...</div>}
-              {detailError && <div style={{ fontSize: 12, color: "#b91c1c", marginBottom: 10 }}>{detailError}</div>}
+              {detailLoading && <div className="shortlist-muted-text">Loading brief...</div>}
+              {detailError && <div className="shortlist-error-text">{detailError}</div>}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 6 }}>Why this company</div>
+              <div className="shortlist-brief-grid">
+                <div className="shortlist-brief-card">
+                  <div className="shortlist-brief-card-title">Why this company</div>
                   {briefSignals.whyCompany.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No brief signals yet.</div>
+                    <div className="shortlist-brief-muted">No brief signals yet.</div>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
+                    <ul className="shortlist-brief-list">
                       {briefSignals.whyCompany.map((line, idx) => <li key={`why-${idx}`}>{line}</li>)}
                     </ul>
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 6 }}>Why now</div>
+                <div className="shortlist-brief-card">
+                  <div className="shortlist-brief-card-title">Why now</div>
                   {briefSignals.whyNow.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No timing context available.</div>
+                    <div className="shortlist-brief-muted">No timing context available.</div>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
+                    <ul className="shortlist-brief-list">
                       {briefSignals.whyNow.map((line, idx) => <li key={`now-${idx}`}>{line}</li>)}
                     </ul>
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: briefStatusMeta.background }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 8 }}>Status health</div>
+                <div className="shortlist-brief-card" style={{ background: briefStatusMeta.background }}>
+                  <div className="shortlist-brief-card-title shortlist-brief-card-title-status">Status health</div>
                   {(briefStatusBand !== "unknown" || briefStatusSeverity || briefStatusOpenIncidents > 0 || briefStatusIncidentAge) ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div className="shortlist-brief-status-wrap">
+                      <div className="shortlist-brief-status-top">
                         <Badge text={briefStatusMeta.badge} bg={briefStatusMeta.color} />
-                        {briefStatusSeverity && <span style={{ fontSize: 12, color: briefStatusMeta.text }}>Severity {briefStatusSeverity}</span>}
-                        {briefStatusIncidentAge && <span style={{ fontSize: 12, color: briefStatusMeta.text }}>Recent incident {briefStatusIncidentAge}</span>}
+                        {briefStatusSeverity && <span className="shortlist-brief-status-meta" style={{ color: briefStatusMeta.text }}>Severity {briefStatusSeverity}</span>}
+                        {briefStatusIncidentAge && <span className="shortlist-brief-status-meta" style={{ color: briefStatusMeta.text }}>Recent incident {briefStatusIncidentAge}</span>}
                       </div>
-                      <div style={{ fontSize: 12, color: "#334155" }}>
+                      <div className="shortlist-brief-status-detail">
                         Open incidents: {briefStatusOpenIncidents}
                         {briefStatusMajorIncidents > 0 ? ` (${briefStatusMajorIncidents} major)` : ""}
                         {briefStatusDegradedComponents > 0 ? ` · Degraded components: ${briefStatusDegradedComponents}` : ""}
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No status telemetry captured yet.</div>
+                    <div className="shortlist-brief-muted">No status telemetry captured yet.</div>
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 6 }}>The angle</div>
+                <div className="shortlist-brief-card">
+                  <div className="shortlist-brief-card-title">The angle</div>
                   {briefSignals.angle.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No angle available.</div>
+                    <div className="shortlist-brief-muted">No angle available.</div>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
+                    <ul className="shortlist-brief-list">
                       {briefSignals.angle.map((line, idx) => <li key={`angle-${idx}`}>{line}</li>)}
                     </ul>
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 6 }}>Stakeholder</div>
+                <div className="shortlist-brief-card">
+                  <div className="shortlist-brief-card-title">Stakeholder</div>
                   {briefSignals.stakeholder.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No stakeholder mapped yet.</div>
+                    <div className="shortlist-brief-muted">No stakeholder mapped yet.</div>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
+                    <ul className="shortlist-brief-list">
                       {briefSignals.stakeholder.map((line, idx) => <li key={`stake-${idx}`}>{line}</li>)}
                     </ul>
                   )}
                 </div>
 
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: "#1f2937", marginBottom: 6 }}>Watch for</div>
+                <div className="shortlist-brief-card">
+                  <div className="shortlist-brief-card-title">Watch for</div>
                   {briefSignals.watchFor.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No active caution flags.</div>
+                    <div className="shortlist-brief-muted">No active caution flags.</div>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 18, color: "#334155", fontSize: 12 }}>
+                    <ul className="shortlist-brief-list">
                       {briefSignals.watchFor.map((line, idx) => <li key={`watch-${idx}`}>{line}</li>)}
                     </ul>
                   )}
@@ -1651,7 +1613,7 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 <button
                   type="button"
                   onClick={() => onSelectCompany(activeCompany.id)}
-                  style={{ marginTop: 10, padding: "7px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, cursor: "pointer" }}
+                  className="shortlist-action-button"
                 >
                   View full dossier
                 </button>
@@ -1661,32 +1623,32 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
         </section>
 
         <section className="this-week-pane this-week-email-pane">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-            <h3 style={{ margin: 0, fontSize: 14 }}>Email Drafts</h3>
-            {latestSequence && <span style={{ fontSize: 12, color: "#64748b" }}>{sequenceSteps.length} steps</span>}
+          <div className="shortlist-pane-header">
+            <h3 className="shortlist-pane-title">Email Drafts</h3>
+            {latestSequence && <span className="shortlist-pane-meta">{sequenceSteps.length} steps</span>}
           </div>
 
-          {sequenceLoading && <div style={{ fontSize: 12, color: "#64748b" }}>Loading drafts...</div>}
+          {sequenceLoading && <div className="shortlist-muted-text">Loading drafts...</div>}
 
           {!sequenceLoading && activeCompany && !latestSequence && (
-            <div style={{ color: "#64748b", fontSize: 13, padding: 12, border: "1px dashed #d4dce6", borderRadius: 8 }}>
+            <div className="shortlist-empty-note">
               No sequence available yet for this company.
             </div>
           )}
 
           {!sequenceLoading && latestSequence && (
-            <div>
-              <div style={{ marginBottom: 10, fontSize: 12, color: "#475569" }}>
+            <div className="shortlist-email-content">
+              <div className="shortlist-email-summary">
                 Latest sequence: {latestSequence.id} · Stakeholder: {latestSequence.stakeholder_name || "Unknown"}
                 {latestSequenceFreshness ? ` · ${latestSequenceFreshness}` : ""}
                 {latestSequenceIsStale ? " · older draft" : ""}
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <div className="shortlist-email-actions">
                 <button
                   type="button"
                   onClick={() => copyAllSteps(sequenceSteps)}
-                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, cursor: "pointer" }}
+                  className="shortlist-action-button"
                 >
                   {copiedStep === -1 ? "Copied all" : "Copy all"}
                 </button>
@@ -1694,37 +1656,37 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   <button
                     type="button"
                     onClick={() => onSelectCompany(activeCompanyId)}
-                    style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, cursor: "pointer" }}
+                    className="shortlist-action-button"
                   >
                     Open editor
                   </button>
                 )}
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 620, overflowY: "auto", paddingRight: 2 }}>
+              <div className="shortlist-email-step-list">
                 {sequenceSteps.map((step) => (
-                  <div key={`${latestSequence.id}-${step.step_number}`} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fcfdff" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                      <strong style={{ fontSize: 13, color: "#1f2937" }}>
+                  <div key={`${latestSequence.id}-${step.step_number}`} className="shortlist-email-step-card">
+                    <div className="shortlist-email-step-header">
+                      <strong className="shortlist-email-step-title">
                         Step {step.step_number}: {step.step_type || "email"}
                       </strong>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div className="shortlist-email-step-badges">
                         <Badge text={String(step.send_condition || "always").replaceAll("_", " ")} bg="#475569" />
                         <Badge text={step.review_status || "pending"} bg={step.review_status === "reviewed" ? "#047857" : "#d97706"} />
                       </div>
                     </div>
 
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
+                    <div className="shortlist-email-step-subject">
                       {step.subject || "No subject"}
                     </div>
-                    <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5, whiteSpace: "pre-wrap", marginBottom: 8 }}>
+                    <div className="shortlist-email-step-body">
                       {trimSentence(step.body, 420) || "No body"}
                     </div>
 
                     <button
                       type="button"
                       onClick={() => copyStep(step)}
-                      style={{ padding: "5px 9px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, cursor: "pointer" }}
+                      className="shortlist-action-button"
                     >
                       {copiedStep === step.step_number ? "Copied" : "Copy email"}
                     </button>
@@ -1737,36 +1699,16 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
       </div>
 
       {exportModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15, 23, 42, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 18,
-            zIndex: 50,
-          }}
-        >
+        <div className="shortlist-modal-overlay">
           <div
             role="dialog"
             aria-modal="true"
-            style={{
-              width: "min(920px, 100%)",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#fff",
-              borderRadius: 12,
-              border: "1px solid #dbe4ef",
-              boxShadow: "0 20px 45px rgba(15, 23, 42, 0.26)",
-              padding: 16,
-            }}
+            className="shortlist-modal"
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 17 }}>Batch Export for This Week</h3>
-                <div style={{ marginTop: 4, fontSize: 12, color: "#64748b" }}>
+            <div className="shortlist-modal-header">
+              <div className="shortlist-modal-heading">
+                <h3 className="shortlist-modal-title">Batch Export for This Week</h3>
+                <div className="shortlist-modal-subtitle">
                   {selectedTotalCount} selected companies · manual review is enforced before YAMM export rows are included.
                 </div>
               </div>
@@ -1774,19 +1716,19 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 type="button"
                 onClick={closeBatchExportModal}
                 disabled={exportBusy}
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", padding: "5px 10px", cursor: exportBusy ? "not-allowed" : "pointer" }}
+                className={exportBusy ? "shortlist-action-button shortlist-action-button-disabled" : "shortlist-action-button"}
               >
                 Close
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 12 }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#334155" }}>
+            <div className="shortlist-modal-form-grid">
+              <label className="shortlist-form-field">
                 Cadence steps
                 <select
                   value={exportStepPreset}
                   onChange={(e) => setExportStepPreset(e.target.value)}
-                  style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12 }}
+                  className="shortlist-form-control"
                 >
                   {EXPORT_STEP_PRESETS.map((preset) => (
                     <option key={preset.value} value={preset.value}>{preset.label}</option>
@@ -1794,17 +1736,17 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                 </select>
               </label>
 
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#334155" }}>
+              <label className="shortlist-form-field">
                 Start date
                 <input
                   type="date"
                   value={exportStartDate}
                   onChange={(e) => setExportStartDate(e.target.value)}
-                  style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12 }}
+                  className="shortlist-form-control"
                 />
               </label>
 
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#334155" }}>
+              <label className="shortlist-form-field">
                 Send time (non-quarter-hour)
                 <input
                   type="time"
@@ -1812,28 +1754,28 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                   onChange={(e) => setExportSendTime(e.target.value)}
                   onBlur={(e) => setExportSendTime(normalizeSendTime(e.target.value || "08:37"))}
                   step={60}
-                  style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12 }}
+                  className="shortlist-form-control"
                 />
               </label>
 
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#334155" }}>
+              <label className="shortlist-form-field">
                 Missing email handling
                 <select
                   value={exportMissingEmailMode}
                   onChange={(e) => setExportMissingEmailMode(e.target.value)}
-                  style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12 }}
+                  className="shortlist-form-control"
                 >
                   <option value="skip">Skip rows with missing email</option>
                   <option value="include">Include rows and flag NEEDS EMAIL</option>
                 </select>
               </label>
 
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#334155" }}>
+              <label className="shortlist-form-field">
                 Post-export workflow update
                 <select
                   value={postExportState}
                   onChange={(e) => setPostExportState(e.target.value)}
-                  style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12 }}
+                  className="shortlist-form-control"
                 >
                   {POST_EXPORT_STATE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -1842,121 +1784,88 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
               </label>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <div className="shortlist-modal-actions">
               <button
                 type="button"
                 onClick={handlePrepareBatchExport}
                 disabled={exportBusy}
-                style={{
-                  padding: "7px 12px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "#2563eb",
-                  color: "#fff",
-                  fontWeight: 600,
-                  cursor: exportBusy ? "wait" : "pointer",
-                  opacity: exportBusy ? 0.8 : 1,
-                }}
+                className={exportBusy ? "shortlist-primary-button shortlist-action-button-disabled" : "shortlist-primary-button"}
               >
                 {exportBusy ? "Preparing..." : "Prepare export file"}
               </button>
               <button
                 type="button"
                 onClick={handleDownloadPreparedCsv}
-                disabled={!exportResult || exportResult.rows_exportable === 0}
-                style={{
-                  padding: "7px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: (!exportResult || exportResult.rows_exportable === 0) ? "#f8fafc" : "#fff",
-                  color: (!exportResult || exportResult.rows_exportable === 0) ? "#94a3b8" : "#334155",
-                  fontWeight: 600,
-                  cursor: (!exportResult || exportResult.rows_exportable === 0) ? "not-allowed" : "pointer",
-                }}
+                disabled={!canDownloadPreparedRows}
+                className={!canDownloadPreparedRows ? "shortlist-action-button shortlist-action-button-disabled" : "shortlist-action-button"}
               >
                 Download YAMM CSV
               </button>
               <button
                 type="button"
                 onClick={handleDownloadPreparedSheetsJson}
-                disabled={!exportResult || exportResult.rows_exportable === 0}
-                style={{
-                  padding: "7px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: (!exportResult || exportResult.rows_exportable === 0) ? "#f8fafc" : "#fff",
-                  color: (!exportResult || exportResult.rows_exportable === 0) ? "#94a3b8" : "#334155",
-                  fontWeight: 600,
-                  cursor: (!exportResult || exportResult.rows_exportable === 0) ? "not-allowed" : "pointer",
-                }}
+                disabled={!canDownloadPreparedRows}
+                className={!canDownloadPreparedRows ? "shortlist-action-button shortlist-action-button-disabled" : "shortlist-action-button"}
               >
                 Download Sheets JSON
               </button>
               <button
                 type="button"
                 onClick={handleDownloadMissingEmailCsv}
-                disabled={!exportResult || exportResult.rows_needing_email === 0}
-                style={{
-                  padding: "7px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: (!exportResult || exportResult.rows_needing_email === 0) ? "#f8fafc" : "#fff",
-                  color: (!exportResult || exportResult.rows_needing_email === 0) ? "#94a3b8" : "#334155",
-                  fontWeight: 600,
-                  cursor: (!exportResult || exportResult.rows_needing_email === 0) ? "not-allowed" : "pointer",
-                }}
+                disabled={!canDownloadMissingRows}
+                className={!canDownloadMissingRows ? "shortlist-action-button shortlist-action-button-disabled" : "shortlist-action-button"}
               >
                 Download Missing-Email CSV
               </button>
             </div>
 
             {exportError && (
-              <div style={{ marginBottom: 10, fontSize: 12, color: "#b91c1c", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px" }}>
+              <div className="shortlist-modal-error">
                 {exportError}
               </div>
             )}
 
             {exportResult && (
-              <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 12, background: "#f8fbff" }}>
-                <div style={{ fontSize: 12, color: "#334155", marginBottom: 8 }}>
+              <div className="shortlist-modal-result">
+                <div className="shortlist-modal-result-line">
                   Generated {exportResult.rows_exportable} rows from {exportResult.selected_companies} companies · scanned {exportResult.sequences_scanned} sequences · preset: {exportResult.step_preset.label}
                 </div>
-                <div style={{ fontSize: 12, color: "#334155", marginBottom: 8 }}>
+                <div className="shortlist-modal-result-line">
                   Needs email: {exportResult.rows_needing_email} · missing contacts: {exportResult.missing_email_contacts || 0} · skipped missing-email rows: {exportResult.skipped_missing_email_rows} · blocked sequences: {exportResult.blocked_sequences.length}
                 </div>
-                <div style={{ fontSize: 12, color: "#334155", marginBottom: 8 }}>
+                <div className="shortlist-modal-result-line">
                   Start date: {exportResult.start_date} · send time: {exportResult.send_time}
                 </div>
 
                 {exportResult.blocked_sequences.length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: "#7c2d12" }}>
+                  <div className="shortlist-modal-result-line shortlist-modal-result-warn">
                     Blocked for review: {exportResult.blocked_sequences.slice(0, 5).map((entry) => `${entry.company_name} (${entry.stakeholder_name})`).join(" · ")}
                     {exportResult.blocked_sequences.length > 5 ? ` · +${exportResult.blocked_sequences.length - 5} more` : ""}
                   </div>
                 )}
 
                 {exportResult.no_sequence_companies.length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: "#92400e" }}>
+                  <div className="shortlist-modal-result-line shortlist-modal-result-warn">
                     No sequence found: {exportResult.no_sequence_companies.slice(0, 5).map((entry) => entry.company_name).join(" · ")}
                     {exportResult.no_sequence_companies.length > 5 ? ` · +${exportResult.no_sequence_companies.length - 5} more` : ""}
                   </div>
                 )}
 
                 {exportResult.transitioned_companies.length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: "#166534" }}>
+                  <div className="shortlist-modal-result-line shortlist-modal-result-success">
                     Workflow updated: {exportResult.transitioned_companies.length} companies.
                   </div>
                 )}
 
                 {exportResult.transition_failures.length > 0 && (
-                  <div style={{ marginBottom: 8, fontSize: 12, color: "#b91c1c" }}>
+                  <div className="shortlist-modal-result-line shortlist-modal-result-danger">
                     Workflow transition failures: {exportResult.transition_failures.slice(0, 4).map((entry) => `${entry.company_name} (${entry.reason})`).join(" · ")}
                     {exportResult.transition_failures.length > 4 ? ` · +${exportResult.transition_failures.length - 4} more` : ""}
                   </div>
                 )}
 
                 {exportResult.export_failures.length > 0 && (
-                  <div style={{ fontSize: 12, color: "#9a3412" }}>
+                  <div className="shortlist-modal-result-line shortlist-modal-result-warn">
                     Export failures: {exportResult.export_failures.slice(0, 4).map((entry) => `${entry.company_name} (${entry.reason})`).join(" · ")}
                     {exportResult.export_failures.length > 4 ? ` · +${exportResult.export_failures.length - 4} more` : ""}
                   </div>
