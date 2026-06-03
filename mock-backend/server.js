@@ -113,6 +113,7 @@ import {
   getTechEnrichmentRuntimeConfig,
 } from "./tech-enrichment.js";
 import { syncExternalSignals } from "./signal-connectors.js";
+import { resolveCompanyWebsite, getWebsiteResolverRuntimeConfig } from "./website-resolver.js";
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -4702,6 +4703,7 @@ app.get("/api/integrations/status", (_req, res) => {
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
   const llmRuntimeInfo = getLLMRuntimeInfo();
   const emailLlmRuntime = getEmailLlmRuntimeInfo();
+  const websiteResolverRuntime = getWebsiteResolverRuntimeConfig();
 
   const integrations = {
     companies_house: {
@@ -4864,6 +4866,13 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "TECH_ENRICHMENT_SEED_ENABLED, TECH_ENRICHMENT_SEED_INTERVAL_MS, TECH_ENRICHMENT_SEED_INITIAL_DELAY_MS, TECH_ENRICHMENT_SEED_LIMIT, TECH_ENRICHMENT_SEED_MAX_REFRESH, TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE",
       purpose: "Background refresh loop for stale/missing enrichment payloads on shortlist companies",
     },
+    website_resolution: {
+      configured: true,
+      required: false,
+      env_var: "WEBSITE_RESOLUTION_TIMEOUT_MS, WEBSITE_RESOLUTION_MAX_CANDIDATES, WEBSITE_RESOLUTION_ENABLE_NAME_GUESSES, ANALYSIS_QUEUE_WEBSITE_GUESS",
+      purpose: "Website/domain resolution cache used before deterministic enrichment",
+      defaults: websiteResolverRuntime,
+    },
   };
 
   const missingRequired = Object.entries(integrations)
@@ -4928,6 +4937,10 @@ app.get("/api/integrations/status", (_req, res) => {
       "TECH_ENRICHMENT_SEED_MAX_REFRESH=60",
       "TECH_ENRICHMENT_SEED_DEEP_SCAN_MODE=off",
       "ANALYSIS_QUEUE_ENRICHMENT_DEEP_SCAN_MODE=off",
+      "WEBSITE_RESOLUTION_TIMEOUT_MS=1800",
+      "WEBSITE_RESOLUTION_MAX_CANDIDATES=4",
+      "WEBSITE_RESOLUTION_ENABLE_NAME_GUESSES=true",
+      "ANALYSIS_QUEUE_WEBSITE_GUESS=false",
     ],
   });
 });
@@ -4980,13 +4993,50 @@ app.post("/api/llm/analyse", async (req, res) => {
   }
 
   const monitored = getMonitoredCompany(companyNumber);
-  const name = await resolveMonitorName(companyNumber, monitored?.company_name);
+  const requestedCompanyName = toOptionalString(req.body?.company_name);
+  const name = requestedCompanyName || await resolveMonitorName(companyNumber, monitored?.company_name);
   const turnover = monitored?.latest_turnover || null;
   const runEnrichment = parseBooleanInput(req.body?.run_enrichment, true);
   const runExternalSignalSync = parseBooleanInput(req.body?.run_external_sync, DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC);
+  const enableWebsiteDiscovery = parseBooleanInput(req.body?.discover_website, true);
+  const forceWebsiteResolution = parseBooleanInput(req.body?.force_website_resolution, false);
   const deepScanOptions = resolveEnrichmentDeepScanOptions(req.body || {}, TECH_ENRICHMENT_RUNTIME.deep_scan_mode);
   let enrichment = null;
   let externalSignalSync = null;
+  let websiteResolution;
+
+  try {
+    websiteResolution = await resolveCompanyWebsite({
+      companyNumber,
+      companyName: name,
+      companyWebsite: toOptionalString(req.body?.company_website)
+        || toOptionalString(req.body?.website)
+        || toOptionalString(monitored?.company_website),
+      companyDomain: toOptionalString(req.body?.company_domain)
+        || toOptionalString(req.body?.domain)
+        || toOptionalString(monitored?.company_domain),
+      enableNameGuesses: enableWebsiteDiscovery,
+      force: forceWebsiteResolution,
+    });
+
+    if (websiteResolution?.website_url || websiteResolution?.domain) {
+      upsertMonitoredCompany({
+        company_number: companyNumber,
+        company_name: monitored?.company_name || name,
+        latest_turnover: monitored?.latest_turnover ?? turnover,
+        status: monitored?.status || "active",
+        source: monitored?.source || "llm_analyse",
+        company_website: websiteResolution.website_url || monitored?.company_website || null,
+        company_domain: websiteResolution.domain || monitored?.company_domain || null,
+      });
+    }
+  } catch (websiteErr) {
+    websiteResolution = {
+      status: "error",
+      updated: false,
+      error: websiteErr?.message || "website_resolution_failed",
+    };
+  }
 
   try {
     if (runEnrichment) {
@@ -4994,8 +5044,14 @@ app.post("/api/llm/analyse", async (req, res) => {
         enrichment = await runCompanyTechEnrichment({
           companyNumber,
           companyName: name,
-          companyWebsite: toOptionalString(req.body?.company_website) || toOptionalString(req.body?.website),
-          companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+          companyWebsite: websiteResolution?.website_url
+            || toOptionalString(req.body?.company_website)
+            || toOptionalString(req.body?.website)
+            || toOptionalString(monitored?.company_website),
+          companyDomain: websiteResolution?.domain
+            || toOptionalString(req.body?.company_domain)
+            || toOptionalString(req.body?.domain)
+            || toOptionalString(monitored?.company_domain),
           turnover,
           force: parseBooleanInput(req.body?.force_enrichment, false),
           ...deepScanOptions,
@@ -5017,7 +5073,10 @@ app.post("/api/llm/analyse", async (req, res) => {
       externalSignalSync = await syncExternalSignals({
         companyNumber,
         companyName: name,
-        companyDomain: toOptionalString(req.body?.company_domain) || toOptionalString(req.body?.domain),
+        companyDomain: websiteResolution?.domain
+          || toOptionalString(req.body?.company_domain)
+          || toOptionalString(req.body?.domain)
+          || toOptionalString(monitored?.company_domain),
         timeoutMs: req.body?.external_signal_timeout_ms,
         enableStatusDiscovery: parseBooleanInput(
           req.body?.discover_status_urls,
@@ -5036,6 +5095,7 @@ app.post("/api/llm/analyse", async (req, res) => {
       company_name: name,
       analysis: enrichedAnalysis,
       score,
+        website_resolution: websiteResolution,
       enrichment,
       ownership,
       external_signal_sync: externalSignalSync,
