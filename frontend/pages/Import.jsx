@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const ACTION_COLORS = {
   imported: { bg: "#d1fae5", color: "#065f46" },
@@ -84,22 +84,23 @@ export default function Import() {
   const [closedWonBusy, setClosedWonBusy] = useState(false);
   const [closedWonResult, setClosedWonResult] = useState(null);
   const [closedWonRegistry, setClosedWonRegistry] = useState({ total: 0, rows: [] });
+  const [queueStatus, setQueueStatus] = useState(null);
+  const [queueBusy, setQueueBusy] = useState(false);
   const fileRef = useRef(null);
   const closedWonFileRef = useRef(null);
+  const source3RequestRef = useRef(0);
+  const jobDetailRequestRef = useRef(0);
 
   useEffect(() => {
     fetch("/api/companies-house/status").then((r) => r.json()).then(setCHStatus).catch(() => {});
     refreshDashboardStats();
     refreshJobs();
+    refreshQueueStatus();
     refreshBulkFiles();
     refreshAutoPull();
     refreshBackfillStatus();
     refreshClosedWonRegistry();
   }, []);
-
-  useEffect(() => {
-    refreshSource3Breakdown(jobs);
-  }, [jobs]);
 
   function refreshJobs() {
     fetch("/api/import/jobs").then((r) => r.json()).then((d) => setJobs(d.jobs || [])).catch(() => {});
@@ -112,24 +113,37 @@ export default function Import() {
       .catch(() => setDashboardStats(null));
   }
 
-  async function refreshSource3Breakdown(currentJobs = jobs) {
+  function refreshQueueStatus() {
+    fetch("/api/analysis-queue/status")
+      .then((r) => r.json())
+      .then(setQueueStatus)
+      .catch(() => setQueueStatus(null));
+  }
+
+  const refreshSource3Breakdown = useCallback(async (currentJobs) => {
+    const requestId = source3RequestRef.current + 1;
+    source3RequestRef.current = requestId;
+
     const csvJobs = (currentJobs || []).filter((job) => String(job.type || "").toLowerCase() === "csv");
     if (csvJobs.length === 0) {
-      setSource3Breakdown({
-        csvJobCount: 0,
-        totalItems: 0,
-        processedItems: 0,
-        importedItems: 0,
-        skippedItems: 0,
-        errorItems: 0,
-        nonTrading: 0,
-        holdingSpv: 0,
-        stale: 0,
-        duplicate: 0,
-        otherSkipped: 0,
-        warningIncluded: 0,
-        latestJobId: null,
-      });
+      if (source3RequestRef.current === requestId) {
+        setSource3Breakdown({
+          csvJobCount: 0,
+          totalItems: 0,
+          processedItems: 0,
+          importedItems: 0,
+          skippedItems: 0,
+          errorItems: 0,
+          nonTrading: 0,
+          holdingSpv: 0,
+          stale: 0,
+          duplicate: 0,
+          otherSkipped: 0,
+          warningIncluded: 0,
+          latestJobId: null,
+        });
+        setSource3Loading(false);
+      }
       return;
     }
 
@@ -174,6 +188,8 @@ export default function Import() {
         }
       });
 
+      if (source3RequestRef.current !== requestId) return;
+
       setSource3Breakdown({
         csvJobCount: sorted.length,
         latestJobId: latest.id,
@@ -183,6 +199,8 @@ export default function Import() {
         ...breakdown,
       });
     } catch {
+      if (source3RequestRef.current !== requestId) return;
+
       setSource3Breakdown({
         csvJobCount: sorted.length,
         latestJobId: latest.id,
@@ -197,9 +215,15 @@ export default function Import() {
         warningIncluded: 0,
       });
     } finally {
-      setSource3Loading(false);
+      if (source3RequestRef.current === requestId) {
+        setSource3Loading(false);
+      }
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    refreshSource3Breakdown(jobs);
+  }, [jobs, refreshSource3Breakdown]);
 
   function refreshBulkFiles() {
     fetch("/api/import/bulk/monthly").then((r) => r.json()).then((d) => setMonthlyFiles(d.files || [])).catch(() => {});
@@ -225,8 +249,24 @@ export default function Import() {
   }
 
   function loadJobDetail(jobId) {
+    const requestId = jobDetailRequestRef.current + 1;
+    jobDetailRequestRef.current = requestId;
+
     setSelectedJob(jobId);
-    fetch(`/api/import/jobs/${jobId}`).then((r) => r.json()).then(setJobDetail).catch(() => {});
+    setJobDetail(null);
+
+    fetch(`/api/import/jobs/${jobId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (jobDetailRequestRef.current === requestId) {
+          setJobDetail(data);
+        }
+      })
+      .catch(() => {
+        if (jobDetailRequestRef.current === requestId) {
+          setJobDetail(null);
+        }
+      });
   }
 
   async function handleCSVUpload() {
@@ -279,6 +319,22 @@ export default function Import() {
       alert(err?.message || "Override failed");
     } finally {
       setSource3OverrideBusy((prev) => ({ ...prev, [companyNumber]: false }));
+    }
+  }
+
+  async function handleRetryFailed(companyNumber = null) {
+    setQueueBusy(true);
+
+    try {
+      await fetch("/api/analysis-queue/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(companyNumber ? { company_number: companyNumber } : {}),
+      });
+      refreshQueueStatus();
+      refreshJobs();
+    } finally {
+      setQueueBusy(false);
     }
   }
 
@@ -385,45 +441,106 @@ export default function Import() {
     }
   }
 
-  // --- Job Detail View ---
-  if (selectedJob && jobDetail) {
-    const { job, logs } = jobDetail;
-    const pct = job.total_items > 0 ? Math.round((job.processed_items / job.total_items) * 100) : 0;
-    const sortedLogs = [...logs].sort((a, b) => {
+  const detailJob = jobDetail?.job || null;
+  const detailLogs = useMemo(
+    () => (Array.isArray(jobDetail?.logs) ? jobDetail.logs : []),
+    [jobDetail],
+  );
+
+  const sortedLogs = useMemo(
+    () => [...detailLogs].sort((a, b) => {
       const aTs = String(a.timestamp || "");
       const bTs = String(b.timestamp || "");
       return logSortDir === "asc" ? aTs.localeCompare(bTs) : bTs.localeCompare(aTs);
-    });
+    }),
+    [detailLogs, logSortDir],
+  );
+
+  const bulkFiles = bulkTab === "monthly" ? monthlyFiles : dailyFiles;
+
+  const sortedBulkFiles = useMemo(
+    () => [...bulkFiles].sort((a, b) => {
+      const aKey = String(a.period || a.date || "");
+      const bKey = String(b.period || b.date || "");
+      return bulkSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
+    }),
+    [bulkFiles, bulkSortDir],
+  );
+
+  const sortedJobs = useMemo(
+    () => [...jobs].sort((a, b) => {
+      const aKey = String(a.created_at || "");
+      const bKey = String(b.created_at || "");
+      return jobSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
+    }),
+    [jobs, jobSortDir],
+  );
+
+  const bulkSummaries = useMemo(() => {
+    let processedMonthlyCount = 0;
+    let processedDailyCount = 0;
+    let latestMonthly = null;
+    let latestDaily = null;
+
+    for (const file of monthlyFiles) {
+      if (!file.processed) continue;
+      processedMonthlyCount += 1;
+      if (!latestMonthly || String(file.period || "") > String(latestMonthly.period || "")) {
+        latestMonthly = file;
+      }
+    }
+
+    for (const file of dailyFiles) {
+      if (!file.processed) continue;
+      processedDailyCount += 1;
+      if (!latestDaily || String(file.date || "") > String(latestDaily.date || "")) {
+        latestDaily = file;
+      }
+    }
+
+    return {
+      processedMonthlyCount,
+      processedDailyCount,
+      latestMonthly,
+      latestDaily,
+    };
+  }, [monthlyFiles, dailyFiles]);
+
+  const { processedMonthlyCount, processedDailyCount, latestMonthly, latestDaily } = bulkSummaries;
+
+  // --- Job Detail View ---
+  if (selectedJob && detailJob) {
+    const pct = detailJob.total_items > 0 ? Math.round((detailJob.processed_items / detailJob.total_items) * 100) : 0;
     return (
       <div>
-        <button onClick={() => { setSelectedJob(null); setJobDetail(null); refreshJobs(); refreshBulkFiles(); }} style={{ padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
+        <button onClick={() => { jobDetailRequestRef.current += 1; setSelectedJob(null); setJobDetail(null); refreshJobs(); refreshBulkFiles(); }} style={{ padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
           ← Back to Data Pipeline
         </button>
         <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>{job.id}</h2>
-            <StatusBadge status={job.status} />
+            <h2 style={{ margin: 0, fontSize: 18 }}>{detailJob.id}</h2>
+            <StatusBadge status={detailJob.status} />
           </div>
           <div style={{ display: "flex", gap: 24, fontSize: 13, color: "#666", marginBottom: 12 }}>
-            <span>Type: <strong>{job.type.toUpperCase()}</strong></span>
-            <span>Total: <strong>{job.total_items}</strong></span>
-            <span>Processed: <strong>{job.processed_items}</strong></span>
+            <span>Type: <strong>{detailJob.type.toUpperCase()}</strong></span>
+            <span>Total: <strong>{detailJob.total_items}</strong></span>
+            <span>Processed: <strong>{detailJob.processed_items}</strong></span>
           </div>
-          {job.total_items > 0 && (
+          {detailJob.total_items > 0 && (
             <div style={{ background: "#f0f2f5", borderRadius: 4, height: 8, overflow: "hidden", marginBottom: 8 }}>
               <div style={{ width: `${pct}%`, height: "100%", background: "#0075EB", borderRadius: 4 }} />
             </div>
           )}
           <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
-            <span style={{ color: "#065f46" }}>Imported: <strong>{job.imported_items}</strong></span>
-            <span style={{ color: "#92400e" }}>Skipped: <strong>{job.skipped_items}</strong></span>
-            <span style={{ color: "#991b1b" }}>Errors: <strong>{job.error_count}</strong></span>
+            <span style={{ color: "#065f46" }}>Imported: <strong>{detailJob.imported_items}</strong></span>
+            <span style={{ color: "#92400e" }}>Skipped: <strong>{detailJob.skipped_items}</strong></span>
+            <span style={{ color: "#991b1b" }}>Errors: <strong>{detailJob.error_count}</strong></span>
           </div>
         </div>
-        {logs.length > 0 && (
+        {detailLogs.length > 0 && (
           <div style={{ background: "#fff", borderRadius: 8, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-              <h3 style={{ fontSize: 15, margin: 0 }}>Import Log ({logs.length})</h3>
+              <h3 style={{ fontSize: 15, margin: 0 }}>Import Log ({detailLogs.length})</h3>
               <button
                 onClick={() => setLogSortDir((prev) => (prev === "desc" ? "asc" : "desc"))}
                 style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12 }}
@@ -442,8 +559,10 @@ export default function Import() {
               <tbody>
                 {sortedLogs.map((log, idx) => {
                   const ac = ACTION_COLORS[log.action] || ACTION_COLORS.error;
+                  const companyNumber = String(log.company_number || "").trim();
+                  const isOverrideBusy = !!source3OverrideBusy[companyNumber];
                   return (
-                    <tr key={idx} style={{ borderBottom: "1px solid #eee" }}>
+                    <tr key={`${log.timestamp || "na"}-${companyNumber || "na"}-${log.action || "na"}-${idx}`} style={{ borderBottom: "1px solid #eee" }}>
                       <td style={{ padding: "8px 12px", fontWeight: log.action === "imported" ? 600 : 400 }}>{log.company_name || "—"}</td>
                       <td style={{ padding: "8px 12px", fontFamily: "monospace", fontSize: 12 }}>{log.company_number || "—"}</td>
                       <td style={{ padding: "8px 12px", textAlign: "center" }}><Badge text={log.action} bg={ac.bg} color={ac.color} /></td>
@@ -457,7 +576,7 @@ export default function Import() {
                               e.stopPropagation();
                               handleSource3Override(log);
                             }}
-                            disabled={!!source3OverrideBusy[String(log.company_number || "").trim()]}
+                            disabled={isOverrideBusy}
                             style={{
                               marginTop: 6,
                               padding: "3px 8px",
@@ -466,10 +585,10 @@ export default function Import() {
                               background: "#fff",
                               color: "#2563eb",
                               fontSize: 11,
-                              cursor: source3OverrideBusy[String(log.company_number || "").trim()] ? "not-allowed" : "pointer",
+                              cursor: isOverrideBusy ? "not-allowed" : "pointer",
                             }}
                           >
-                            {source3OverrideBusy[String(log.company_number || "").trim()] ? "Overriding..." : "Override include"}
+                            {isOverrideBusy ? "Overriding..." : "Override include"}
                           </button>
                         )}
                       </td>
@@ -485,23 +604,6 @@ export default function Import() {
   }
 
   // --- Main Dashboard ---
-  const bulkFiles = bulkTab === "monthly" ? monthlyFiles : dailyFiles;
-  const sortedBulkFiles = [...bulkFiles].sort((a, b) => {
-    const aKey = String(a.period || a.date || "");
-    const bKey = String(b.period || b.date || "");
-    return bulkSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
-  });
-  const sortedJobs = [...jobs].sort((a, b) => {
-    const aKey = String(a.created_at || "");
-    const bKey = String(b.created_at || "");
-    return jobSortDir === "asc" ? aKey.localeCompare(bKey) : bKey.localeCompare(aKey);
-  });
-
-  const processedMonthly = monthlyFiles.filter((f) => f.processed);
-  const processedDaily = dailyFiles.filter((f) => f.processed);
-  const latestMonthly = [...processedMonthly].sort((a, b) => String(b.period || "").localeCompare(String(a.period || "")))[0] || null;
-  const latestDaily = [...processedDaily].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
-
   const source3ProgressPct = source3Breakdown?.totalItems
     ? Math.round((source3Breakdown.processedItems / source3Breakdown.totalItems) * 100)
     : 0;
@@ -513,7 +615,7 @@ export default function Import() {
         <h2 style={{ margin: 0, fontSize: 20 }}>Data Pipeline</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleLookup} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>🔍 Lookup</button>
-          <button onClick={() => { refreshDashboardStats(); refreshJobs(); refreshBulkFiles(); refreshAutoPull(); refreshBackfillStatus(); refreshClosedWonRegistry(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
+          <button onClick={() => { refreshDashboardStats(); refreshJobs(); refreshQueueStatus(); refreshBulkFiles(); refreshAutoPull(); refreshBackfillStatus(); refreshClosedWonRegistry(); }} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13 }}>↻ Refresh</button>
         </div>
       </div>
 
@@ -543,9 +645,9 @@ export default function Import() {
         <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <strong style={{ fontSize: 14 }}>Source 1a: Monthly bulk</strong>
-            <Badge text={processedMonthly.length > 0 ? "Complete" : "Pending"} bg={processedMonthly.length > 0 ? "#0a8754" : "#6b7280"} color="#fff" />
+            <Badge text={processedMonthlyCount > 0 ? "Complete" : "Pending"} bg={processedMonthlyCount > 0 ? "#0a8754" : "#6b7280"} color="#fff" />
           </div>
-          <div style={{ fontSize: 12, color: "#475569" }}>Files processed: {processedMonthly.length}/{monthlyFiles.length || 0}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Files processed: {processedMonthlyCount}/{monthlyFiles.length || 0}</div>
           <div style={{ fontSize: 12, color: "#475569" }}>Last processed: {latestMonthly?.period || "-"}</div>
           <div style={{ fontSize: 12, color: "#475569" }}>Qualifying companies: {backfillStatus?.total_qualifying_companies || 0}</div>
         </div>
@@ -563,9 +665,9 @@ export default function Import() {
         <div style={{ background: "#fff", borderRadius: 8, padding: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <strong style={{ fontSize: 14 }}>Source 2: Twice-weekly</strong>
-            <Badge text={processedDaily.length > 0 ? "Up to date" : "Pending"} bg={processedDaily.length > 0 ? "#0a8754" : "#d97706"} color="#fff" />
+            <Badge text={processedDailyCount > 0 ? "Up to date" : "Pending"} bg={processedDailyCount > 0 ? "#0a8754" : "#d97706"} color="#fff" />
           </div>
-          <div style={{ fontSize: 12, color: "#475569" }}>Daily files processed: {processedDaily.length}/{dailyFiles.length || 0}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>Daily files processed: {processedDailyCount}/{dailyFiles.length || 0}</div>
           <div style={{ fontSize: 12, color: "#475569" }}>Latest batch: {latestDaily?.date || "-"}</div>
           <div style={{ fontSize: 12, color: "#475569" }}>Next expected run: {formatDateTime(autoPull?.next_run)}</div>
         </div>
