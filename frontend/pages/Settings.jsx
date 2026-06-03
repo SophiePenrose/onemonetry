@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const LAYER_LABELS = {
   product_fit: "Product Fit",
@@ -16,9 +16,11 @@ const LAYER_COLORS = {
   competitor_context: "#6f42c1",
 };
 
+const LAYER_ENTRIES = Object.entries(LAYER_LABELS);
+
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 
-function WeightSlider({ layer, value, color, onChange }) {
+const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
       <span style={{ fontSize: 13, fontWeight: 500, color, minWidth: 130 }}>{LAYER_LABELS[layer]}</span>
@@ -33,10 +35,14 @@ function WeightSlider({ layer, value, color, onChange }) {
       </span>
     </div>
   );
-}
+});
 
-function SegmentWeightsCard({ segment, weights, onChange, total }) {
+const SegmentWeightsCard = React.memo(function SegmentWeightsCard({ segment, weights, onChange, total }) {
   const isValid = Math.abs(total - 1) < 0.02;
+  const handleLayerChange = useCallback((layer, value) => {
+    onChange(segment, layer, value);
+  }, [onChange, segment]);
+
   return (
     <div style={{
       background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
@@ -49,18 +55,18 @@ function SegmentWeightsCard({ segment, weights, onChange, total }) {
           {!isValid && " (must be 100%)"}
         </span>
       </div>
-      {Object.entries(LAYER_LABELS).map(([layer]) => (
+      {LAYER_ENTRIES.map(([layer]) => (
         <WeightSlider
           key={layer}
           layer={layer}
           value={weights[layer] || 0}
           color={LAYER_COLORS[layer]}
-          onChange={(l, v) => onChange(segment, l, v)}
+          onChange={handleLayerChange}
         />
       ))}
     </div>
   );
-}
+});
 
 export default function Settings() {
   const [config, setConfig] = useState(null);
@@ -73,8 +79,87 @@ export default function Settings() {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
+  const integrationRequestRef = useRef(0);
+  const previewRequestRef = useRef(0);
 
-  function loadIntegrationStatus() {
+  const segmentTotals = useMemo(
+    () => SEGMENTS.reduce((totals, segment) => {
+      const weights = localWeights[segment] || {};
+      totals[segment] = Object.values(weights).reduce((sum, value) => sum + Number(value || 0), 0);
+      return totals;
+    }, {}),
+    [localWeights],
+  );
+
+  const integrationView = useMemo(() => {
+    const entries = integrationStatus?.integrations
+      ? Object.entries(integrationStatus.integrations)
+      : [];
+
+    let configuredCount = 0;
+    let requiredCount = 0;
+    let requiredConfiguredCount = 0;
+
+    for (const [, cfg] of entries) {
+      const configured = cfg?.configured === true;
+      const required = cfg?.required === true;
+
+      if (configured) configuredCount += 1;
+      if (required) {
+        requiredCount += 1;
+        if (configured) requiredConfiguredCount += 1;
+      }
+    }
+
+    const sortedEntries = [...entries].sort((a, b) => {
+      const aCfg = a[1]?.configured === true ? 1 : 0;
+      const bCfg = b[1]?.configured === true ? 1 : 0;
+      if (bCfg !== aCfg) return bCfg - aCfg;
+
+      const aReq = a[1]?.required === true ? 1 : 0;
+      const bReq = b[1]?.required === true ? 1 : 0;
+      if (bReq !== aReq) return bReq - aReq;
+
+      return String(a[0] || "").localeCompare(String(b[0] || ""));
+    });
+
+    return {
+      entries,
+      sortedEntries,
+      configuredCount,
+      requiredCount,
+      requiredConfiguredCount,
+    };
+  }, [integrationStatus]);
+
+  const {
+    entries: integrationEntries,
+    sortedEntries: sortedIntegrationEntries,
+    configuredCount,
+    requiredCount,
+    requiredConfiguredCount,
+  } = integrationView;
+
+  const formattedCheckedAt = useMemo(
+    () => (integrationCheckedAt ? new Date(integrationCheckedAt).toLocaleString("en-GB") : null),
+    [integrationCheckedAt],
+  );
+
+  const previewRows = useMemo(
+    () => (preview || []).map((company) => {
+      const numericScore = Number(company.combined_score);
+      return {
+        ...company,
+        displayScore: Number.isFinite(numericScore) ? numericScore.toFixed(2) : "N/A",
+      };
+    }),
+    [preview],
+  );
+
+  const loadIntegrationStatus = useCallback(() => {
+    const requestId = integrationRequestRef.current + 1;
+    integrationRequestRef.current = requestId;
+
     setIntegrationLoading(true);
     setIntegrationError(null);
     fetch("/api/integrations/status")
@@ -85,16 +170,40 @@ export default function Settings() {
         return r.json();
       })
       .then((d) => {
+        if (integrationRequestRef.current !== requestId) return;
         setIntegrationStatus(d);
         setIntegrationCheckedAt(new Date().toISOString());
       })
       .catch((err) => {
+        if (integrationRequestRef.current !== requestId) return;
         setIntegrationStatus(null);
         setIntegrationError(err?.message || "Integration status unavailable");
         setIntegrationCheckedAt(new Date().toISOString());
       })
-      .finally(() => setIntegrationLoading(false));
-  }
+      .finally(() => {
+        if (integrationRequestRef.current === requestId) {
+          setIntegrationLoading(false);
+        }
+      });
+  }, []);
+
+  const refreshPreview = useCallback(() => {
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+
+    fetch("/api/unified-shortlist")
+      .then((r) => r.json())
+      .then((d) => {
+        if (previewRequestRef.current === requestId) {
+          setPreview(d.companies?.slice(0, 5) || []);
+        }
+      })
+      .catch(() => {
+        if (previewRequestRef.current === requestId) {
+          setPreview([]);
+        }
+      });
+  }, []);
 
   useEffect(() => {
     fetch("/api/scoring-weights")
@@ -109,35 +218,27 @@ export default function Settings() {
 
   useEffect(() => {
     loadIntegrationStatus();
-  }, []);
+  }, [loadIntegrationStatus]);
 
   useEffect(() => {
     if (!localWeights || Object.keys(localWeights).length === 0) return;
     const timer = setTimeout(() => {
-      fetch("/api/unified-shortlist")
-        .then((r) => r.json())
-        .then((d) => setPreview(d.companies?.slice(0, 5) || []))
-        .catch(() => {});
+      refreshPreview();
     }, 300);
     return () => clearTimeout(timer);
-  }, [localWeights, propensityWeight]);
+  }, [localWeights, propensityWeight, refreshPreview]);
 
-  function handleWeightChange(segment, layer, value) {
+  const handleWeightChange = useCallback((segment, layer, value) => {
     setLocalWeights((prev) => ({
       ...prev,
       [segment]: { ...prev[segment], [layer]: value },
     }));
     setMessage(null);
-  }
-
-  function getTotal(segment) {
-    const w = localWeights[segment] || {};
-    return Object.values(w).reduce((s, v) => s + v, 0);
-  }
+  }, []);
 
   async function handleSave() {
     for (const seg of SEGMENTS) {
-      const total = getTotal(seg);
+      const total = segmentTotals[seg] || 0;
       if (Math.abs(total - 1) > 0.02) {
         setMessage({ type: "error", text: `${seg} weights must sum to 100% (currently ${Math.round(total * 100)}%)` });
         return;
@@ -154,7 +255,7 @@ export default function Settings() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setMessage({ type: "success", text: "Scoring weights saved. Rankings updated." });
-      fetch("/api/unified-shortlist").then((r) => r.json()).then((d) => setPreview(d.companies?.slice(0, 5) || [])).catch(() => {});
+      refreshPreview();
     } catch (err) {
       setMessage({ type: "error", text: err.message });
     } finally {
@@ -179,24 +280,6 @@ export default function Settings() {
   }
 
   if (!config) return <div style={{ color: "#888" }}>Loading settings…</div>;
-
-  const integrationEntries = integrationStatus?.integrations
-    ? Object.entries(integrationStatus.integrations)
-    : [];
-  const sortedIntegrationEntries = [...integrationEntries].sort((a, b) => {
-    const aCfg = a[1]?.configured === true ? 1 : 0;
-    const bCfg = b[1]?.configured === true ? 1 : 0;
-    if (bCfg !== aCfg) return bCfg - aCfg;
-
-    const aReq = a[1]?.required === true ? 1 : 0;
-    const bReq = b[1]?.required === true ? 1 : 0;
-    if (bReq !== aReq) return bReq - aReq;
-
-    return String(a[0] || "").localeCompare(String(b[0] || ""));
-  });
-  const configuredCount = integrationEntries.filter(([, cfg]) => cfg?.configured === true).length;
-  const requiredCount = integrationEntries.filter(([, cfg]) => cfg?.required === true).length;
-  const requiredConfiguredCount = integrationEntries.filter(([, cfg]) => cfg?.required === true && cfg?.configured === true).length;
 
   return (
     <div>
@@ -240,7 +323,7 @@ export default function Settings() {
             segment={seg}
             weights={localWeights[seg] || {}}
             onChange={handleWeightChange}
-            total={getTotal(seg)}
+            total={segmentTotals[seg] || 0}
           />
         ))}
       </div>
@@ -276,7 +359,7 @@ export default function Settings() {
             )}
             {!integrationLoading && integrationCheckedAt && (
               <div style={{ marginTop: 3, fontSize: 11, color: "#64748b" }}>
-                Last checked: {new Date(integrationCheckedAt).toLocaleString("en-GB")}
+                Last checked: {formattedCheckedAt}
               </div>
             )}
           </div>
@@ -354,12 +437,12 @@ export default function Settings() {
               <th style={{ padding: "6px 12px", textAlign: "right" }}>Score</th>
             </tr></thead>
             <tbody>
-              {preview.map((c) => (
+              {previewRows.map((c) => (
                 <tr key={c.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 12px" }}>{c.rank}</td>
                   <td style={{ padding: "6px 12px", fontWeight: 600 }}>{c.name}</td>
                   <td style={{ padding: "6px 12px", textAlign: "center", fontSize: 11 }}>{c.segment}</td>
-                  <td style={{ padding: "6px 12px", textAlign: "right", fontWeight: 600 }}>{c.combined_score.toFixed(2)}</td>
+                  <td style={{ padding: "6px 12px", textAlign: "right", fontWeight: 600 }}>{c.displayScore}</td>
                 </tr>
               ))}
             </tbody>
