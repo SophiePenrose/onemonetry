@@ -19,25 +19,38 @@ const V7_ORIGINAL_PROMPT_FILE = path.resolve(__dirname, "..", "prompts", "email-
 
 function loadOperationalV7Prompt() {
   const candidates = [
-    V7_WORKING_PROMPT_FILE,
-    V7_PRIMARY_PROMPT_FILE,
-    V7_ORIGINAL_PROMPT_FILE,
+    { source: "v7_working", file: V7_WORKING_PROMPT_FILE },
+    { source: "v7_primary", file: V7_PRIMARY_PROMPT_FILE },
+    { source: "v7_original", file: V7_ORIGINAL_PROMPT_FILE },
   ];
 
-  for (const promptFile of candidates) {
+  for (const candidate of candidates) {
     try {
-      const fileText = fs.readFileSync(promptFile, "utf8");
+      const fileText = fs.readFileSync(candidate.file, "utf8");
       const normalized = String(fileText || "").trim();
-      if (normalized) return normalized;
+      if (normalized) {
+        return {
+          prompt: normalized,
+          source: candidate.source,
+          file: path.basename(candidate.file),
+        };
+      }
     } catch {
       // Continue to next fallback path.
     }
   }
 
-  return null;
+  return {
+    prompt: null,
+    source: "system_prompt",
+    file: null,
+  };
 }
 
-const OPERATIONAL_V7_PROMPT = loadOperationalV7Prompt();
+const OPERATIONAL_PROMPT_SELECTION = loadOperationalV7Prompt();
+const OPERATIONAL_V7_PROMPT = OPERATIONAL_PROMPT_SELECTION.prompt;
+const OPERATIONAL_V7_PROMPT_SOURCE = OPERATIONAL_PROMPT_SELECTION.source;
+const OPERATIONAL_V7_PROMPT_FILE = OPERATIONAL_PROMPT_SELECTION.file;
 const STRICT_JSON_CONTRACT_PROMPT = `Output contract: return a single raw JSON object only (no markdown fences, no prose outside JSON). Required keys: subject, body, footer, word_count, personalisation_audit, claims_used, disclaimers_needed, qc_self_check.`;
 
 function buildSystemMessages() {
@@ -141,6 +154,23 @@ async function fetchEmailLlmWithTimeout(url, options) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function getEmailLlmRuntimeInfo() {
+  return {
+    configured: canUseEmailLlm(),
+    auth_disabled: openAiAuthDisabled,
+    model: OPENAI_MODEL,
+    fallback_model: OPENAI_MODEL_FALLBACK,
+    min_qc_score: EMAIL_LLM_MIN_QC_SCORE,
+    max_attempts: EMAIL_LLM_MAX_ATTEMPTS,
+    max_prompt_chars: EMAIL_LLM_MAX_PROMPT_CHARS,
+    max_tokens: EMAIL_LLM_MAX_TOKENS,
+    request_timeout_ms: EMAIL_LLM_REQUEST_TIMEOUT_MS,
+    fail_closed: EMAIL_LLM_FAIL_CLOSED,
+    prompt_source: OPERATIONAL_V7_PROMPT_SOURCE,
+    prompt_file: OPERATIONAL_V7_PROMPT_FILE,
+  };
 }
 
 function buildFailOpenFallbackResult(params, senderName, senderTitle, reason, detail) {

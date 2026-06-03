@@ -255,18 +255,38 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("GET /api/llm/status", () => {
+    it("returns runtime provider and timeout controls", async () => {
+      const { status, data } = await fetchJSON("/api/llm/status");
+      assert.equal(status, 200);
+      assert.equal(typeof data.configured, "boolean");
+      assert.ok(data.provider === null || typeof data.provider === "string");
+      assert.ok(data.model === null || typeof data.model === "string");
+      assert.equal(typeof data.request_timeout_ms, "number");
+      assert.equal(typeof data.providers?.openai, "object");
+      assert.equal(typeof data.providers?.anthropic, "object");
+    });
+  });
+
   describe("GET /api/integrations/status", () => {
     it("includes enrichment runtime and scheduler controls", async () => {
       const { status, data } = await fetchJSON("/api/integrations/status");
       assert.equal(status, 200);
       assert.equal(typeof data.integrations.tech_enrichment, "object");
       assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
+      assert.equal(typeof data.integrations.email_generation_llm, "object");
       assert.equal(typeof data.integrations.status_api, "object");
       assert.equal(typeof data.integrations.status_instatus, "object");
       assert.equal(typeof data.integrations.status_cachet, "object");
       assert.equal(typeof data.integrations.status_url_discovery, "object");
+      assert.equal(typeof data.integrations.llm.request_timeout_ms, "number");
+      assert.equal(typeof data.integrations.email_generation_llm.runtime?.request_timeout_ms, "number");
       assert.equal(typeof data.integrations.tech_enrichment.defaults?.deep_scan_mode, "string");
       assert.ok(Array.isArray(data.env_template));
+      assert.ok(data.env_template.includes("LLM_REQUEST_TIMEOUT_MS=30000"));
+      assert.ok(data.env_template.includes("OPENAI_MODEL_FALLBACK=gpt-4o-mini"));
+      assert.ok(data.env_template.includes("EMAIL_LLM_REQUEST_TIMEOUT_MS=25000"));
+      assert.ok(data.env_template.includes("EMAIL_LLM_FAIL_CLOSED=true"));
       assert.ok(data.env_template.includes("TECH_ENRICHMENT_DEEP_SCAN_MODE=auto"));
       assert.ok(data.env_template.includes("TECH_ENRICHMENT_SEED_ENABLED=true"));
       assert.ok(data.env_template.includes("ENABLE_STATUS_URL_DISCOVERY=false"));
