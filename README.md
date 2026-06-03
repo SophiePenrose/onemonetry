@@ -67,6 +67,30 @@ This sets `LIGHTWEIGHT_RUNTIME=true`, which disables background workers and sche
 
 Use normal `npm run start:backend` for full-runtime behavior.
 
+## Quick End-to-End Smoke
+
+Run a one-command smoke pass that verifies backend endpoints directly and via the frontend `/api` proxy:
+
+```bash
+npm run smoke:e2e:quick
+```
+
+Behavior:
+
+- Reuses existing backend/frontend services if they are already running.
+- Auto-starts missing services (backend in lightweight mode) and waits for readiness.
+- Runs `scripts/smoke-api.sh` checks.
+- Cleans up only the services it started.
+
+Optional environment overrides:
+
+- `BACKEND_BASE` (default `http://localhost:8000`)
+- `FRONTEND_BASE` (default `http://localhost:5173`)
+- `FRONTEND_PORT` (default `5173`)
+- `CURL_TIMEOUT` (default `6`)
+- `BACKEND_LOG` (default `/tmp/onemonetry-backend.log`)
+- `FRONTEND_LOG` (default `/tmp/onemonetry-frontend.log`)
+
 ## Scoring Calibration Benchmark
 
 Use the benchmark runner to snapshot current ranking behavior and competitor-context diagnostics before/after scoring changes.
