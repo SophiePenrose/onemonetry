@@ -1118,6 +1118,28 @@ export function getLLMProviderInfo() {
   return { provider: null, model: null };
 }
 
+export function getLLMRuntimeInfo() {
+  const providerInfo = getLLMProviderInfo();
+  return {
+    configured: canUseLLM(),
+    provider: providerInfo.provider,
+    model: providerInfo.model,
+    request_timeout_ms: LLM_REQUEST_TIMEOUT_MS,
+    providers: {
+      openai: {
+        configured: !!OPENAI_API_KEY,
+        auth_disabled: openAiAuthDisabled,
+        model: OPENAI_MODEL,
+      },
+      anthropic: {
+        configured: !!ANTHROPIC_API_KEY,
+        auth_disabled: anthropicAuthDisabled,
+        model: ANTHROPIC_MODEL,
+      },
+    },
+  };
+}
+
 export async function analyseCompany(companyNumber, companyName, turnover) {
   const filings = getFilingsForCompany(companyNumber, 3);
   const filingText = filings.find((f) => f.raw_data)?.raw_data || null;

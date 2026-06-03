@@ -56,7 +56,7 @@ import {
 import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
 import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences } from "./email-sequences.js";
-import { generateFullSequence } from "./email-generator.js";
+import { generateFullSequence, getEmailLlmRuntimeInfo } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
@@ -4651,11 +4651,11 @@ app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
 
 // --- LLM Company Analysis ---
 
-import { analyseCompany, getLLMProviderInfo, isLLMConfigured } from "./llm.js";
+import { analyseCompany, getLLMRuntimeInfo, isLLMConfigured } from "./llm.js";
 
 app.get("/api/llm/status", (_req, res) => {
-  const { provider, model } = getLLMProviderInfo();
-  res.json({ configured: isLLMConfigured(), provider, model });
+  const runtime = getLLMRuntimeInfo();
+  res.json(runtime);
 });
 
 app.get("/api/integrations/status", (_req, res) => {
@@ -4679,7 +4679,8 @@ app.get("/api/integrations/status", (_req, res) => {
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
-  const llmProviderInfo = getLLMProviderInfo();
+  const llmRuntimeInfo = getLLMRuntimeInfo();
+  const emailLlmRuntime = getEmailLlmRuntimeInfo();
 
   const integrations = {
     companies_house: {
@@ -4703,12 +4704,20 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Claude LLM for analysis + advanced email generation",
     },
     llm: {
-      configured: isLLMConfigured(),
+      configured: llmRuntimeInfo.configured,
       required: true,
       env_var: "OPENAI_API_KEY or ANTHROPIC_API_KEY",
-      provider: llmProviderInfo.provider,
-      model: llmProviderInfo.model,
+      provider: llmRuntimeInfo.provider,
+      model: llmRuntimeInfo.model,
+      request_timeout_ms: llmRuntimeInfo.request_timeout_ms,
       purpose: "Active LLM layer for analysis + advanced email generation",
+    },
+    email_generation_llm: {
+      configured: emailLlmRuntime.configured,
+      required: false,
+      env_var: "OPENAI_API_KEY, OPENAI_MODEL, OPENAI_MODEL_FALLBACK, EMAIL_LLM_MIN_QC_SCORE, EMAIL_LLM_MAX_ATTEMPTS, EMAIL_LLM_MAX_PROMPT_CHARS, EMAIL_LLM_MAX_TOKENS, EMAIL_LLM_REQUEST_TIMEOUT_MS, EMAIL_LLM_FAIL_CLOSED",
+      purpose: "Live email generation runtime controls and fallback guardrails",
+      runtime: emailLlmRuntime,
     },
     news_lookup: {
       configured: newsLookupEnabled,
@@ -4843,9 +4852,10 @@ app.get("/api/integrations/status", (_req, res) => {
   res.json({
     integrations,
     llm: {
-      configured: isLLMConfigured(),
-      provider: llmProviderInfo.provider,
-      model: llmProviderInfo.model,
+      configured: llmRuntimeInfo.configured,
+      provider: llmRuntimeInfo.provider,
+      model: llmRuntimeInfo.model,
+      request_timeout_ms: llmRuntimeInfo.request_timeout_ms,
     },
     missing_required: missingRequired,
     ready_for_production: missingRequired.length === 0,
@@ -4854,8 +4864,14 @@ app.get("/api/integrations/status", (_req, res) => {
       "# Optional alias supported: CH_API_KEY=your_companies_house_api_key",
       "OPENAI_API_KEY=your_openai_api_key",
       "OPENAI_MODEL=gpt-4.1-mini",
+      "OPENAI_MODEL_FALLBACK=gpt-4o-mini",
       "ANTHROPIC_API_KEY=replace_with_anthropic_api_key",
       "ANTHROPIC_MODEL=claude-sonnet-4-20250514",
+      "LLM_REQUEST_TIMEOUT_MS=30000",
+      "EMAIL_LLM_REQUEST_TIMEOUT_MS=25000",
+      "EMAIL_LLM_FAIL_CLOSED=true",
+      "EMAIL_LLM_MAX_ATTEMPTS=2",
+      "EMAIL_LLM_MIN_QC_SCORE=65",
       "LUSHA_API_KEY=optional_lusha_key",
       "ENABLE_NEWS_LOOKUP=true",
       "NEWS_API_KEY=optional_newsapi_key",
