@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 
 const LAYER_LABELS = {
   product_fit: "Product Fit",
@@ -37,6 +38,13 @@ const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onC
   );
 });
 
+WeightSlider.propTypes = {
+  layer: PropTypes.oneOf(Object.keys(LAYER_LABELS)).isRequired,
+  value: PropTypes.number,
+  color: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
 const SegmentWeightsCard = React.memo(function SegmentWeightsCard({ segment, weights, onChange, total }) {
   const isValid = Math.abs(total - 1) < 0.02;
   const handleLayerChange = useCallback((layer, value) => {
@@ -67,6 +75,13 @@ const SegmentWeightsCard = React.memo(function SegmentWeightsCard({ segment, wei
     </div>
   );
 });
+
+SegmentWeightsCard.propTypes = {
+  segment: PropTypes.oneOf(SEGMENTS).isRequired,
+  weights: PropTypes.objectOf(PropTypes.number),
+  onChange: PropTypes.func.isRequired,
+  total: PropTypes.number.isRequired,
+};
 
 export default function Settings() {
   const [config, setConfig] = useState(null);

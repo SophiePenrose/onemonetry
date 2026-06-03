@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 
 const STATUS_META = {
@@ -102,7 +102,7 @@ CopyButton.propTypes = {
   footer: PropTypes.string,
 };
 
-export default function EmailSequencePanel({ companyId, companyName, stakeholders, keyPeople, motions }) {
+export default function EmailSequencePanel({ companyId, companyName: _companyName, stakeholders, keyPeople, motions: _motions }) {
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState({});
   const [guidance, setGuidance] = useState(null);
@@ -115,6 +115,18 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
   const [purgingBroken, setPurgingBroken] = useState(false);
   const [showStaleSequences, setShowStaleSequences] = useState(false);
 
+  const loadSequences = useCallback(() => {
+    if (!companyId) return;
+    fetch(`/api/email/sequences/${encodeURIComponent(companyId)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const rows = Array.isArray(d.sequences) ? d.sequences : [];
+        const sorted = [...rows].sort((a, b) => sequenceLatestTimestamp(b) - sequenceLatestTimestamp(a));
+        setSequences(sorted);
+      })
+      .catch(() => {});
+  }, [companyId]);
+
   useEffect(() => {
     fetch("/api/email/templates")
       .then((r) => r.json())
@@ -124,18 +136,7 @@ export default function EmailSequencePanel({ companyId, companyName, stakeholder
       })
       .catch(() => {});
     if (companyId) loadSequences();
-  }, [companyId]);
-
-  function loadSequences() {
-    fetch(`/api/email/sequences/${encodeURIComponent(companyId)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const rows = Array.isArray(d.sequences) ? d.sequences : [];
-        const sorted = [...rows].sort((a, b) => sequenceLatestTimestamp(b) - sequenceLatestTimestamp(a));
-        setSequences(sorted);
-      })
-      .catch(() => {});
-  }
+  }, [companyId, loadSequences]);
 
   async function handleGenerate(e) {
     e.preventDefault();
