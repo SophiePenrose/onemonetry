@@ -135,4 +135,34 @@ describe("website resolver guess precision", () => {
     assert.equal(result.source, "input_website");
     assert.equal(typeof result.website_url, "string");
   });
+
+  it("allows explicit manual no-site confirmations", () => {
+    const result = resolver.setManualWebsiteResolution({
+      companyNumber: "94000010",
+      companyName: "Manual No Site Co",
+      status: "no_site_confirmed",
+      note: "checked by operator",
+    });
+
+    assert.equal(result.status, "no_site_confirmed");
+    assert.equal(result.source, "manual_override");
+    assert.equal(result.website_url, null);
+    assert.equal(result.domain, null);
+    assert.equal(result.updated, true);
+
+    const persisted = db.getWebsiteResolution("94000010", null);
+    assert.equal(persisted?.status, "no_site_confirmed");
+    assert.equal(persisted?.source, "manual_override");
+  });
+
+  it("rejects manual verified overrides without website/domain hints", () => {
+    const result = resolver.setManualWebsiteResolution({
+      companyNumber: "94000011",
+      companyName: "Manual Invalid Co",
+      status: "verified",
+    });
+
+    assert.equal(result.status, "invalid_input");
+    assert.equal(result.updated, false);
+  });
 });
