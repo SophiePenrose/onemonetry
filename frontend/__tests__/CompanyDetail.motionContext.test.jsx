@@ -31,7 +31,7 @@ describe("selectCompetitorContextMotion", () => {
     expect(selected?.motion).toBe("API Integrations");
   });
 
-  it("falls back to first competitor-context motion when scores are non-numeric", () => {
+  it("uses competitor-context score when motion scores are non-numeric", () => {
     const motions = [
       {
         motion: "Cards",
@@ -45,6 +45,50 @@ describe("selectCompetitorContextMotion", () => {
         score: "unknown",
         score_breakdown: {
           competitor_context: { score: 0.58 },
+        },
+      },
+    ];
+
+    const selected = selectCompetitorContextMotion(motions);
+    expect(selected?.motion).toBe("API Integrations");
+  });
+
+  it("uses competitor-context score as tie-break when motion scores are equal", () => {
+    const motions = [
+      {
+        motion: "Cards",
+        score: 0.7,
+        score_breakdown: {
+          competitor_context: { score: 0.51 },
+        },
+      },
+      {
+        motion: "FX",
+        score: 0.7,
+        score_breakdown: {
+          competitor_context: { score: 0.59 },
+        },
+      },
+    ];
+
+    const selected = selectCompetitorContextMotion(motions);
+    expect(selected?.motion).toBe("FX");
+  });
+
+  it("falls back to first competitor-context motion when both score fields are non-numeric", () => {
+    const motions = [
+      {
+        motion: "Cards",
+        score: "N/A",
+        score_breakdown: {
+          competitor_context: { score: "n/a" },
+        },
+      },
+      {
+        motion: "API Integrations",
+        score: "unknown",
+        score_breakdown: {
+          competitor_context: { score: "unknown" },
         },
       },
     ];

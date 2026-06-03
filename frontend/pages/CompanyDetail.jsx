@@ -38,17 +38,39 @@ export function selectCompetitorContextMotion(allMotionScores = []) {
 
   if (withContext.length === 0) return null;
 
+  const toFiniteNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
   return withContext.reduce((best, motion) => {
     if (!best) return motion;
 
-    const bestScore = Number(best?.score);
-    const motionScore = Number(motion?.score);
-    const bestHasScore = Number.isFinite(bestScore);
-    const motionHasScore = Number.isFinite(motionScore);
+    const bestScore = toFiniteNumber(best?.score);
+    const motionScore = toFiniteNumber(motion?.score);
+    const bestContextScore = toFiniteNumber(best?.score_breakdown?.competitor_context?.score);
+    const motionContextScore = toFiniteNumber(motion?.score_breakdown?.competitor_context?.score);
 
-    if (motionHasScore && (!bestHasScore || motionScore > bestScore)) {
+    if (motionScore !== null && bestScore === null) {
       return motion;
     }
+
+    if (motionScore !== null && bestScore !== null && motionScore > bestScore) {
+      return motion;
+    }
+
+    if (motionScore !== null && bestScore !== null && motionScore < bestScore) {
+      return best;
+    }
+
+    if (motionContextScore !== null && bestContextScore === null) {
+      return motion;
+    }
+
+    if (motionContextScore !== null && bestContextScore !== null && motionContextScore > bestContextScore) {
+      return motion;
+    }
+
     return best;
   }, null);
 }
