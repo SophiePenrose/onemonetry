@@ -17,11 +17,7 @@ const FIT_COLORS = { strong: "#0a8754", medium: "#c27b00", weak: "#c0392b" };
 
 function Badge({ text, bg }) {
   return (
-    <span style={{
-      display: "inline-block", padding: "2px 10px", borderRadius: 12,
-      fontSize: 11, fontWeight: 600, color: "#fff", background: bg || "#888",
-      whiteSpace: "nowrap",
-    }}>
+    <span className="reports-pill" style={{ background: bg || "#888" }}>
       {text}
     </span>
   );
@@ -51,64 +47,51 @@ function formatWeek(weekLabel) {
 
 function ReportList({ reports, onSelectReport, onGenerate, generating }) {
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Performance</h2>
+    <div className="reports-page">
+      <div className="reports-header">
+        <h2 className="reports-title">Performance</h2>
         <button
           onClick={onGenerate}
           disabled={generating}
-          style={{
-            padding: "8px 20px", borderRadius: 6, border: "none",
-            background: "#0075EB", color: "#fff", fontWeight: 600,
-            fontSize: 14, cursor: generating ? "wait" : "pointer",
-            opacity: generating ? 0.6 : 1,
-          }}
+          className="reports-primary-button"
         >
           {generating ? "Generating…" : "Generate This Week's Report"}
         </button>
       </div>
 
       {reports.length === 0 ? (
-        <div style={{
-          background: "#fff", borderRadius: 8, padding: 32, textAlign: "center",
-          color: "#888", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-        }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
-          <div style={{ fontSize: 14 }}>No reports generated yet</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>Click the button above to generate your first weekly report.</div>
+        <div className="reports-empty-state">
+          <div className="reports-empty-icon">📊</div>
+          <div className="reports-empty-title">No reports generated yet</div>
+          <div className="reports-empty-subtitle">Click the button above to generate your first weekly report.</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="reports-list">
           {reports.map((r) => (
-            <div
+            <button
+              type="button"
               key={r.id}
               onClick={() => onSelectReport(r.id)}
-              style={{
-                background: "#fff", borderRadius: 8, padding: 16,
-                boxShadow: "0 1px 3px rgba(0,0,0,0.06)", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)")}
-              onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.06)")}
+              className="report-list-item"
             >
               <div>
-                <div style={{ fontWeight: 600, fontSize: 15 }}>Week of {formatWeek(r.week_label)}</div>
-                <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Generated {formatDate(r.generated_at)}</div>
+                <div className="report-list-week">Week of {formatWeek(r.week_label)}</div>
+                <div className="report-list-generated">Generated {formatDate(r.generated_at)}</div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontWeight: 600, fontSize: 16 }}>{r.company_count}</div>
-                  <div style={{ fontSize: 11, color: "#888" }}>companies</div>
+              <div className="report-list-meta">
+                <div className="report-list-count-wrap">
+                  <div className="report-list-count">{r.company_count}</div>
+                  <div className="report-list-count-label">companies</div>
                 </div>
                 {r.top_company && (
-                  <div style={{ textAlign: "right", minWidth: 140 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{r.top_company}</div>
-                    <div style={{ fontSize: 11, color: "#888" }}>top prospect ({r.top_score?.toFixed(2)})</div>
+                  <div className="report-list-top-prospect">
+                    <div className="report-list-top-name">{r.top_company}</div>
+                    <div className="report-list-top-score">top prospect ({r.top_score?.toFixed(2)})</div>
                   </div>
                 )}
-                <span style={{ color: "#ccc", fontSize: 20 }}>›</span>
+                <span className="report-list-chevron">&gt;</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -143,101 +126,89 @@ function ReportDetail({ reportId, onBack, onNavigateToCompany }) {
   const changedCount = report.companies.filter((c) => c.state_changed).length;
 
   return (
-    <div>
+    <div className="reports-page">
       <button
         onClick={onBack}
-        style={{
-          padding: "8px 16px", border: "1px solid #ddd", borderRadius: 6,
-          background: "#fff", cursor: "pointer", fontSize: 14, marginBottom: 16,
-        }}
+        className="detail-back-button"
       >
-        ← Back to Reports
+        Back to Reports
       </button>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Week of {formatWeek(report.week_label)}</h2>
+      <div className="reports-detail-header">
+        <h2 className="reports-title">Week of {formatWeek(report.week_label)}</h2>
         <a
           href={`/api/export/report/${encodeURIComponent(reportId)}?format=csv`}
           download
-          style={{
-            padding: "6px 14px", borderRadius: 6, border: "1px solid #ddd",
-            background: "#fff", color: "#555", fontSize: 13, textDecoration: "none",
-          }}
+          className="reports-export-link"
         >
-          ↓ Export CSV
+          Export CSV
         </a>
       </div>
-      <div style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>
+      <div className="reports-detail-meta">
         Generated {formatDate(report.generated_at)} · {report.companies.length} companies · {changedCount} status {changedCount === 1 ? "change" : "changes"} since generation
       </div>
 
-      <table style={{
-        borderCollapse: "collapse", width: "100%", background: "#fff",
-        borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-      }}>
-        <thead>
-          <tr style={{ background: "#f0f2f5", textAlign: "left", fontSize: 13, color: "#555" }}>
-            <th style={{ padding: "10px 16px" }}>#</th>
-            <th style={{ padding: "10px 16px" }}>Company</th>
-            <th style={{ padding: "10px 16px" }}>Industry</th>
-            <th style={{ padding: "10px 16px", textAlign: "right" }}>Turnover</th>
-            <th style={{ padding: "10px 16px" }}>Best Motion</th>
-            <th style={{ padding: "10px 16px", textAlign: "center" }}>Fit</th>
-            <th style={{ padding: "10px 16px", textAlign: "right" }}>Score</th>
-            <th style={{ padding: "10px 16px", textAlign: "center" }}>Status Then</th>
-            <th style={{ padding: "10px 16px", textAlign: "center" }}>Status Now</th>
-          </tr>
-        </thead>
-        <tbody>
-          {report.companies.map((c, idx) => {
-            const thenMeta = STATE_META[c.workflow_state_at_generation] || STATE_META.new_candidate;
-            const nowMeta = STATE_META[c.current_workflow_state] || STATE_META.new_candidate;
-            return (
-              <tr
-                key={c.company_id}
-                style={{
-                  borderBottom: "1px solid #eee",
-                  cursor: onNavigateToCompany ? "pointer" : "default",
-                  background: c.state_changed ? "#fefce8" : "transparent",
-                }}
-                onClick={() => onNavigateToCompany && onNavigateToCompany(c.company_id)}
-                onMouseEnter={(e) => (e.currentTarget.style.background = c.state_changed ? "#fef9c3" : "#f8f9fb")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = c.state_changed ? "#fefce8" : "transparent")}
-              >
-                <td style={{ padding: "10px 16px", color: "#888", fontSize: 13 }}>{idx + 1}</td>
-                <td style={{ padding: "10px 16px", fontWeight: 600 }}>
-                  <a
-                    href="#"
-                    onClick={(e) => { e.preventDefault(); onNavigateToCompany && onNavigateToCompany(c.company_id); }}
-                    style={{ color: "#0075EB", textDecoration: "none" }}
-                  >
-                    {c.name}
-                  </a>
-                </td>
-                <td style={{ padding: "10px 16px", color: "#666", fontSize: 13 }}>{c.industry}</td>
-                <td style={{ padding: "10px 16px", textAlign: "right", fontSize: 13 }}>{formatTurnover(c.turnover)}</td>
-                <td style={{ padding: "10px 16px", fontSize: 13 }}>{c.best_motion}</td>
-                <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                  <Badge text={c.fit_level} bg={FIT_COLORS[c.fit_level]} />
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                  {c.score.toFixed(2)}
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                  <Badge text={thenMeta.label} bg={thenMeta.color} />
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                  {c.state_changed ? (
-                    <Badge text={nowMeta.label} bg={nowMeta.color} />
-                  ) : (
-                    <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="table-shell">
+        <table className="data-table interactive-table report-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Company</th>
+              <th>Industry</th>
+              <th className="align-right">Turnover</th>
+              <th>Best Motion</th>
+              <th className="align-center">Fit</th>
+              <th className="align-right">Score</th>
+              <th className="align-center">Status Then</th>
+              <th className="align-center">Status Now</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.companies.map((c, idx) => {
+              const thenMeta = STATE_META[c.workflow_state_at_generation] || STATE_META.new_candidate;
+              const nowMeta = STATE_META[c.current_workflow_state] || STATE_META.new_candidate;
+              return (
+                <tr
+                  key={c.company_id}
+                  className={c.state_changed ? "report-row report-row-changed" : "report-row"}
+                  onClick={onNavigateToCompany ? () => onNavigateToCompany(c.company_id) : undefined}
+                >
+                  <td className="row-index">{idx + 1}</td>
+                  <td className="row-strong">
+                    <button
+                      type="button"
+                      className="table-link-button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNavigateToCompany && onNavigateToCompany(c.company_id);
+                      }}
+                    >
+                      {c.name}
+                    </button>
+                  </td>
+                  <td className="row-muted">{c.industry}</td>
+                  <td className="align-right">{formatTurnover(c.turnover)}</td>
+                  <td>{c.best_motion}</td>
+                  <td className="align-center">
+                    <Badge text={c.fit_level} bg={FIT_COLORS[c.fit_level]} />
+                  </td>
+                  <td className="align-right row-score">{c.score.toFixed(2)}</td>
+                  <td className="align-center">
+                    <Badge text={thenMeta.label} bg={thenMeta.color} />
+                  </td>
+                  <td className="align-center">
+                    {c.state_changed ? (
+                      <Badge text={nowMeta.label} bg={nowMeta.color} />
+                    ) : (
+                      <span className="reports-empty-status">-</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -306,14 +277,16 @@ export default function Reports({ onNavigateToCompany }) {
   }
 
   return (
-    <div>
+    <div className="reports-page">
       {schedule && (
-        <div style={{ background: "#eff6ff", borderRadius: 6, padding: "8px 14px", marginBottom: 14, fontSize: 12, color: "#1e40af", display: "flex", alignItems: "center", gap: 8 }}>
-          <span>📅</span>
-          <span>Reports auto-generate <strong>{schedule.schedule}</strong>. Next: <strong>{new Date(schedule.next_generation).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</strong></span>
+        <div className="reports-schedule-banner">
+          <span className="reports-schedule-icon">📅</span>
+          <span>
+            Reports auto-generate <strong>{schedule.schedule}</strong>. Next: <strong>{new Date(schedule.next_generation).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</strong>
+          </span>
         </div>
       )}
-      {error && <div style={{ color: "#c0392b", marginBottom: 12, fontSize: 13 }}>{error}</div>}
+      {error && <div className="reports-error-message">{error}</div>}
       <ReportList
         reports={reports}
         onSelectReport={setSelectedReportId}
