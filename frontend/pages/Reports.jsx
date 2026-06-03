@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 
 const STATE_META = {
@@ -46,6 +46,16 @@ function formatWeek(weekLabel) {
 // --- Report List ---
 
 function ReportList({ reports, onSelectReport, onGenerate, generating }) {
+  const formattedReports = useMemo(
+    () => reports.map((report) => ({
+      ...report,
+      formattedWeek: formatWeek(report.week_label),
+      formattedGeneratedAt: formatDate(report.generated_at),
+      formattedTopScore: Number.isFinite(report.top_score) ? report.top_score.toFixed(2) : null,
+    })),
+    [reports],
+  );
+
   return (
     <div className="reports-page">
       <div className="reports-header">
@@ -67,7 +77,7 @@ function ReportList({ reports, onSelectReport, onGenerate, generating }) {
         </div>
       ) : (
         <div className="reports-list">
-          {reports.map((r) => (
+          {formattedReports.map((r) => (
             <button
               type="button"
               key={r.id}
@@ -75,8 +85,8 @@ function ReportList({ reports, onSelectReport, onGenerate, generating }) {
               className="report-list-item"
             >
               <div>
-                <div className="report-list-week">Week of {formatWeek(r.week_label)}</div>
-                <div className="report-list-generated">Generated {formatDate(r.generated_at)}</div>
+                <div className="report-list-week">Week of {r.formattedWeek}</div>
+                <div className="report-list-generated">Generated {r.formattedGeneratedAt}</div>
               </div>
               <div className="report-list-meta">
                 <div className="report-list-count-wrap">
@@ -86,7 +96,7 @@ function ReportList({ reports, onSelectReport, onGenerate, generating }) {
                 {r.top_company && (
                   <div className="report-list-top-prospect">
                     <div className="report-list-top-name">{r.top_company}</div>
-                    <div className="report-list-top-score">top prospect ({r.top_score?.toFixed(2)})</div>
+                    <div className="report-list-top-score">top prospect ({r.formattedTopScore || "N/A"})</div>
                   </div>
                 )}
                 <span className="report-list-chevron">&gt;</span>
@@ -113,17 +123,26 @@ function ReportDetail({ reportId, onBack, onNavigateToCompany }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     setLoading(true);
-    fetch(`/api/reports/${encodeURIComponent(reportId)}`)
+    fetch(`/api/reports/${encodeURIComponent(reportId)}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((data) => { setReport(data.report); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        if (err?.name !== "AbortError") setLoading(false);
+      });
+
+    return () => controller.abort();
   }, [reportId]);
+
+  const changedCount = useMemo(
+    () => (report?.companies || []).filter((c) => c.state_changed).length,
+    [report],
+  );
 
   if (loading) return <div style={{ color: "#888" }}>Loading report…</div>;
   if (!report) return <div style={{ color: "#c0392b" }}>Report not found.</div>;
-
-  const changedCount = report.companies.filter((c) => c.state_changed).length;
 
   return (
     <div className="reports-page">
@@ -229,17 +248,28 @@ export default function Reports({ onNavigateToCompany }) {
   const [error, setError] = useState(null);
   const [schedule, setSchedule] = useState(null);
 
-  function fetchReports() {
-    fetch("/api/reports")
+  const fetchReports = useCallback((signal) => {
+    const requestOptions = signal ? { signal } : undefined;
+
+    fetch("/api/reports", requestOptions)
       .then((res) => res.json())
       .then((data) => { setReports(data.reports || []); setLoading(false); })
-      .catch(() => setLoading(false));
-  }
+      .catch((err) => {
+        if (err?.name !== "AbortError") setLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
-    fetchReports();
-    fetch("/api/reports/schedule").then((r) => r.json()).then(setSchedule).catch(() => {});
-  }, []);
+    const controller = new AbortController();
+
+    fetchReports(controller.signal);
+    fetch("/api/reports/schedule", { signal: controller.signal })
+      .then((r) => r.json())
+      .then(setSchedule)
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [fetchReports]);
 
   async function handleGenerate() {
     setGenerating(true);
