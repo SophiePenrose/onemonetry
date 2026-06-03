@@ -14,6 +14,7 @@ describe("ScoreExplanation", () => {
       base_score: 0.50,
       motion_tuning_delta: 0.04,
       holistic_tuning_delta: -0.02,
+      strategic_signal: "anchor_heavy",
       holistic_tuning_adjustments: [
         { reason: "strategic_anchor_heavy", impact: -0.02 },
       ],
@@ -205,6 +206,8 @@ describe("ScoreExplanation", () => {
     );
 
     expect(screen.getByText("Context Tuning")).toBeInTheDocument();
+    expect(screen.getByText(/Signal:/)).toBeInTheDocument();
+    expect(screen.getByText("Anchor-Heavy Incumbents")).toBeInTheDocument();
     expect(screen.getByText(/Base 0\.50/)).toBeInTheDocument();
     expect(screen.getByText(/Motion \+0\.04/)).toBeInTheDocument();
     expect(screen.getByText(/Holistic -0\.02/)).toBeInTheDocument();

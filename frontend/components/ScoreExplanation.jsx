@@ -24,6 +24,14 @@ const NARRATIVE_ITEM_PROP_TYPE = PropTypes.oneOfType([
   }),
 ]);
 
+const STRATEGIC_SIGNAL_LABELS = {
+  none: "None",
+  balanced: "Balanced",
+  fragmented_stack: "Fragmented Stack",
+  consolidation_play: "Consolidation Play",
+  anchor_heavy: "Anchor-Heavy Incumbents",
+};
+
 function ScoreBar({ score, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
@@ -172,8 +180,14 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
               tuningSummary.push(`Holistic ${formatSignedScore(layer.holistic_tuning_delta)}`);
             }
 
+            const strategicSignal = key === "competitor_context"
+              ? String(layer.strategic_signal || "none")
+              : "none";
+            const strategicSignalLabel = STRATEGIC_SIGNAL_LABELS[strategicSignal]
+              || strategicSignal.replace(/_/g, " ");
+
             const hasCompetitorTuning = key === "competitor_context"
-              && (tuningSummary.length > 0 || tuningAdjustments.length > 0);
+              && (tuningSummary.length > 0 || tuningAdjustments.length > 0 || strategicSignal !== "none");
 
             return (
               <div key={key} style={{ marginBottom: 12 }}>
@@ -189,6 +203,9 @@ function ScoreExplanation({ productFit, scoreBreakdown, finalScore, explanation,
                 {hasCompetitorTuning && (
                   <div style={{ fontSize: 12, color: "#4b5563", paddingLeft: 138, marginTop: 6 }}>
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>Context Tuning</div>
+                    {strategicSignal !== "none" && (
+                      <div>Signal: <strong>{strategicSignalLabel}</strong></div>
+                    )}
                     {tuningSummary.length > 0 && (
                       <div>{tuningSummary.join(" | ")}</div>
                     )}
