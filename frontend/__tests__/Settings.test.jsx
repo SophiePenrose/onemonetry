@@ -18,12 +18,15 @@ const baseWeights = {
   competitor_context: 0.2,
 };
 
+const OWNERSHIP_TRIAGE_STORAGE_KEY = "settings.ownershipTriage.v1";
+
 describe("Settings", () => {
   let fetchMock;
   let schedulerEnabled;
   let ownershipMonitorRunning;
 
   beforeEach(() => {
+    globalThis.localStorage?.clear();
     schedulerEnabled = false;
     ownershipMonitorRunning = false;
     fetchMock = vi.fn((url, options) => {
@@ -476,6 +479,63 @@ describe("Settings", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("custom");
+    });
+  });
+
+  it("restores ownership triage preferences from localStorage on load", async () => {
+    globalThis.localStorage?.setItem(OWNERSHIP_TRIAGE_STORAGE_KEY, JSON.stringify({
+      preset: "cross_border_priority",
+      since_days: 90,
+      sort: "impact",
+      min_changed_fields: "all",
+      parent_country_scope: "non_uk",
+      changed_field: "all",
+      impact: "all",
+    }));
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("cross_border_priority");
+    });
+
+    const sawRestoredRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes")
+        && href.includes("since_days=90")
+        && href.includes("sort=impact")
+        && href.includes("parent_country_scope=non_uk");
+    });
+    expect(sawRestoredRequest).toBe(true);
+  });
+
+  it("persists ownership triage preferences after preset and manual updates", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership triage preset" }), {
+      target: { value: "high_impact_multi_signal" },
+    });
+
+    await waitFor(() => {
+      const saved = JSON.parse(globalThis.localStorage?.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY) || "{}");
+      expect(saved.preset).toBe("high_impact_multi_signal");
+      expect(saved.sort).toBe("impact");
+      expect(saved.min_changed_fields).toBe("2");
+      expect(saved.impact).toBe("high");
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership impact filter" }), {
+      target: { value: "standard" },
+    });
+
+    await waitFor(() => {
+      const saved = JSON.parse(globalThis.localStorage?.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY) || "{}");
+      expect(saved.preset).toBe("custom");
+      expect(saved.impact).toBe("standard");
     });
   });
 
