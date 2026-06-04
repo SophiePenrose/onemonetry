@@ -94,6 +94,11 @@ describe("Settings", () => {
           offset,
           since_days: sinceDays,
           changed_fields_filter: changedField ? [changedField] : [],
+          changed_fields_counts: {
+            parent_company: 1,
+            structure: 1,
+            confidence: 1,
+          },
           rows,
         });
       }
@@ -275,6 +280,10 @@ describe("Settings", () => {
     render(<Settings />);
 
     expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Parent Company (1)" })).toBeInTheDocument();
+    });
 
     fireEvent.change(screen.getByRole("combobox", { name: "Ownership changed field filter" }), {
       target: { value: "parent_company" },
