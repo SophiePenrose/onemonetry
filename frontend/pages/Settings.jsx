@@ -369,12 +369,14 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipSchedulerLoading, setOwnershipSchedulerLoading] = useState(false);
   const [ownershipSchedulerMessage, setOwnershipSchedulerMessage] = useState(null);
   const [ownershipCopyLinkMessage, setOwnershipCopyLinkMessage] = useState(null);
+  const [ownershipCopyFallbackUrl, setOwnershipCopyFallbackUrl] = useState("");
   const integrationRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
   const skipOwnershipTriagePersistenceRef = useRef(false);
   const ownershipCopyLinkFeedbackTimerRef = useRef(null);
+  const ownershipCopyFallbackInputRef = useRef(null);
 
   const segmentTotals = useMemo(
     () => SEGMENTS.reduce((totals, segment) => {
@@ -723,17 +725,27 @@ export default function Settings({ onNavigateToCompany }) {
       return;
     }
 
+    const copySourceUrl = window.location.href;
+
     try {
       if (!navigator?.clipboard || typeof navigator.clipboard.writeText !== "function") {
         throw new Error("clipboard_unavailable");
       }
 
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(copySourceUrl);
+      setOwnershipCopyFallbackUrl("");
       showOwnershipCopyLinkFeedback({ type: "success", text: "Link copied" });
     } catch {
+      setOwnershipCopyFallbackUrl(copySourceUrl);
       showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed" });
     }
   }, [showOwnershipCopyLinkFeedback]);
+
+  const selectOwnershipCopyFallback = useCallback(() => {
+    if (!ownershipCopyFallbackInputRef.current) return;
+    ownershipCopyFallbackInputRef.current.focus();
+    ownershipCopyFallbackInputRef.current.select();
+  }, []);
 
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
@@ -1142,6 +1154,14 @@ export default function Settings({ onNavigateToCompany }) {
       ownershipCopyLinkFeedbackTimerRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!ownershipCopyFallbackUrl || !ownershipCopyFallbackInputRef.current) {
+      return;
+    }
+    ownershipCopyFallbackInputRef.current.focus();
+    ownershipCopyFallbackInputRef.current.select();
+  }, [ownershipCopyFallbackUrl]);
 
   const handleWeightChange = useCallback((segment, layer, value) => {
     setLocalWeights((prev) => ({
@@ -1865,6 +1885,39 @@ export default function Settings({ onNavigateToCompany }) {
             </button>
           </div>
         </div>
+
+        {ownershipCopyFallbackUrl && (
+          <div style={{ marginBottom: 10, fontSize: 12, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ marginBottom: 6 }}>Clipboard access was blocked. Copy the triage link manually:</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <input
+                ref={ownershipCopyFallbackInputRef}
+                type="text"
+                readOnly
+                aria-label="Ownership triage link fallback"
+                value={ownershipCopyFallbackUrl}
+                onFocus={(event) => event.currentTarget.select()}
+                style={{ flex: 1, minWidth: 260, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, padding: "6px 8px", color: "#1f2937" }}
+              />
+              <button
+                type="button"
+                aria-label="Select ownership triage link fallback"
+                onClick={selectOwnershipCopyFallback}
+                style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12, color: "#374151" }}
+              >
+                Select Link
+              </button>
+              <button
+                type="button"
+                aria-label="Dismiss ownership triage link fallback"
+                onClick={() => setOwnershipCopyFallbackUrl("")}
+                style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12, color: "#374151" }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {ownershipChangesLoading && ownershipRows.length === 0 && (
           <div style={{ fontSize: 12, color: "#888" }}>Loading ownership changes...</div>
