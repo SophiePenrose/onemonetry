@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Settings from "../pages/Settings";
 
@@ -21,9 +21,11 @@ const baseWeights = {
 describe("Settings", () => {
   let fetchMock;
   let schedulerEnabled;
+  let ownershipMonitorRunning;
 
   beforeEach(() => {
     schedulerEnabled = false;
+    ownershipMonitorRunning = false;
     fetchMock = vi.fn((url, options) => {
       const method = options?.method || "GET";
 
@@ -94,7 +96,7 @@ describe("Settings", () => {
       if (url === "/api/monitor/ownership/status") {
         return jsonResponse({
           enabled: schedulerEnabled,
-          running: false,
+          running: ownershipMonitorRunning,
           last_run: "2026-06-04T09:30:00.000Z",
           next_run: "2026-06-04T10:30:00.000Z",
           stale_days: 30,
@@ -194,6 +196,7 @@ describe("Settings", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -312,6 +315,50 @@ describe("Settings", () => {
       expect(screen.getByText("Refreshed 10")).toBeInTheDocument();
       expect(screen.getByText("Changed 4")).toBeInTheDocument();
       expect(screen.getByText("Errors 1")).toBeInTheDocument();
+    });
+  });
+
+  it("auto-refreshes ownership monitor while run is active", async () => {
+    ownershipMonitorRunning = true;
+    const intervalCallbacks = [];
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback) => {
+      intervalCallbacks.push(callback);
+      return 1;
+    });
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership refresh in progress")).toBeInTheDocument();
+    expect(screen.getByText("Auto-refreshing every 10 seconds while run is active.")).toBeInTheDocument();
+
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
+    await waitFor(() => {
+      const hasPollInterval = setIntervalSpy.mock.calls.some(([, intervalMs]) => intervalMs === 10000);
+      expect(hasPollInterval).toBe(true);
+    });
+
+    const statusCallsBefore = fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/monitor/ownership/status"
+    ).length;
+    const changesCallsBefore = fetchMock.mock.calls.filter(
+      ([url]) => String(url || "").startsWith("/api/monitor/ownership/changes")
+    ).length;
+
+    const pollCallback = setIntervalSpy.mock.calls.find(([, intervalMs]) => intervalMs === 10000)?.[0];
+    expect(typeof pollCallback).toBe("function");
+    await act(async () => {
+      pollCallback();
+    });
+
+    await waitFor(() => {
+      const statusCallsAfter = fetchMock.mock.calls.filter(
+        ([url]) => url === "/api/monitor/ownership/status"
+      ).length;
+      const changesCallsAfter = fetchMock.mock.calls.filter(
+        ([url]) => String(url || "").startsWith("/api/monitor/ownership/changes")
+      ).length;
+
+      expect(statusCallsAfter).toBeGreaterThan(statusCallsBefore);
+      expect(changesCallsAfter).toBeGreaterThan(changesCallsBefore);
     });
   });
 
