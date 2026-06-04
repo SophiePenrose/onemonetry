@@ -197,6 +197,70 @@ function getOwnershipStaleCompanies(limit = OWNERSHIP_STALE_BATCH_SIZE) {
   return staleRows;
 }
 
+function parseOwnershipChangeTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+export function listOwnershipChangedCompanies(options = {}) {
+  const requestedLimit = Number.parseInt(String(options.limit || "100"), 10);
+  const requestedOffset = Number.parseInt(String(options.offset || "0"), 10);
+  const requestedSinceDays = Number.parseInt(
+    String(options.since_days ?? options.sinceDays ?? "30"),
+    10
+  );
+
+  const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
+  const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
+  const sinceDays = Math.max(1, Number.isFinite(requestedSinceDays) ? requestedSinceDays : 30);
+  const sinceMs = Date.now() - (sinceDays * 24 * 60 * 60 * 1000);
+
+  const companies = getMonitoredCompanies({ status: "active" });
+  const changedRows = [];
+
+  for (const company of companies) {
+    const snapshot = getOwnershipSnapshot(company.company_number);
+    if (!snapshot?.change_detected) continue;
+
+    const lastChangedAt = snapshot?.last_changed_at || null;
+    const lastChangedMs = parseOwnershipChangeTimestamp(lastChangedAt);
+    if (lastChangedMs !== null && lastChangedMs < sinceMs) continue;
+
+    changedRows.push({
+      company_number: company.company_number,
+      company_name: company.company_name || null,
+      change_detected: true,
+      changed_fields: Array.isArray(snapshot?.changed_fields) ? snapshot.changed_fields.filter(Boolean) : [],
+      last_changed_at: lastChangedAt,
+      last_checked_at: snapshot?.last_checked_at || snapshot?.updated_at || snapshot?.fetched_at || null,
+      structure: snapshot?.structure || null,
+      parent_company: snapshot?.parent_company || null,
+      parent_country: snapshot?.parent_country || null,
+      confidence: snapshot?.confidence || null,
+      significant_corporate_controllers_count: Number(snapshot?.significant_corporate_controllers_count || 0),
+      non_uk_significant_corporate_controllers_count: Number(snapshot?.non_uk_significant_corporate_controllers_count || 0),
+      source: snapshot?.source || null,
+    });
+  }
+
+  changedRows.sort((a, b) => {
+    const aTs = parseOwnershipChangeTimestamp(a.last_changed_at) || 0;
+    const bTs = parseOwnershipChangeTimestamp(b.last_changed_at) || 0;
+    if (bTs !== aTs) return bTs - aTs;
+    return String(a.company_number || "").localeCompare(String(b.company_number || ""));
+  });
+
+  return {
+    total: changedRows.length,
+    limit,
+    offset,
+    since_days: sinceDays,
+    rows: changedRows.slice(offset, offset + limit),
+  };
+}
+
 function getNewFilingsSince(chData, lastFilingDate) {
   return (chData.recent_filings || []).filter((f) => {
     if (!lastFilingDate) return true;

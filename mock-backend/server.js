@@ -79,6 +79,7 @@ import {
   getStaleMonitorProgress,
   runOwnershipStaleBatch,
   getOwnershipStaleMonitorStatus,
+  listOwnershipChangedCompanies,
   startOwnershipStaleMonitor,
   stopOwnershipStaleMonitor,
   isOwnershipStaleMonitorRunning,
@@ -4814,6 +4815,19 @@ app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
 
 app.get("/api/monitor/ownership/status", (_req, res) => {
   res.json(getOwnershipStaleMonitorStatus());
+});
+
+app.get("/api/monitor/ownership/changes", (req, res) => {
+  const limit = Number.parseInt(String(req.query.limit || "100"), 10);
+  const offset = Number.parseInt(String(req.query.offset || "0"), 10);
+  const sinceDays = Number.parseInt(String(req.query.since_days || "30"), 10);
+  const result = listOwnershipChangedCompanies({
+    limit,
+    offset,
+    since_days: sinceDays,
+  });
+
+  res.json(result);
 });
 
 app.post("/api/monitor/ownership/run", async (req, res) => {
