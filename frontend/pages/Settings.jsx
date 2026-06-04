@@ -27,8 +27,7 @@ function normalizeSicToken(value) {
 }
 
 function parseSicListInput(rawValue) {
-  const parts = String(rawValue || "")
-    .split(/[\s,;|]+/)
+  const parts = (String(rawValue || "").match(/\d(?:[\s-]?\d){4}/g) || [])
     .map((token) => normalizeSicToken(token))
     .filter(Boolean);
 

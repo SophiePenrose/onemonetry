@@ -135,7 +135,7 @@ describe("Settings", () => {
       expect(input.value).toBe("62012");
     });
 
-    fireEvent.change(input, { target: { value: "62012, 64201, invalid, 62012" } });
+    fireEvent.change(input, { target: { value: "62012, 64 201, invalid, 62012" } });
     fireEvent.click(screen.getByRole("button", { name: "Save SIC Policy" }));
 
     await waitFor(() => {
