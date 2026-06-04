@@ -79,12 +79,21 @@ describe("Settings", () => {
         return jsonResponse({
           enabled: schedulerEnabled,
           running: false,
+          last_run: "2026-06-04T09:30:00.000Z",
+          next_run: "2026-06-04T10:30:00.000Z",
           stale_days: 30,
           batch_size: 100,
           check_interval_ms: 3600000,
           schedule: "Daily",
           change_tracking_enabled: true,
           change_fields: ["parent_company", "structure"],
+          progress: {
+            total: 40,
+            checked: 12,
+            refreshed: 10,
+            changed: 4,
+            errors: 1,
+          },
         });
       }
 
@@ -239,6 +248,21 @@ describe("Settings", () => {
     );
     expect(runCall).toBeTruthy();
     expect(JSON.parse(runCall[1].body)).toEqual({ batch_size: 42 });
+  });
+
+  it("renders ownership progress summary strip", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Latest ownership refresh summary")).toBeInTheDocument();
+      expect(screen.getByText("30% complete")).toBeInTheDocument();
+      expect(screen.getByText("Checked 12/40")).toBeInTheDocument();
+      expect(screen.getByText("Refreshed 10")).toBeInTheDocument();
+      expect(screen.getByText("Changed 4")).toBeInTheDocument();
+      expect(screen.getByText("Errors 1")).toBeInTheDocument();
+    });
   });
 
   it("starts and stops ownership scheduler", async () => {
