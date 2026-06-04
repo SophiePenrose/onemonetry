@@ -115,7 +115,9 @@ export default function App() {
         ? "All Companies"
         : returnView === "import"
           ? "Data Pipeline"
-          : "Workspace";
+          : returnView === "settings"
+            ? "Settings"
+            : "Workspace";
   const tabs = [
     { id: "shortlist", label: "This Week", action: navigateShortlist },
     { id: "home", label: "All Companies", action: navigateHome },
@@ -219,7 +221,7 @@ export default function App() {
           />
         )}
         {view === "import" && <Import />}
-        {view === "settings" && <Settings />}
+        {view === "settings" && <Settings onNavigateToCompany={(id) => navigateToCompany(id, "settings")} />}
         {view === "reports" && (
           <Reports onNavigateToCompany={(id) => navigateToCompany(id, "reports")} />
         )}

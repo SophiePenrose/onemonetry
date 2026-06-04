@@ -54,24 +54,40 @@ describe("Settings", () => {
         const search = url.includes("?") ? url.split("?")[1] : "";
         const params = new URLSearchParams(search);
         const sinceDays = Number(params.get("since_days") || "30");
+        const offset = Number(params.get("offset") || "0");
+
+        const allRows = [
+          {
+            company_number: "01234567",
+            company_name: "Acme Holdings Ltd",
+            change_detected: true,
+            changed_fields: ["parent_company", "structure"],
+            last_changed_at: "2026-06-04T10:00:00.000Z",
+            last_checked_at: "2026-06-04T10:15:00.000Z",
+            structure: "subsidiary",
+            parent_company: "Acme Group plc",
+            parent_country: "United Kingdom",
+          },
+          {
+            company_number: "76543210",
+            company_name: "Beta Payments Ltd",
+            change_detected: true,
+            changed_fields: ["confidence"],
+            last_changed_at: "2026-06-04T09:45:00.000Z",
+            last_checked_at: "2026-06-04T10:10:00.000Z",
+            structure: "independent",
+            parent_company: null,
+            parent_country: null,
+          },
+        ];
+        const rows = allRows.slice(offset, offset + 1);
+
         return jsonResponse({
-          total: 1,
+          total: allRows.length,
           limit: Number(params.get("limit") || "20"),
-          offset: Number(params.get("offset") || "0"),
+          offset,
           since_days: sinceDays,
-          rows: [
-            {
-              company_number: "01234567",
-              company_name: "Acme Holdings Ltd",
-              change_detected: true,
-              changed_fields: ["parent_company", "structure"],
-              last_changed_at: "2026-06-04T10:00:00.000Z",
-              last_checked_at: "2026-06-04T10:15:00.000Z",
-              structure: "subsidiary",
-              parent_company: "Acme Group plc",
-              parent_country: "United Kingdom",
-            },
-          ],
+          rows,
         });
       }
 
@@ -204,7 +220,7 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(screen.getByText("Acme Holdings Ltd")).toBeInTheDocument();
       expect(screen.getByText("Parent Company, Structure")).toBeInTheDocument();
-      expect(screen.getByText("Showing 1/1 changed companies in last 30 days")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/2 changed companies in last 30 days")).toBeInTheDocument();
     });
 
     fireEvent.change(screen.getByRole("combobox", { name: "Ownership change window" }), {
@@ -220,8 +236,42 @@ describe("Settings", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Showing 1/1 changed companies in last 90 days")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/2 changed companies in last 90 days")).toBeInTheDocument();
     });
+  });
+
+  it("loads more ownership change rows with pagination offset", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 1/2 changed companies in last 30 days")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load More Changes" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Beta Payments Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Showing 2/2 changed companies in last 30 days")).toBeInTheDocument();
+    });
+
+    const sawOffsetRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("offset=1");
+    });
+    expect(sawOffsetRequest).toBe(true);
+  });
+
+  it("opens company detail from ownership feed row action", async () => {
+    const onNavigateToCompany = vi.fn();
+    render(<Settings onNavigateToCompany={onNavigateToCompany} />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open company Acme Holdings Ltd" }));
+
+    expect(onNavigateToCompany).toHaveBeenCalledWith("ch-01234567");
   });
 
   it("shows ownership monitor status and starts a manual run", async () => {

@@ -20,6 +20,7 @@ const LAYER_COLORS = {
 const LAYER_ENTRIES = Object.entries(LAYER_LABELS);
 
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
+const OWNERSHIP_CHANGES_PAGE_SIZE = 20;
 
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -121,7 +122,7 @@ SegmentWeightsCard.propTypes = {
   total: PropTypes.number.isRequired,
 };
 
-export default function Settings() {
+export default function Settings({ onNavigateToCompany }) {
   const [config, setConfig] = useState(null);
   const [localWeights, setLocalWeights] = useState({});
   const [propensityWeight, setPropensityWeight] = useState(0.15);
@@ -255,6 +256,11 @@ export default function Settings() {
     [ownershipChanges],
   );
 
+  const ownershipHasMore = useMemo(() => {
+    const total = Number(ownershipChanges?.total || 0);
+    return total > ownershipRows.length;
+  }, [ownershipChanges, ownershipRows]);
+
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
     integrationRequestRef.current = requestId;
@@ -286,16 +292,20 @@ export default function Settings() {
       });
   }, []);
 
-  const loadOwnershipChanges = useCallback(() => {
+  const loadOwnershipChanges = useCallback((options = {}) => {
     const requestId = ownershipChangesRequestRef.current + 1;
     ownershipChangesRequestRef.current = requestId;
+
+    const requestedOffset = Number.parseInt(String(options.offset ?? 0), 10);
+    const safeOffset = Number.isFinite(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0;
+    const append = options.append === true && safeOffset > 0;
 
     setOwnershipChangesLoading(true);
     setOwnershipChangesError(null);
 
     const query = new URLSearchParams({
-      limit: "20",
-      offset: "0",
+      limit: String(OWNERSHIP_CHANGES_PAGE_SIZE),
+      offset: String(safeOffset),
       since_days: String(ownershipSinceDays),
     });
 
@@ -308,12 +318,22 @@ export default function Settings() {
       })
       .then((data) => {
         if (ownershipChangesRequestRef.current !== requestId) return;
-        setOwnershipChanges({
+
+        const normalized = {
           total: Number.isFinite(Number(data?.total)) ? Number(data.total) : 0,
-          limit: Number.isFinite(Number(data?.limit)) ? Number(data.limit) : 20,
-          offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : 0,
+          limit: Number.isFinite(Number(data?.limit)) ? Number(data.limit) : OWNERSHIP_CHANGES_PAGE_SIZE,
+          offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : safeOffset,
           since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
           rows: Array.isArray(data?.rows) ? data.rows : [],
+        };
+
+        setOwnershipChanges((previous) => {
+          if (!append || !previous) return normalized;
+          const existingRows = Array.isArray(previous.rows) ? previous.rows : [];
+          return {
+            ...normalized,
+            rows: [...existingRows, ...normalized.rows],
+          };
         });
         setOwnershipChangesCheckedAt(new Date().toISOString());
       })
@@ -329,6 +349,13 @@ export default function Settings() {
         }
       });
   }, [ownershipSinceDays]);
+
+  const handleOpenOwnershipCompany = useCallback((row) => {
+    if (typeof onNavigateToCompany !== "function") return;
+    const companyNumber = String(row?.company_number || "").replace(/\D/g, "");
+    if (!companyNumber) return;
+    onNavigateToCompany(`ch-${companyNumber}`);
+  }, [onNavigateToCompany]);
 
   const loadOwnershipMonitorStatus = useCallback(() => {
     const requestId = ownershipMonitorRequestRef.current + 1;
@@ -387,7 +414,7 @@ export default function Settings() {
         text: data.message || `Starting ownership stale refresh for up to ${batchSize} companies`,
       });
       loadOwnershipMonitorStatus();
-      loadOwnershipChanges();
+      loadOwnershipChanges({ offset: 0 });
     } catch (err) {
       setOwnershipRunMessage({
         type: "error",
@@ -530,7 +557,7 @@ export default function Settings() {
   }, [loadIntegrationStatus]);
 
   useEffect(() => {
-    loadOwnershipChanges();
+    loadOwnershipChanges({ offset: 0 });
   }, [loadOwnershipChanges]);
 
   useEffect(() => {
@@ -1071,7 +1098,7 @@ export default function Settings() {
               <option value={180}>180 days</option>
             </select>
             <button
-              onClick={loadOwnershipChanges}
+              onClick={() => loadOwnershipChanges({ offset: 0 })}
               style={{
                 padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
                 cursor: "pointer", fontSize: 12, color: "#555",
@@ -1108,6 +1135,7 @@ export default function Settings() {
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Last Changed</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Structure</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Parent</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1134,11 +1162,52 @@ export default function Settings() {
                         <div style={{ color: "#1f2937" }}>{parentLabel}</div>
                         <div style={{ color: "#64748b", fontSize: 11 }}>{parentCountryLabel}</div>
                       </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        <button
+                          onClick={() => handleOpenOwnershipCompany(row)}
+                          disabled={typeof onNavigateToCompany !== "function"}
+                          aria-label={`Open company ${row?.company_name || row?.company_number || "company"}`}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            border: "1px solid #cbd5e1",
+                            background: "#fff",
+                            color: "#1e3a8a",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: typeof onNavigateToCompany !== "function" ? "not-allowed" : "pointer",
+                            opacity: typeof onNavigateToCompany !== "function" ? 0.6 : 1,
+                          }}
+                        >
+                          Open Company
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+
+            {ownershipHasMore && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                <button
+                  onClick={() => loadOwnershipChanges({ offset: ownershipRows.length, append: true })}
+                  disabled={ownershipChangesLoading}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    color: "#334155",
+                    fontSize: 12,
+                    cursor: ownershipChangesLoading ? "wait" : "pointer",
+                    opacity: ownershipChangesLoading ? 0.65 : 1,
+                  }}
+                >
+                  {ownershipChangesLoading ? "Loading..." : "Load More Changes"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1172,3 +1241,7 @@ export default function Settings() {
     </div>
   );
 }
+
+Settings.propTypes = {
+  onNavigateToCompany: PropTypes.func,
+};
