@@ -657,11 +657,20 @@ describe("Settings", () => {
 
     expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
 
+    const expectedFallbackUrl = window.location.href;
+
     fireEvent.click(screen.getByRole("button", { name: "Copy ownership triage link" }));
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("button", { name: "Copy ownership triage link" })).toHaveTextContent("Copy Failed");
+      expect(screen.getByLabelText("Ownership triage link fallback")).toHaveValue(expectedFallbackUrl);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss ownership triage link fallback" }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Ownership triage link fallback")).not.toBeInTheDocument();
     });
   });
 
