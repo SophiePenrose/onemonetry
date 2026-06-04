@@ -130,6 +130,18 @@ function writeStoredOwnershipTriageState(state) {
   }
 }
 
+function clearStoredOwnershipTriageState() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(OWNERSHIP_TRIAGE_STORAGE_KEY);
+  } catch {
+    // Ignore persistence failures (for example private mode quota restrictions).
+  }
+}
+
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
   return digits.length === 5 ? digits : null;
@@ -270,6 +282,7 @@ export default function Settings({ onNavigateToCompany }) {
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
+  const skipOwnershipTriagePersistenceRef = useRef(false);
 
   const segmentTotals = useMemo(
     () => SEGMENTS.reduce((totals, segment) => {
@@ -582,6 +595,20 @@ export default function Settings({ onNavigateToCompany }) {
     setOwnershipParentCountryScope(String(preset.parent_country_scope || "all"));
     setOwnershipChangedField(String(preset.changed_field || "all"));
     setOwnershipImpactFilter(String(preset.impact || "all"));
+  }, []);
+
+  const resetOwnershipTriagePreferences = useCallback(() => {
+    const defaults = getDefaultOwnershipTriageState();
+
+    skipOwnershipTriagePersistenceRef.current = true;
+    clearStoredOwnershipTriageState();
+    setOwnershipTriagePreset(defaults.preset);
+    setOwnershipSinceDays(defaults.since_days);
+    setOwnershipSortMode(defaults.sort);
+    setOwnershipSignalDensity(defaults.min_changed_fields);
+    setOwnershipParentCountryScope(defaults.parent_country_scope);
+    setOwnershipChangedField(defaults.changed_field);
+    setOwnershipImpactFilter(defaults.impact);
   }, []);
 
   const loadIntegrationStatus = useCallback(() => {
@@ -920,6 +947,11 @@ export default function Settings({ onNavigateToCompany }) {
   }, [loadOwnershipMonitorStatus]);
 
   useEffect(() => {
+    if (skipOwnershipTriagePersistenceRef.current) {
+      skipOwnershipTriagePersistenceRef.current = false;
+      return;
+    }
+
     writeStoredOwnershipTriageState({
       preset: ownershipTriagePreset,
       since_days: ownershipSinceDays,
@@ -1502,6 +1534,22 @@ export default function Settings({ onNavigateToCompany }) {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+            <button
+              type="button"
+              aria-label="Reset saved triage preferences"
+              onClick={resetOwnershipTriagePreferences}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#f8fafc",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "#374151",
+              }}
+            >
+              Reset Saved
+            </button>
             <label htmlFor="ownership-change-window" style={{ fontSize: 12, color: "#475569" }}>
               Window
             </label>
