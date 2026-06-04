@@ -148,6 +148,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
   const [ownershipSortMode, setOwnershipSortMode] = useState("recent");
+  const [ownershipSignalDensity, setOwnershipSignalDensity] = useState("all");
   const [ownershipChangedField, setOwnershipChangedField] = useState("all");
   const [ownershipImpactFilter, setOwnershipImpactFilter] = useState("all");
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
@@ -299,6 +300,30 @@ export default function Settings({ onNavigateToCompany }) {
     };
   }, [ownershipChanges]);
 
+  const ownershipChangedFieldCountBuckets = useMemo(() => {
+    const rawCounts = ownershipChanges?.changed_fields_count_buckets;
+    if (!rawCounts || typeof rawCounts !== "object" || Array.isArray(rawCounts)) {
+      return {
+        zero: 0,
+        one: 0,
+        two: 0,
+        threePlus: 0,
+      };
+    }
+
+    const zero = Number(rawCounts["0"]);
+    const one = Number(rawCounts["1"]);
+    const two = Number(rawCounts["2"]);
+    const threePlus = Number(rawCounts["3_plus"]);
+
+    return {
+      zero: Number.isFinite(zero) && zero > 0 ? Math.round(zero) : 0,
+      one: Number.isFinite(one) && one > 0 ? Math.round(one) : 0,
+      two: Number.isFinite(two) && two > 0 ? Math.round(two) : 0,
+      threePlus: Number.isFinite(threePlus) && threePlus > 0 ? Math.round(threePlus) : 0,
+    };
+  }, [ownershipChanges]);
+
   const ownershipChangedFieldOptions = useMemo(() => {
     const baseFields = Array.isArray(ownershipMonitorStatus?.change_fields)
       ? ownershipMonitorStatus.change_fields.map((field) => String(field || "").trim()).filter(Boolean)
@@ -345,6 +370,36 @@ export default function Settings({ onNavigateToCompany }) {
   const ownershipSortLabel = ownershipSortMode === "impact"
     ? "High impact first"
     : "Most recent";
+
+  const ownershipSignalDensityOptions = useMemo(() => {
+    const allCount = ownershipChangedFieldCountBuckets.zero
+      + ownershipChangedFieldCountBuckets.one
+      + ownershipChangedFieldCountBuckets.two
+      + ownershipChangedFieldCountBuckets.threePlus;
+    const multiCount = ownershipChangedFieldCountBuckets.two + ownershipChangedFieldCountBuckets.threePlus;
+    const broadCount = ownershipChangedFieldCountBuckets.threePlus;
+
+    return [
+      {
+        value: "all",
+        label: allCount > 0 ? `All signals (${allCount})` : "All signals",
+      },
+      {
+        value: "2",
+        label: multiCount > 0 ? `2+ fields (${multiCount})` : "2+ fields",
+      },
+      {
+        value: "3",
+        label: broadCount > 0 ? `3+ fields (${broadCount})` : "3+ fields",
+      },
+    ];
+  }, [ownershipChangedFieldCountBuckets]);
+
+  const ownershipSignalDensityLabel = ownershipSignalDensity === "2"
+    ? "2+ fields"
+    : ownershipSignalDensity === "3"
+      ? "3+ fields"
+      : null;
 
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
@@ -396,6 +451,9 @@ export default function Settings({ onNavigateToCompany }) {
     if (ownershipSortMode !== "recent") {
       query.set("sort", ownershipSortMode);
     }
+    if (ownershipSignalDensity !== "all") {
+      query.set("min_changed_fields", ownershipSignalDensity);
+    }
     if (ownershipChangedField !== "all") {
       query.set("changed_field", ownershipChangedField);
     }
@@ -419,9 +477,13 @@ export default function Settings({ onNavigateToCompany }) {
           offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : safeOffset,
           since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
           sort: String(data?.sort || ownershipSortMode || "recent").toLowerCase(),
+          min_changed_fields: Number.isFinite(Number(data?.min_changed_fields)) ? Number(data.min_changed_fields) : 0,
           changed_fields_filter: Array.isArray(data?.changed_fields_filter) ? data.changed_fields_filter.filter(Boolean) : [],
           changed_fields_counts: data?.changed_fields_counts && typeof data.changed_fields_counts === "object" && !Array.isArray(data.changed_fields_counts)
             ? data.changed_fields_counts
+            : {},
+          changed_fields_count_buckets: data?.changed_fields_count_buckets && typeof data.changed_fields_count_buckets === "object" && !Array.isArray(data.changed_fields_count_buckets)
+            ? data.changed_fields_count_buckets
             : {},
           impact_filter: String(data?.impact_filter || ownershipImpactFilter || "all").toLowerCase(),
           impact_counts: data?.impact_counts && typeof data.impact_counts === "object" && !Array.isArray(data.impact_counts)
@@ -451,7 +513,7 @@ export default function Settings({ onNavigateToCompany }) {
           setOwnershipChangesLoading(false);
         }
       });
-  }, [ownershipChangedField, ownershipImpactFilter, ownershipSinceDays, ownershipSortMode]);
+  }, [ownershipChangedField, ownershipImpactFilter, ownershipSignalDensity, ownershipSinceDays, ownershipSortMode]);
 
   const handleOpenOwnershipCompany = useCallback((row) => {
     if (typeof onNavigateToCompany !== "function") return;
@@ -1184,6 +1246,7 @@ export default function Settings({ onNavigateToCompany }) {
               <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
                 {ownershipSortMode !== "recent" ? ` · sort: ${ownershipSortLabel}` : ""}
+                {ownershipSignalDensityLabel ? ` · signals: ${ownershipSignalDensityLabel}` : ""}
                 {ownershipChangedFieldLabel ? ` · field: ${ownershipChangedFieldLabel}` : ""}
                 {ownershipImpactFilterLabel ? ` · impact: ${ownershipImpactFilterLabel}` : ""}
               </div>
@@ -1267,6 +1330,28 @@ export default function Settings({ onNavigateToCompany }) {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+            <label htmlFor="ownership-signal-density-filter" style={{ fontSize: 12, color: "#475569" }}>
+              Signals
+            </label>
+            <select
+              id="ownership-signal-density-filter"
+              aria-label="Ownership signal density filter"
+              value={ownershipSignalDensity}
+              onChange={(event) => {
+                setOwnershipSignalDensity(String(event.target.value || "all"));
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {ownershipSignalDensityOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <label htmlFor="ownership-impact-filter" style={{ fontSize: 12, color: "#475569" }}>
               Impact
             </label>
@@ -1324,6 +1409,7 @@ export default function Settings({ onNavigateToCompany }) {
                 <tr style={{ background: "#f8fafc", color: "#475569" }}>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Company</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Changed Fields</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Signals</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Impact</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Last Changed</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Structure</th>
@@ -1337,6 +1423,9 @@ export default function Settings({ onNavigateToCompany }) {
                     ? row.changed_fields.filter(Boolean).map((field) => humanizeFieldToken(field))
                     : [];
                   const changedFieldsLabel = fields.length > 0 ? fields.join(", ") : "None recorded";
+                  const changedFieldsCount = Number.isFinite(Number(row?.changed_fields_count))
+                    ? Number(row.changed_fields_count)
+                    : fields.length;
                   const impactLevel = row?.impact_level === "high" ? "High" : "Standard";
                   const lastChangedLabel = formatTimestampLabel(row?.last_changed_at || row?.last_checked_at);
                   const structureLabel = row?.structure ? humanizeFieldToken(row.structure) : "Unknown";
@@ -1350,6 +1439,7 @@ export default function Settings({ onNavigateToCompany }) {
                         <div style={{ color: "#64748b", fontSize: 11 }}>{row?.company_number || "N/A"}</div>
                       </td>
                       <td style={{ padding: "7px 8px", color: "#334155" }}>{changedFieldsLabel}</td>
+                      <td style={{ padding: "7px 8px", color: "#334155", fontWeight: 600 }}>{changedFieldsCount}</td>
                       <td style={{ padding: "7px 8px", color: row?.impact_level === "high" ? "#9a3412" : "#334155", fontWeight: 600 }}>
                         {impactLevel}
                       </td>

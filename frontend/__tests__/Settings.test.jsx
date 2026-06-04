@@ -58,6 +58,7 @@ describe("Settings", () => {
         const sinceDays = Number(params.get("since_days") || "30");
         const offset = Number(params.get("offset") || "0");
         const sort = String(params.get("sort") || "recent").trim().toLowerCase();
+        const minChangedFields = Number(params.get("min_changed_fields") || "0");
         const changedField = String(params.get("changed_field") || "").trim();
         const impact = String(params.get("impact") || "").trim().toLowerCase();
 
@@ -67,6 +68,7 @@ describe("Settings", () => {
             company_name: "Acme Holdings Ltd",
             change_detected: true,
             changed_fields: ["parent_company", "structure"],
+            changed_fields_count: 2,
             impact_level: "high",
             last_changed_at: "2026-06-04T10:00:00.000Z",
             last_checked_at: "2026-06-04T10:15:00.000Z",
@@ -79,6 +81,7 @@ describe("Settings", () => {
             company_name: "Beta Payments Ltd",
             change_detected: true,
             changed_fields: ["confidence"],
+            changed_fields_count: 1,
             impact_level: "standard",
             last_changed_at: "2026-06-04T09:45:00.000Z",
             last_checked_at: "2026-06-04T10:10:00.000Z",
@@ -88,6 +91,12 @@ describe("Settings", () => {
           },
         ];
         const filteredRows = allRows.filter((row) => {
+          if (Number.isFinite(minChangedFields) && minChangedFields > 0) {
+            const changedFieldsCount = Number(row.changed_fields_count || 0);
+            if (changedFieldsCount < minChangedFields) {
+              return false;
+            }
+          }
           if (changedField && (!Array.isArray(row.changed_fields) || !row.changed_fields.includes(changedField))) {
             return false;
           }
@@ -104,11 +113,18 @@ describe("Settings", () => {
           offset,
           since_days: sinceDays,
           sort,
+          min_changed_fields: Number.isFinite(minChangedFields) ? minChangedFields : 0,
           changed_fields_filter: changedField ? [changedField] : [],
           changed_fields_counts: {
             parent_company: 1,
             structure: 1,
             confidence: 1,
+          },
+          changed_fields_count_buckets: {
+            "0": 0,
+            "1": 1,
+            "2": 1,
+            "3_plus": 0,
           },
           impact_filter: impact || "all",
           impact_counts: {
@@ -360,6 +376,31 @@ describe("Settings", () => {
       return href.startsWith("/api/monitor/ownership/changes") && href.includes("sort=impact");
     });
     expect(sawSortRequest).toBe(true);
+  });
+
+  it("filters ownership changes by selected signal density", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "2+ fields (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership signal density filter" }), {
+      target: { value: "2" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme Holdings Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/1 changed companies in last 30 days · signals: 2+ fields")).toBeInTheDocument();
+    });
+
+    const sawSignalDensityRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("min_changed_fields=2");
+    });
+    expect(sawSignalDensityRequest).toBe(true);
   });
 
   it("opens company detail from ownership feed row action", async () => {
