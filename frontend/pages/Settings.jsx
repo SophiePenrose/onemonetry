@@ -47,6 +47,18 @@ function humanizeFieldToken(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatIntervalLabel(intervalMs) {
+  const numeric = Number(intervalMs);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "Unknown";
+
+  const totalMinutes = Math.round(numeric / 60000);
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+
+  const hours = totalMinutes / 60;
+  const displayHours = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return `${displayHours} hr`;
+}
+
 const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -130,8 +142,15 @@ export default function Settings() {
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
+  const [ownershipMonitorStatus, setOwnershipMonitorStatus] = useState(null);
+  const [ownershipMonitorLoading, setOwnershipMonitorLoading] = useState(false);
+  const [ownershipMonitorError, setOwnershipMonitorError] = useState(null);
+  const [ownershipRunLoading, setOwnershipRunLoading] = useState(false);
+  const [ownershipRunMessage, setOwnershipRunMessage] = useState(null);
+  const [ownershipBatchSize, setOwnershipBatchSize] = useState("100");
   const integrationRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
+  const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
 
   const segmentTotals = useMemo(
@@ -293,6 +312,74 @@ export default function Settings() {
       });
   }, [ownershipSinceDays]);
 
+  const loadOwnershipMonitorStatus = useCallback(() => {
+    const requestId = ownershipMonitorRequestRef.current + 1;
+    ownershipMonitorRequestRef.current = requestId;
+
+    setOwnershipMonitorLoading(true);
+    setOwnershipMonitorError(null);
+
+    fetch("/api/monitor/ownership/status")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load ownership monitor status (${response.status})`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (ownershipMonitorRequestRef.current !== requestId) return;
+        setOwnershipMonitorStatus(data || null);
+      })
+      .catch((err) => {
+        if (ownershipMonitorRequestRef.current !== requestId) return;
+        setOwnershipMonitorStatus(null);
+        setOwnershipMonitorError(err?.message || "Ownership monitor status unavailable");
+      })
+      .finally(() => {
+        if (ownershipMonitorRequestRef.current === requestId) {
+          setOwnershipMonitorLoading(false);
+        }
+      });
+  }, []);
+
+  const runOwnershipRefresh = useCallback(async () => {
+    const batchSize = Number.parseInt(String(ownershipBatchSize || ""), 10);
+    if (!Number.isFinite(batchSize) || batchSize < 1) {
+      setOwnershipRunMessage({ type: "error", text: "Batch size must be a positive integer." });
+      return;
+    }
+
+    setOwnershipRunLoading(true);
+    setOwnershipRunMessage(null);
+
+    try {
+      const response = await fetch("/api/monitor/ownership/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_size: batchSize }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to start ownership refresh");
+      }
+
+      setOwnershipRunMessage({
+        type: "success",
+        text: data.message || `Starting ownership stale refresh for up to ${batchSize} companies`,
+      });
+      loadOwnershipMonitorStatus();
+      loadOwnershipChanges();
+    } catch (err) {
+      setOwnershipRunMessage({
+        type: "error",
+        text: err?.message || "Failed to start ownership refresh",
+      });
+    } finally {
+      setOwnershipRunLoading(false);
+    }
+  }, [ownershipBatchSize, loadOwnershipChanges, loadOwnershipMonitorStatus]);
+
   const loadExclusions = useCallback(() => {
     setExclusionsLoading(true);
     fetch("/api/exclusions")
@@ -387,6 +474,10 @@ export default function Settings() {
   useEffect(() => {
     loadOwnershipChanges();
   }, [loadOwnershipChanges]);
+
+  useEffect(() => {
+    loadOwnershipMonitorStatus();
+  }, [loadOwnershipMonitorStatus]);
 
   useEffect(() => {
     loadExclusions();
@@ -673,6 +764,115 @@ export default function Settings() {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 10 }}>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Enabled</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>
+              {ownershipMonitorStatus?.enabled === true ? "Yes" : "No"}
+            </div>
+          </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Running</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: ownershipMonitorStatus?.running ? "#a16207" : "#166534" }}>
+              {ownershipMonitorStatus?.running ? "In progress" : "Idle"}
+            </div>
+          </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Cadence</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>
+              {ownershipMonitorStatus?.schedule || "Unknown"}
+            </div>
+          </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Check Interval</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>
+              {formatIntervalLabel(ownershipMonitorStatus?.check_interval_ms)}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label htmlFor="ownership-batch-size" style={{ fontSize: 12, color: "#475569" }}>Batch size</label>
+            <input
+              id="ownership-batch-size"
+              aria-label="Ownership batch size"
+              type="number"
+              min={1}
+              step={1}
+              value={ownershipBatchSize}
+              onChange={(event) => {
+                setOwnershipBatchSize(event.target.value);
+                setOwnershipRunMessage(null);
+              }}
+              style={{
+                width: 86,
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                padding: "6px 8px",
+                fontSize: 12,
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={loadOwnershipMonitorStatus}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+                cursor: "pointer", fontSize: 12, color: "#555",
+              }}
+            >
+              Refresh Monitor
+            </button>
+            <button
+              onClick={runOwnershipRefresh}
+              disabled={ownershipRunLoading || ownershipMonitorStatus?.running === true}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: "#0f766e",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: ownershipRunLoading || ownershipMonitorStatus?.running ? "not-allowed" : "pointer",
+                opacity: ownershipRunLoading || ownershipMonitorStatus?.running ? 0.65 : 1,
+              }}
+            >
+              {ownershipRunLoading
+                ? "Starting..."
+                : ownershipMonitorStatus?.running
+                  ? "Run in progress"
+                  : "Run Ownership Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {ownershipMonitorLoading && (
+          <div style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>Loading ownership monitor status...</div>
+        )}
+
+        {!ownershipMonitorLoading && ownershipMonitorError && (
+          <div style={{ marginBottom: 8, fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 10px" }}>
+            {ownershipMonitorError}
+          </div>
+        )}
+
+        {ownershipRunMessage && (
+          <div style={{
+            marginBottom: 10,
+            fontSize: 12,
+            borderRadius: 6,
+            padding: "8px 10px",
+            color: ownershipRunMessage.type === "success" ? "#065f46" : "#991b1b",
+            background: ownershipRunMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+          }}>
+            {ownershipRunMessage.text}
+          </div>
+        )}
+
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <div>
             <h4 style={{ margin: 0, fontSize: 15 }}>Ownership Change Feed</h4>

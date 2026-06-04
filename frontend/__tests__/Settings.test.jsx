@@ -73,6 +73,28 @@ describe("Settings", () => {
         });
       }
 
+      if (url === "/api/monitor/ownership/status") {
+        return jsonResponse({
+          enabled: true,
+          running: false,
+          stale_days: 30,
+          batch_size: 100,
+          check_interval_ms: 3600000,
+          schedule: "Daily",
+          change_tracking_enabled: true,
+          change_fields: ["parent_company", "structure"],
+        });
+      }
+
+      if (url === "/api/monitor/ownership/run" && method === "POST") {
+        const payload = JSON.parse(options?.body || "{}");
+        const batchSize = Number(payload?.batch_size || 100);
+        return jsonResponse({
+          message: `Starting ownership stale refresh for up to ${batchSize} companies`,
+          batch_size: batchSize,
+        }, true, 202);
+      }
+
       if (url === "/api/unified-shortlist") {
         return jsonResponse({
           companies: [
@@ -159,6 +181,32 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(screen.getByText("Showing 1/1 changed companies in last 90 days")).toBeInTheDocument();
     });
+  });
+
+  it("shows ownership monitor status and starts a manual run", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Daily")).toBeInTheDocument();
+      expect(screen.getByText("1 hr")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Ownership batch size" }), {
+      target: { value: "42" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run Ownership Refresh" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Starting ownership stale refresh for up to 42 companies")).toBeInTheDocument();
+    });
+
+    const runCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === "/api/monitor/ownership/run" && options?.method === "POST"
+    );
+    expect(runCall).toBeTruthy();
+    expect(JSON.parse(runCall[1].body)).toEqual({ batch_size: 42 });
   });
 
   it("shows validation error and blocks save when segment totals are invalid", async () => {
