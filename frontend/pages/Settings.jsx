@@ -27,6 +27,40 @@ const OWNERSHIP_SORT_OPTIONS = [
   { value: "impact", label: "High Impact First" },
 ];
 
+const OWNERSHIP_TRIAGE_PRESET_OPTIONS = [
+  { value: "custom", label: "Custom" },
+  { value: "cross_border_priority", label: "Cross-border Priority" },
+  { value: "high_impact_multi_signal", label: "High Impact + Multi-Signal" },
+  { value: "parent_restructure_watch", label: "Parent Restructure Watch" },
+];
+
+const OWNERSHIP_TRIAGE_PRESET_CONFIGS = {
+  cross_border_priority: {
+    since_days: 90,
+    sort: "impact",
+    min_changed_fields: "all",
+    parent_country_scope: "non_uk",
+    changed_field: "all",
+    impact: "all",
+  },
+  high_impact_multi_signal: {
+    since_days: 90,
+    sort: "impact",
+    min_changed_fields: "2",
+    parent_country_scope: "all",
+    changed_field: "all",
+    impact: "high",
+  },
+  parent_restructure_watch: {
+    since_days: 180,
+    sort: "recent",
+    min_changed_fields: "all",
+    parent_country_scope: "all",
+    changed_field: "parent_company",
+    impact: "all",
+  },
+};
+
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
   return digits.length === 5 ? digits : null;
@@ -147,6 +181,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
+  const [ownershipTriagePreset, setOwnershipTriagePreset] = useState("custom");
   const [ownershipSortMode, setOwnershipSortMode] = useState("recent");
   const [ownershipSignalDensity, setOwnershipSignalDensity] = useState("all");
   const [ownershipParentCountryScope, setOwnershipParentCountryScope] = useState("all");
@@ -460,6 +495,24 @@ export default function Settings({ onNavigateToCompany }) {
       : ownershipParentCountryScope === "unknown"
         ? "Unknown parent"
         : null;
+
+  const ownershipTriagePresetLabel = useMemo(() => {
+    if (ownershipTriagePreset === "custom") return null;
+    const selectedPreset = OWNERSHIP_TRIAGE_PRESET_OPTIONS.find((option) => option.value === ownershipTriagePreset);
+    return selectedPreset?.label || null;
+  }, [ownershipTriagePreset]);
+
+  const applyOwnershipTriagePreset = useCallback((presetKey) => {
+    const preset = OWNERSHIP_TRIAGE_PRESET_CONFIGS[presetKey];
+    if (!preset) return;
+
+    setOwnershipSinceDays(Number.parseInt(String(preset.since_days || 30), 10) || 30);
+    setOwnershipSortMode(String(preset.sort || "recent"));
+    setOwnershipSignalDensity(String(preset.min_changed_fields || "all"));
+    setOwnershipParentCountryScope(String(preset.parent_country_scope || "all"));
+    setOwnershipChangedField(String(preset.changed_field || "all"));
+    setOwnershipImpactFilter(String(preset.impact || "all"));
+  }, []);
 
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
@@ -1312,6 +1365,7 @@ export default function Settings({ onNavigateToCompany }) {
             {!ownershipChangesLoading && ownershipChanges && (
               <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
+                {ownershipTriagePresetLabel ? ` · preset: ${ownershipTriagePresetLabel}` : ""}
                 {ownershipSortMode !== "recent" ? ` · sort: ${ownershipSortLabel}` : ""}
                 {ownershipSignalDensityLabel ? ` · signals: ${ownershipSignalDensityLabel}` : ""}
                 {ownershipParentCountryScopeLabel ? ` · parent: ${ownershipParentCountryScopeLabel}` : ""}
@@ -1332,6 +1386,32 @@ export default function Settings({ onNavigateToCompany }) {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label htmlFor="ownership-triage-preset" style={{ fontSize: 12, color: "#475569" }}>
+              Preset
+            </label>
+            <select
+              id="ownership-triage-preset"
+              aria-label="Ownership triage preset"
+              value={ownershipTriagePreset}
+              onChange={(event) => {
+                const selectedPreset = String(event.target.value || "custom");
+                setOwnershipTriagePreset(selectedPreset);
+                if (selectedPreset !== "custom") {
+                  applyOwnershipTriagePreset(selectedPreset);
+                }
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {OWNERSHIP_TRIAGE_PRESET_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <label htmlFor="ownership-change-window" style={{ fontSize: 12, color: "#475569" }}>
               Window
             </label>
@@ -1340,6 +1420,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership change window"
               value={ownershipSinceDays}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipSinceDays(Number.parseInt(event.target.value, 10) || 30);
               }}
               style={{
@@ -1362,6 +1443,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership changed field filter"
               value={ownershipChangedField}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipChangedField(String(event.target.value || "all"));
               }}
               style={{
@@ -1384,6 +1466,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership change sort mode"
               value={ownershipSortMode}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipSortMode(String(event.target.value || "recent"));
               }}
               style={{
@@ -1406,6 +1489,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership signal density filter"
               value={ownershipSignalDensity}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipSignalDensity(String(event.target.value || "all"));
               }}
               style={{
@@ -1428,6 +1512,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership parent country filter"
               value={ownershipParentCountryScope}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipParentCountryScope(String(event.target.value || "all"));
               }}
               style={{
@@ -1450,6 +1535,7 @@ export default function Settings({ onNavigateToCompany }) {
               aria-label="Ownership impact filter"
               value={ownershipImpactFilter}
               onChange={(event) => {
+                setOwnershipTriagePreset("custom");
                 setOwnershipImpactFilter(String(event.target.value || "all"));
               }}
               style={{
