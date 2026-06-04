@@ -736,6 +736,7 @@ describe("API endpoints", () => {
       assert.equal(data.offset, 0);
       assert.equal(data.since_days, 90);
       assert.equal(Array.isArray(data.changed_fields_filter), true);
+      assert.equal(typeof data.changed_fields_counts, "object");
       assert.ok(Array.isArray(data.rows));
 
       if (data.rows.length > 0) {
@@ -757,6 +758,7 @@ describe("API endpoints", () => {
       assert.equal(status, 200);
       assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.deepEqual(data.changed_fields_filter, ["parent_company"]);
+      assert.equal(typeof data.changed_fields_counts, "object");
 
       if (data.rows.length > 0) {
         for (const row of data.rows) {

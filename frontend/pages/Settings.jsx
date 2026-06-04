@@ -266,16 +266,40 @@ export default function Settings({ onNavigateToCompany }) {
     return total > ownershipRows.length;
   }, [ownershipChanges, ownershipRows]);
 
+  const ownershipChangedFieldCounts = useMemo(() => {
+    const rawCounts = ownershipChanges?.changed_fields_counts;
+    if (!rawCounts || typeof rawCounts !== "object" || Array.isArray(rawCounts)) return {};
+
+    const normalized = {};
+    for (const [field, value] of Object.entries(rawCounts)) {
+      const key = String(field || "").trim();
+      if (!key) continue;
+      const count = Number(value);
+      normalized[key] = Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+    }
+    return normalized;
+  }, [ownershipChanges]);
+
   const ownershipChangedFieldOptions = useMemo(() => {
-    const fields = Array.isArray(ownershipMonitorStatus?.change_fields)
+    const baseFields = Array.isArray(ownershipMonitorStatus?.change_fields)
       ? ownershipMonitorStatus.change_fields.map((field) => String(field || "").trim()).filter(Boolean)
       : [];
-    const uniqueFields = [...new Set(fields)];
+    const extraFields = Object.keys(ownershipChangedFieldCounts)
+      .filter((field) => !baseFields.includes(field))
+      .sort((a, b) => a.localeCompare(b));
+    const uniqueFields = [...new Set([...baseFields, ...extraFields])];
+
     return [
       { value: "all", label: "All fields" },
-      ...uniqueFields.map((field) => ({ value: field, label: humanizeFieldToken(field) })),
+      ...uniqueFields.map((field) => {
+        const count = Number(ownershipChangedFieldCounts[field] || 0);
+        const label = count > 0
+          ? `${humanizeFieldToken(field)} (${count})`
+          : humanizeFieldToken(field);
+        return { value: field, label };
+      }),
     ];
-  }, [ownershipMonitorStatus]);
+  }, [ownershipChangedFieldCounts, ownershipMonitorStatus]);
 
   const ownershipChangedFieldLabel = ownershipChangedField !== "all"
     ? humanizeFieldToken(ownershipChangedField)
@@ -348,6 +372,9 @@ export default function Settings({ onNavigateToCompany }) {
           offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : safeOffset,
           since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
           changed_fields_filter: Array.isArray(data?.changed_fields_filter) ? data.changed_fields_filter.filter(Boolean) : [],
+          changed_fields_counts: data?.changed_fields_counts && typeof data.changed_fields_counts === "object" && !Array.isArray(data.changed_fields_counts)
+            ? data.changed_fields_counts
+            : {},
           rows: Array.isArray(data?.rows) ? data.rows : [],
         };
 

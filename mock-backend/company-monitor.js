@@ -243,6 +243,7 @@ export function listOwnershipChangedCompanies(options = {}) {
 
   const companies = getMonitoredCompanies({ status: "active" });
   const changedRows = [];
+  const changedFieldCounts = {};
 
   for (const company of companies) {
     const snapshot = getOwnershipSnapshot(company.company_number);
@@ -251,13 +252,18 @@ export function listOwnershipChangedCompanies(options = {}) {
     const changedFields = Array.isArray(snapshot?.changed_fields)
       ? snapshot.changed_fields.map((field) => normalizeOwnershipChangeFieldToken(field)).filter(Boolean)
       : [];
-    if (changedFieldsFilter.length > 0 && !changedFields.some((field) => changedFieldsFilter.includes(field))) {
-      continue;
-    }
 
     const lastChangedAt = snapshot?.last_changed_at || null;
     const lastChangedMs = parseOwnershipChangeTimestamp(lastChangedAt);
     if (lastChangedMs !== null && lastChangedMs < sinceMs) continue;
+
+    for (const field of changedFields) {
+      changedFieldCounts[field] = Number(changedFieldCounts[field] || 0) + 1;
+    }
+
+    if (changedFieldsFilter.length > 0 && !changedFields.some((field) => changedFieldsFilter.includes(field))) {
+      continue;
+    }
 
     changedRows.push({
       company_number: company.company_number,
@@ -289,6 +295,7 @@ export function listOwnershipChangedCompanies(options = {}) {
     offset,
     since_days: sinceDays,
     changed_fields_filter: changedFieldsFilter,
+    changed_fields_counts: changedFieldCounts,
     rows: changedRows.slice(offset, offset + limit),
   };
 }
