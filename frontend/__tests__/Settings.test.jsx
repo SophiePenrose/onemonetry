@@ -57,6 +57,7 @@ describe("Settings", () => {
         const params = new URLSearchParams(search);
         const sinceDays = Number(params.get("since_days") || "30");
         const offset = Number(params.get("offset") || "0");
+        const changedField = String(params.get("changed_field") || "").trim();
 
         const allRows = [
           {
@@ -82,13 +83,17 @@ describe("Settings", () => {
             parent_country: null,
           },
         ];
-        const rows = allRows.slice(offset, offset + 1);
+        const filteredRows = changedField
+          ? allRows.filter((row) => Array.isArray(row.changed_fields) && row.changed_fields.includes(changedField))
+          : allRows;
+        const rows = filteredRows.slice(offset, offset + 1);
 
         return jsonResponse({
-          total: allRows.length,
+          total: filteredRows.length,
           limit: Number(params.get("limit") || "20"),
           offset,
           since_days: sinceDays,
+          changed_fields_filter: changedField ? [changedField] : [],
           rows,
         });
       }
@@ -264,6 +269,27 @@ describe("Settings", () => {
       return href.startsWith("/api/monitor/ownership/changes") && href.includes("offset=1");
     });
     expect(sawOffsetRequest).toBe(true);
+  });
+
+  it("filters ownership changes by selected changed-field", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership changed field filter" }), {
+      target: { value: "parent_company" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme Holdings Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/1 changed companies in last 30 days · field: Parent Company")).toBeInTheDocument();
+    });
+
+    const sawFieldRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("changed_field=parent_company");
+    });
+    expect(sawFieldRequest).toBe(true);
   });
 
   it("opens company detail from ownership feed row action", async () => {

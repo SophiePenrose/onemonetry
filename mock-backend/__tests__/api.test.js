@@ -735,6 +735,7 @@ describe("API endpoints", () => {
       assert.equal(data.limit, 25);
       assert.equal(data.offset, 0);
       assert.equal(data.since_days, 90);
+      assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.ok(Array.isArray(data.rows));
 
       if (data.rows.length > 0) {
@@ -746,6 +747,22 @@ describe("API endpoints", () => {
         assert.equal(typeof row.last_changed_at === "string" || row.last_changed_at === null, true);
         assert.equal(typeof row.last_checked_at === "string" || row.last_checked_at === null, true);
         assert.equal(typeof row.structure === "string" || row.structure === null, true);
+      }
+    });
+
+    it("accepts changed-field filter on ownership changes endpoint", async () => {
+      const { status, data } = await fetchJSON(
+        "/api/monitor/ownership/changes?limit=25&offset=0&since_days=90&changed_field=parent_company"
+      );
+      assert.equal(status, 200);
+      assert.equal(Array.isArray(data.changed_fields_filter), true);
+      assert.deepEqual(data.changed_fields_filter, ["parent_company"]);
+
+      if (data.rows.length > 0) {
+        for (const row of data.rows) {
+          assert.equal(Array.isArray(row.changed_fields), true);
+          assert.equal(row.changed_fields.includes("parent_company"), true);
+        }
       }
     });
   });
