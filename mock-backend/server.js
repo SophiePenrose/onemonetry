@@ -77,6 +77,12 @@ import {
   stopStaleFilingMonitor,
   isStaleMonitorRunning,
   getStaleMonitorProgress,
+  runOwnershipStaleBatch,
+  getOwnershipStaleMonitorStatus,
+  startOwnershipStaleMonitor,
+  stopOwnershipStaleMonitor,
+  isOwnershipStaleMonitorRunning,
+  getOwnershipStaleMonitorProgress,
 } from "./company-monitor.js";
 import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 import {
@@ -4689,6 +4695,7 @@ app.post("/api/analysis-queue/retry", async (req, res) => {
 
 app.get("/api/monitor/status", (_req, res) => {
   const staleStatus = getStaleFilingMonitorStatus();
+  const ownershipStatus = getOwnershipStaleMonitorStatus();
   res.json({
     ...getWeeklyMonitorStatus(),
     running: isMonitorRunning(),
@@ -4697,6 +4704,11 @@ app.get("/api/monitor/status", (_req, res) => {
       ...staleStatus,
       running: isStaleMonitorRunning(),
       progress: getStaleMonitorProgress(),
+    },
+    ownership_monitor: {
+      ...ownershipStatus,
+      running: isOwnershipStaleMonitorRunning(),
+      progress: getOwnershipStaleMonitorProgress(),
     },
     threshold: getTurnoverThreshold(),
     filing_count: getFilingCount(),
@@ -4770,11 +4782,12 @@ app.get("/api/monitor/stale/status", (_req, res) => {
 app.post("/api/monitor/stale/run", async (req, res) => {
   const batchSize = parseInt(req.body?.batch_size) || 100;
 
-  if (isMonitorRunning() || isStaleMonitorRunning()) {
+  if (isMonitorRunning() || isStaleMonitorRunning() || isOwnershipStaleMonitorRunning()) {
     return res.status(409).json({
       error: "A monitor job is already running",
       weekly_progress: getMonitorProgress(),
       stale_progress: getStaleMonitorProgress(),
+      ownership_progress: getOwnershipStaleMonitorProgress(),
     });
   }
 
@@ -4797,6 +4810,42 @@ app.post("/api/monitor/stale/scheduler/start", (_req, res) => {
 app.post("/api/monitor/stale/scheduler/stop", (_req, res) => {
   const status = stopStaleFilingMonitor();
   res.json({ message: "Stale filing monitor scheduler stopped", ...status });
+});
+
+app.get("/api/monitor/ownership/status", (_req, res) => {
+  res.json(getOwnershipStaleMonitorStatus());
+});
+
+app.post("/api/monitor/ownership/run", async (req, res) => {
+  const batchSize = parseInt(req.body?.batch_size) || 100;
+
+  if (isMonitorRunning() || isStaleMonitorRunning() || isOwnershipStaleMonitorRunning()) {
+    return res.status(409).json({
+      error: "A monitor job is already running",
+      weekly_progress: getMonitorProgress(),
+      stale_progress: getStaleMonitorProgress(),
+      ownership_progress: getOwnershipStaleMonitorProgress(),
+    });
+  }
+
+  res.status(202).json({
+    message: `Starting ownership stale refresh for up to ${batchSize} companies`,
+    batch_size: batchSize,
+  });
+
+  runOwnershipStaleBatch(batchSize).catch((err) => {
+    console.error("Ownership stale monitor batch error:", err.message);
+  });
+});
+
+app.post("/api/monitor/ownership/scheduler/start", (_req, res) => {
+  const status = startOwnershipStaleMonitor();
+  res.json({ message: "Ownership stale monitor scheduler started", ...status });
+});
+
+app.post("/api/monitor/ownership/scheduler/stop", (_req, res) => {
+  const status = stopOwnershipStaleMonitor();
+  res.json({ message: "Ownership stale monitor scheduler stopped", ...status });
 });
 
 // --- LLM Company Analysis ---
@@ -7016,6 +7065,7 @@ function startServer() {
       console.log("Tech enrichment auto-refresh: disabled in lightweight runtime");
       console.log("Daily auto-pull: disabled in lightweight runtime");
       console.log("Stale filing monitor: disabled in lightweight runtime");
+      console.log("Ownership stale monitor: disabled in lightweight runtime");
       console.log("Backfill autorun: disabled in lightweight runtime");
       return;
     }
@@ -7043,9 +7093,11 @@ function startServer() {
     scheduleWeeklyReport();
     startAutoPull();
     startStaleFilingMonitor();
+    const ownershipStaleStatus = startOwnershipStaleMonitor();
     const backfillAutorun = startBackfillAutorun();
     console.log("Daily auto-pull: enabled (checking every 12 hours for new CH files)");
     console.log("Stale filing monitor: enabled (companies with >12 months since last filing checked every 14 days)");
+    console.log(`Ownership stale monitor: enabled (${ownershipStaleStatus.schedule})`);
     if (backfillAutorun.enabled) {
       console.log(
         `Backfill autorun: enabled (normal ${backfillAutorun.max_files} file(s) every ${Math.round(backfillAutorun.interval_ms / 60000)}m, catch-up ${backfillAutorun.catchup_max_files} file(s) every ${Math.round(backfillAutorun.catchup_interval_ms / 60000)}m when pending >= ${backfillAutorun.backlog_threshold})`
