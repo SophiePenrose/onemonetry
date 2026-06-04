@@ -48,6 +48,13 @@ export function formatBpsDelta(finalScore, baseScore) {
   return `${sign}${bps.toFixed(0)}bps`;
 }
 
+export function formatOwnershipTimestamp(value) {
+  if (!value) return "Unknown";
+  const ts = Date.parse(String(value));
+  if (!Number.isFinite(ts)) return "Unknown";
+  return new Date(ts).toLocaleString("en-GB");
+}
+
 function Field({ label, children }) {
   return (
     <div style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 12 }}>
@@ -238,6 +245,15 @@ export default function CompanyDetail({ companyId }) {
   const ownershipClassLabel = String(ownershipStructure?.structure || "unknown")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+  const ownershipConfidenceLabel = String(ownershipStructure?.confidence || "unknown")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const ownershipUpdatedAtLabel = formatOwnershipTimestamp(
+    ownershipStructure?.updated_at || ownershipStructure?.fetched_at
+  );
+  const ownershipSourceLabel = String(ownershipStructure?.source || "companies_house_psc")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
   const eligibleMotionsLabel = useMemo(
     () => allMotionScores.map((motion) => motion.motion).join(", "),
@@ -420,6 +436,11 @@ export default function CompanyDetail({ companyId }) {
               <div style={{ fontSize: 12, color: "#64748b" }}>Significant Corporate Controllers</div>
               <div style={{ fontSize: 16, fontWeight: 700 }}>{Number(ownershipStructure.significant_corporate_controllers_count || significantControllers.length || 0)}</div>
               <div style={{ fontSize: 12, color: "#475569" }}>Non-UK: {Number(ownershipStructure.non_uk_significant_corporate_controllers_count || nonUkControllers.length || 0)}</div>
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Ownership Data Freshness</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>Updated: {ownershipUpdatedAtLabel}</div>
+              <div style={{ fontSize: 12, color: "#475569" }}>Confidence: {ownershipConfidenceLabel} · Source: {ownershipSourceLabel}</div>
             </div>
           </div>
         ) : (

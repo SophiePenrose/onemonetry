@@ -4,6 +4,7 @@ import {
   formatScore,
   formatPercent,
   formatBpsDelta,
+  formatOwnershipTimestamp,
 } from "../pages/CompanyDetail";
 
 describe("CompanyDetail formatting helpers", () => {
@@ -39,5 +40,11 @@ describe("CompanyDetail formatting helpers", () => {
     expect(formatBpsDelta(0.86, 0.74)).toBe("+12bps");
     expect(formatBpsDelta(0.66, 0.74)).toBe("-8bps");
     expect(formatBpsDelta("bad", 0.74)).toBe("N/A");
+  });
+
+  it("formats ownership timestamps and unknown fallback", () => {
+    expect(formatOwnershipTimestamp("2026-06-04T10:00:00.000Z")).toContain("2026");
+    expect(formatOwnershipTimestamp("bad-date")).toBe("Unknown");
+    expect(formatOwnershipTimestamp(null)).toBe("Unknown");
   });
 });
