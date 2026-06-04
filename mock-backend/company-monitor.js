@@ -92,6 +92,82 @@ function isOwnershipSnapshotStale(snapshot, nowMs = Date.now()) {
   return nowMs - timestamp >= OWNERSHIP_STALE_DAYS * 24 * 60 * 60 * 1000;
 }
 
+const OWNERSHIP_CHANGE_FIELDS = [
+  "structure",
+  "parent_company",
+  "parent_country",
+  "psc_total_count",
+  "corporate_controller_count",
+  "significant_corporate_controllers_count",
+  "non_uk_significant_corporate_controllers_count",
+  "governing_law_non_uk_present",
+  "confidence",
+  "controllers_fingerprint",
+];
+
+function normalizeOwnershipText(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim().toLowerCase();
+}
+
+function normalizeOwnershipCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function buildControllersFingerprint(snapshot) {
+  const controllers = Array.isArray(snapshot?.significant_corporate_controllers)
+    ? snapshot.significant_corporate_controllers
+    : [];
+
+  return controllers
+    .slice(0, 20)
+    .map((controller) => [
+      normalizeOwnershipText(controller?.name),
+      normalizeOwnershipText(controller?.country_registered),
+      normalizeOwnershipText(controller?.kind),
+      controller?.non_uk_jurisdiction ? "1" : "0",
+    ].join("|"))
+    .join("||");
+}
+
+function buildOwnershipComparable(snapshot) {
+  return {
+    structure: normalizeOwnershipText(snapshot?.structure),
+    parent_company: normalizeOwnershipText(snapshot?.parent_company),
+    parent_country: normalizeOwnershipText(snapshot?.parent_country),
+    psc_total_count: normalizeOwnershipCount(snapshot?.psc_total_count),
+    corporate_controller_count: normalizeOwnershipCount(snapshot?.corporate_controller_count),
+    significant_corporate_controllers_count: normalizeOwnershipCount(snapshot?.significant_corporate_controllers_count),
+    non_uk_significant_corporate_controllers_count: normalizeOwnershipCount(snapshot?.non_uk_significant_corporate_controllers_count),
+    governing_law_non_uk_present: Boolean(snapshot?.governing_law_non_uk_present),
+    confidence: normalizeOwnershipText(snapshot?.confidence),
+    controllers_fingerprint: buildControllersFingerprint(snapshot),
+  };
+}
+
+function detectOwnershipChanges(previousSnapshot, nextSnapshot) {
+  if (!previousSnapshot) {
+    return {
+      changeDetected: false,
+      changedFields: [],
+      baselined: true,
+    };
+  }
+
+  const previousComparable = buildOwnershipComparable(previousSnapshot);
+  const nextComparable = buildOwnershipComparable(nextSnapshot);
+  const changedFields = OWNERSHIP_CHANGE_FIELDS.filter(
+    (field) => previousComparable[field] !== nextComparable[field]
+  );
+
+  return {
+    changeDetected: changedFields.length > 0,
+    changedFields,
+    baselined: false,
+  };
+}
+
 function getOwnershipStaleCompanies(limit = OWNERSHIP_STALE_BATCH_SIZE) {
   const maxRows = Math.max(1, Number.parseInt(String(limit || OWNERSHIP_STALE_BATCH_SIZE), 10) || OWNERSHIP_STALE_BATCH_SIZE);
   const staleRows = [];
@@ -340,6 +416,9 @@ export async function runOwnershipStaleBatch(batchSize = OWNERSHIP_STALE_BATCH_S
     total: companies.length,
     checked: 0,
     refreshed: 0,
+    changed: 0,
+    unchanged: 0,
+    baselined: 0,
     missing_snapshot: 0,
     errors: 0,
   };
@@ -353,13 +432,29 @@ export async function runOwnershipStaleBatch(batchSize = OWNERSHIP_STALE_BATCH_S
         if (ownershipLookup?.error || !ownershipLookup?.summary) {
           ownershipStaleMonitorProgress.errors++;
         } else {
-          if (!existingSnapshot) {
-            ownershipStaleMonitorProgress.missing_snapshot++;
-          }
-          setSetting(`ownership_${company.company_number}`, {
+          const nowIso = new Date().toISOString();
+          const change = detectOwnershipChanges(existingSnapshot, ownershipLookup.summary);
+          const nextSnapshot = {
             ...ownershipLookup.summary,
             source: "companies_house_api",
-          });
+            last_checked_at: nowIso,
+            change_detected: change.changeDetected,
+            changed_fields: change.changedFields,
+            last_changed_at: change.changeDetected
+              ? nowIso
+              : (existingSnapshot?.last_changed_at || null),
+          };
+
+          if (!existingSnapshot) {
+            ownershipStaleMonitorProgress.missing_snapshot++;
+            ownershipStaleMonitorProgress.baselined++;
+          } else if (change.changeDetected) {
+            ownershipStaleMonitorProgress.changed++;
+          } else {
+            ownershipStaleMonitorProgress.unchanged++;
+          }
+
+          setSetting(`ownership_${company.company_number}`, nextSnapshot);
           ownershipStaleMonitorProgress.refreshed++;
         }
       } catch {
@@ -557,6 +652,8 @@ export function getOwnershipStaleMonitorStatus() {
     stale_days: OWNERSHIP_STALE_DAYS,
     batch_size: OWNERSHIP_STALE_BATCH_SIZE,
     check_interval_ms: OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS,
+    change_tracking_enabled: true,
+    change_fields: OWNERSHIP_CHANGE_FIELDS,
   };
 }
 

@@ -712,6 +712,8 @@ describe("API endpoints", () => {
       assert.equal(typeof data.ownership_monitor.running, "boolean");
       assert.equal(typeof data.ownership_monitor.stale_days, "number");
       assert.equal(typeof data.ownership_monitor.batch_size, "number");
+      assert.equal(typeof data.ownership_monitor.change_tracking_enabled, "boolean");
+      assert.equal(Array.isArray(data.ownership_monitor.change_fields), true);
     });
 
     it("returns ownership scheduler metadata on GET /api/monitor/ownership/status", async () => {
@@ -722,6 +724,8 @@ describe("API endpoints", () => {
       assert.equal(typeof data.stale_days, "number");
       assert.equal(typeof data.check_interval_ms, "number");
       assert.equal(typeof data.schedule, "string");
+      assert.equal(typeof data.change_tracking_enabled, "boolean");
+      assert.equal(Array.isArray(data.change_fields), true);
     });
   });
 
