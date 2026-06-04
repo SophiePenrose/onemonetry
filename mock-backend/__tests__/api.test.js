@@ -141,7 +141,37 @@ describe("API endpoints", () => {
       assert.equal(status, 200);
       assert.ok(Array.isArray(data.exclusions.prohibited_industries));
       assert.ok(data.exclusions.prohibited_industries.includes("Gambling"));
+      assert.ok(Array.isArray(data.exclusions.prohibited_sic_codes));
       assert.ok(Array.isArray(data.suppressed_states));
+    });
+  });
+
+  describe("PUT /api/exclusions", () => {
+    it("accepts and persists prohibited SIC code policy", async () => {
+      const baseline = await fetchJSON("/api/exclusions");
+      assert.equal(baseline.status, 200);
+
+      const payload = {
+        prohibited_sic_codes: ["62012", "62012", "64 201", "invalid"],
+      };
+      const updated = await fetchJSON("/api/exclusions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      assert.equal(updated.status, 200);
+      assert.deepEqual(updated.data.exclusions.prohibited_sic_codes, ["62012", "64201"]);
+
+      const roundtrip = await fetchJSON("/api/exclusions");
+      assert.equal(roundtrip.status, 200);
+      assert.deepEqual(roundtrip.data.exclusions.prohibited_sic_codes, ["62012", "64201"]);
+
+      await fetchJSON("/api/exclusions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(baseline.data.exclusions),
+      });
     });
   });
 
@@ -215,6 +245,39 @@ describe("API endpoints", () => {
       assert.equal(typeof signals.status_major_incidents_open, "number");
       assert.equal(typeof signals.status_degraded_components, "number");
       assert.ok(["low", "medium", "high", null].includes(signals.status_health_band));
+      assert.equal(Object.prototype.hasOwnProperty.call(data.company, "ownership_structure"), true);
+      assert.ok(Array.isArray(data.company.sic_codes));
+    });
+  });
+
+  describe("POST /api/company/:id/ownership/refresh", () => {
+    it("returns ownership refresh result and ownership structure payload", async () => {
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Ownership Refresh Contract Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 32000000,
+          company_number: "12345678",
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const companyId = created.data.company?.id;
+      assert.ok(companyId);
+
+      const { status, data } = await fetchJSON(`/api/company/${companyId}/ownership/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(Object.prototype.hasOwnProperty.call(data, "ownership_refresh"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(data, "ownership_structure"), true);
+      assert.equal(typeof data.company_number, "string");
     });
   });
 

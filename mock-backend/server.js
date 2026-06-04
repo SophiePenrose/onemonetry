@@ -250,6 +250,7 @@ const ALLOWED_TRANSITIONS = {
 // --- Exclusions and suppression ---
 
 const SUPPRESSED_STATES = ["closed_won", "closed_lost", "held_for_review", "revisit_later"];
+let exclusionsCache = null;
 
 function normalizeCompanyNumber(value) {
   const raw = String(value || "").trim().toUpperCase();
@@ -269,11 +270,93 @@ function normalizeCompanyNumber(value) {
   return null;
 }
 
+function normalizeSicCode(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length === 5 ? digits : null;
+}
+
+function normalizeSicCodeList(values) {
+  if (!Array.isArray(values)) return [];
+
+  const seen = new Set();
+  const normalized = [];
+  for (const value of values) {
+    const sicCode = normalizeSicCode(value);
+    if (!sicCode || seen.has(sicCode)) continue;
+    seen.add(sicCode);
+    normalized.push(sicCode);
+  }
+  return normalized;
+}
+
+function normalizeExclusionConfig(exclusions = {}) {
+  const normalizeStringList = (values) => {
+    if (!Array.isArray(values)) return [];
+    const seen = new Set();
+    const normalized = [];
+    for (const value of values) {
+      const token = String(value || "").trim();
+      if (!token || seen.has(token)) continue;
+      seen.add(token);
+      normalized.push(token);
+    }
+    return normalized;
+  };
+
+  return {
+    prohibited_industries: normalizeStringList(exclusions.prohibited_industries),
+    excluded_company_ids: normalizeStringList(exclusions.excluded_company_ids),
+    prohibited_sic_codes: normalizeSicCodeList(exclusions.prohibited_sic_codes),
+  };
+}
+
+function getCurrentExclusions() {
+  if (!exclusionsCache) {
+    exclusionsCache = normalizeExclusionConfig(dbGetExclusions());
+  }
+  return exclusionsCache;
+}
+
+function setCurrentExclusions(exclusions) {
+  exclusionsCache = normalizeExclusionConfig(exclusions);
+  return exclusionsCache;
+}
+
+function getStoredSicCodes(companyNumber) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  if (!normalizedCompanyNumber) return [];
+  return normalizeSicCodeList(getSetting(`sic_codes_${normalizedCompanyNumber}`, []));
+}
+
+function setStoredSicCodes(companyNumber, sicCodes) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  if (!normalizedCompanyNumber) return [];
+  const normalizedCodes = normalizeSicCodeList(sicCodes);
+  setSetting(`sic_codes_${normalizedCompanyNumber}`, normalizedCodes);
+  return normalizedCodes;
+}
+
+function getSicExclusionMatch(companyNumber, sicCodesHint = null) {
+  const prohibitedSicCodes = getCurrentExclusions().prohibited_sic_codes || [];
+  if (prohibitedSicCodes.length === 0) return [];
+
+  const prohibitedSicCodeSet = new Set(prohibitedSicCodes);
+  const hintCodes = normalizeSicCodeList(Array.isArray(sicCodesHint) ? sicCodesHint : []);
+  const sourceCodes = hintCodes.length > 0 ? hintCodes : getStoredSicCodes(companyNumber);
+
+  return sourceCodes.filter((code) => prohibitedSicCodeSet.has(code));
+}
+
 function isExcluded(company) {
-  const exclusions = dbGetExclusions();
+  const exclusions = getCurrentExclusions();
   if (exclusions.excluded_company_ids.includes(company.id)) return { excluded: true, reason: "Manually excluded" };
-  if (exclusions.prohibited_industries.some((ind) => company.industry.toLowerCase().includes(ind.toLowerCase()))) {
+  const industry = String(company?.industry || "");
+  if (industry && exclusions.prohibited_industries.some((ind) => industry.toLowerCase().includes(String(ind || "").toLowerCase()))) {
     return { excluded: true, reason: `Prohibited industry: ${company.industry}` };
+  }
+  const matchedSicCodes = getSicExclusionMatch(company?.company_number, company?.sic_codes);
+  if (matchedSicCodes.length > 0) {
+    return { excluded: true, reason: `Excluded SIC: ${matchedSicCodes.join(", ")}` };
   }
   return { excluded: false };
 }
@@ -292,6 +375,15 @@ function isSuppressed(companyId, companyNumberHint = null) {
     const closedWon = getClosedWonCompany(resolvedCompanyNumber);
     if (closedWon) {
       return { suppressed: true, reason: "Status: Closed Won (registry)", source: "closed_won_registry" };
+    }
+
+    const matchedSicCodes = getSicExclusionMatch(resolvedCompanyNumber);
+    if (matchedSicCodes.length > 0) {
+      return {
+        suppressed: true,
+        reason: `SIC excluded: ${matchedSicCodes.join(", ")}`,
+        source: "sic_exclusion",
+      };
     }
   }
 
@@ -2055,17 +2147,18 @@ app.post("/api/scoring-weights/reset", (_req, res) => {
 });
 
 app.get("/api/exclusions", (_req, res) => {
-  const exclusions = dbGetExclusions();
+  const exclusions = getCurrentExclusions();
   res.json({ exclusions, suppressed_states: SUPPRESSED_STATES });
 });
 
 app.put("/api/exclusions", (req, res) => {
-  const { prohibited_industries, excluded_company_ids } = req.body;
-  const current = dbGetExclusions();
-  const updated = {
+  const { prohibited_industries, excluded_company_ids, prohibited_sic_codes } = req.body || {};
+  const current = getCurrentExclusions();
+  const updated = setCurrentExclusions({
     prohibited_industries: prohibited_industries ?? current.prohibited_industries,
     excluded_company_ids: excluded_company_ids ?? current.excluded_company_ids,
-  };
+    prohibited_sic_codes: prohibited_sic_codes ?? current.prohibited_sic_codes,
+  });
   dbSetExclusions(updated);
   res.json({ exclusions: updated });
 });
@@ -2813,6 +2906,8 @@ app.get("/api/company/:id", async (req, res) => {
       const { stakeholders, assessment } = getProfileStakeholders(profileId, analysis, score, monitorCompany);
       const competitors = getProfileCompetitors(profileId, analysis, score);
       const cadenceHistory = getCadenceLog(profileId);
+      const ownershipStructure = getSetting(`ownership_${companyNumber}`, null);
+      const sicCodes = getStoredSicCodes(companyNumber);
       const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0);
 
       return res.json({
@@ -2821,6 +2916,7 @@ app.get("/api/company/:id", async (req, res) => {
           company_number: companyNumber,
           name: displayName,
           industry: monitorCompany.industry,
+          sic_codes: sicCodes,
           turnover: monitored.latest_turnover,
           employee_count: score?.employees || 0,
           segment,
@@ -2854,6 +2950,7 @@ app.get("/api/company/:id", async (req, res) => {
           analysis_status: analysisStatus,
           analysis_queue_status: detailQueue?.status || null,
           reputation_signals: reputationSignals,
+          ownership_structure: ownershipStructure,
           competitors,
           stakeholders,
           cadence_history: cadenceHistory,
@@ -2880,6 +2977,8 @@ app.get("/api/company/:id", async (req, res) => {
   const reputationSignals = getStatusSignalSnapshot(company.company_number);
   const analysis = enrichAnalysisWithCompetitorSignals(rawAnalysis, storedScore);
   const competitors = getProfileCompetitors(company.id, analysis, storedScore);
+  const ownershipStructure = getSetting(`ownership_${company.company_number}`, null);
+  const sicCodes = getStoredSicCodes(company.company_number);
   const analysisStatus = analysis ? "ready" : "none";
 
   if (product_motion && VALID_MOTIONS.includes(product_motion)) {
@@ -2895,6 +2994,7 @@ app.get("/api/company/:id", async (req, res) => {
         name: company.name,
         company_number: company.company_number,
         industry: company.industry,
+        sic_codes: sicCodes,
         turnover: company.turnover,
         employee_count: company.employee_count,
         latest_annual_report_url: company.latest_annual_report_url,
@@ -2911,6 +3011,7 @@ app.get("/api/company/:id", async (req, res) => {
         analysis,
         analysis_status: analysisStatus,
         reputation_signals: reputationSignals,
+        ownership_structure: ownershipStructure,
         all_motion_scores: profile.motion_scores,
         combined_score: profile.combined_score,
         base_score: profile.base_score,
@@ -2927,6 +3028,7 @@ app.get("/api/company/:id", async (req, res) => {
         name: company.name,
         company_number: company.company_number,
         industry: company.industry,
+        sic_codes: sicCodes,
         turnover: company.turnover,
         employee_count: company.employee_count,
         latest_annual_report_url: company.latest_annual_report_url,
@@ -2947,6 +3049,7 @@ app.get("/api/company/:id", async (req, res) => {
         analysis,
         analysis_status: analysisStatus,
         reputation_signals: reputationSignals,
+        ownership_structure: ownershipStructure,
       },
     });
   }
@@ -3279,6 +3382,9 @@ app.get("/api/companies-house/lookup/:number", async (req, res) => {
     if (data?.charge_summary) {
       upsertCompanyChargeSummary(data.company_number, data.charge_summary, "companies_house_api");
     }
+    if (Array.isArray(data?.sic_codes) && data?.company_number) {
+      setStoredSicCodes(data.company_number, data.sic_codes);
+    }
     if (data?.ownership_summary) {
       setSetting(`ownership_${data.company_number}`, {
         ...data.ownership_summary,
@@ -3455,6 +3561,17 @@ function classifySource3Entity(chData = {}) {
     });
   }
 
+  const configuredSicMatches = getSicExclusionMatch(null, sicCodes);
+  if (configuredSicMatches.length > 0) {
+    return normalizeSource3Assessment({
+      category: "excluded_sic",
+      confidence_tier: "high",
+      confidence_score: 0.98,
+      decision: "auto_filter",
+      reasons: [`SIC excluded by policy (${configuredSicMatches.join(", ")})`],
+    });
+  }
+
   const holdingNameMatches = SOURCE3_HOLDING_NAME_PATTERNS.filter((pattern) => pattern.test(lowerName));
   const hasHoldingSic = sicCodes.some((code) => SOURCE3_HOLDING_SIC_CODES.has(code));
 
@@ -3536,6 +3653,7 @@ function classifySource3Entity(chData = {}) {
 function source3CategoryLabel(category) {
   if (category === "non_trading") return "non-trading";
   if (category === "holding_spv") return "holding/SPV";
+  if (category === "excluded_sic") return "policy SIC exclusion";
   if (category === "stale") return "stale/no recent filing";
   return "operating";
 }
@@ -3632,6 +3750,8 @@ app.post("/api/import/source3/override", async (req, res) => {
       override: true,
       overrideReason,
     });
+
+    setStoredSicCodes(requestedNumber, chData?.sic_codes || []);
 
     COMPANIES.push(importedCompany);
     saveCompanies(COMPANIES);
@@ -3755,6 +3875,8 @@ async function processCSVImport(jobId, companyNumbers) {
           const newCompany = buildSource3ImportedCompany(num, chData, source3Assessment, {
             source: chData.source,
           });
+
+          setStoredSicCodes(num, chData?.sic_codes || []);
 
           COMPANIES.push(newCompany);
           upsertMonitoredCompany({
@@ -6037,6 +6159,35 @@ app.post("/api/company/:id/enrichment/refresh", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Failed to refresh enrichment", detail: err.message });
   }
+});
+
+app.get("/api/company/:id/ownership", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const ownershipStructure = getSetting(`ownership_${context.company_number}`, null);
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    ownership_structure: ownershipStructure,
+  });
+});
+
+app.post("/api/company/:id/ownership/refresh", async (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const refreshResult = await refreshOwnershipEnvelope(context.company_number);
+  const ownershipStructure = getSetting(`ownership_${context.company_number}`, null);
+
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    ownership_refresh: refreshResult,
+    ownership_structure: ownershipStructure,
+  });
 });
 
 app.get("/api/company/:id/website-resolution", (req, res) => {

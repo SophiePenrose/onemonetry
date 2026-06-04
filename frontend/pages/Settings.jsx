@@ -21,6 +21,20 @@ const LAYER_ENTRIES = Object.entries(LAYER_LABELS);
 
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 
+function normalizeSicToken(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length === 5 ? digits : null;
+}
+
+function parseSicListInput(rawValue) {
+  const parts = String(rawValue || "")
+    .split(/[\s,;|]+/)
+    .map((token) => normalizeSicToken(token))
+    .filter(Boolean);
+
+  return [...new Set(parts)];
+}
+
 const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -89,7 +103,12 @@ export default function Settings() {
   const [propensityWeight, setPropensityWeight] = useState(0.15);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  const [exclusionMessage, setExclusionMessage] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [exclusions, setExclusions] = useState(null);
+  const [sicInput, setSicInput] = useState("");
+  const [exclusionsLoading, setExclusionsLoading] = useState(false);
+  const [savingExclusions, setSavingExclusions] = useState(false);
   const [integrationStatus, setIntegrationStatus] = useState(null);
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
@@ -202,6 +221,64 @@ export default function Settings() {
       });
   }, []);
 
+  const loadExclusions = useCallback(() => {
+    setExclusionsLoading(true);
+    fetch("/api/exclusions")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Failed to load exclusions (${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
+        const nextExclusions = data?.exclusions || null;
+        setExclusions(nextExclusions);
+        setSicInput(Array.isArray(nextExclusions?.prohibited_sic_codes)
+          ? nextExclusions.prohibited_sic_codes.join(", ")
+          : "");
+      })
+      .catch((err) => {
+        setExclusionMessage({
+          type: "error",
+          text: err?.message || "Failed to load exclusions",
+        });
+      })
+      .finally(() => {
+        setExclusionsLoading(false);
+      });
+  }, []);
+
+  const handleSaveSicExclusions = useCallback(async () => {
+    setSavingExclusions(true);
+    setExclusionMessage(null);
+    try {
+      const prohibitedSicCodes = parseSicListInput(sicInput);
+      const res = await fetch("/api/exclusions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prohibited_sic_codes: prohibitedSicCodes }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to save SIC exclusions");
+
+      const nextExclusions = data?.exclusions || null;
+      setExclusions(nextExclusions);
+      const normalizedCodes = Array.isArray(nextExclusions?.prohibited_sic_codes)
+        ? nextExclusions.prohibited_sic_codes
+        : [];
+      setSicInput(normalizedCodes.join(", "));
+      setExclusionMessage({
+        type: "success",
+        text: `Saved ${normalizedCodes.length} SIC exclusion code${normalizedCodes.length === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      setExclusionMessage({
+        type: "error",
+        text: err?.message || "Failed to save SIC exclusions",
+      });
+    } finally {
+      setSavingExclusions(false);
+    }
+  }, [sicInput]);
+
   const refreshPreview = useCallback(() => {
     const requestId = previewRequestRef.current + 1;
     previewRequestRef.current = requestId;
@@ -234,6 +311,10 @@ export default function Settings() {
   useEffect(() => {
     loadIntegrationStatus();
   }, [loadIntegrationStatus]);
+
+  useEffect(() => {
+    loadExclusions();
+  }, [loadExclusions]);
 
   useEffect(() => {
     if (!localWeights || Object.keys(localWeights).length === 0) return;
@@ -361,6 +442,83 @@ export default function Settings() {
             {Math.round(propensityWeight * 100)}%
           </span>
         </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+          <h4 style={{ margin: 0, fontSize: 15 }}>SIC Exclusion Policy</h4>
+          <button
+            onClick={loadExclusions}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+              cursor: "pointer", fontSize: 12, color: "#555",
+            }}
+          >
+            Reload
+          </button>
+        </div>
+        <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 10px" }}>
+          Enter UK SIC codes (5 digits) to auto-exclude matching entities during Source 3 intake and suppress them in shortlist workflows when SIC data is available.
+        </p>
+
+        <textarea
+          value={sicInput}
+          onChange={(event) => {
+            setSicInput(event.target.value);
+            setExclusionMessage(null);
+          }}
+          placeholder="Examples: 64201, 64202, 64301"
+          style={{
+            width: "100%",
+            minHeight: 72,
+            borderRadius: 6,
+            border: "1px solid #d1d5db",
+            padding: 10,
+            fontSize: 12,
+            fontFamily: "monospace",
+            boxSizing: "border-box",
+          }}
+        />
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#64748b" }}>
+            Active codes: {Array.isArray(exclusions?.prohibited_sic_codes) ? exclusions.prohibited_sic_codes.length : 0}
+          </span>
+          <button
+            onClick={handleSaveSicExclusions}
+            disabled={savingExclusions || exclusionsLoading}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "none",
+              background: "#0a8754",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: savingExclusions || exclusionsLoading ? "not-allowed" : "pointer",
+              opacity: savingExclusions || exclusionsLoading ? 0.65 : 1,
+            }}
+          >
+            {savingExclusions ? "Saving…" : "Save SIC Policy"}
+          </button>
+        </div>
+
+        {exclusionsLoading && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>Loading exclusions…</div>
+        )}
+
+        {exclusionMessage && (
+          <div style={{
+            marginTop: 10,
+            padding: "8px 10px",
+            borderRadius: 6,
+            fontSize: 12,
+            background: exclusionMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+            color: exclusionMessage.type === "success" ? "#065f46" : "#991b1b",
+          }}>
+            {exclusionMessage.text}
+          </div>
+        )}
       </div>
 
       <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
