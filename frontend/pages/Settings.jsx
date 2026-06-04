@@ -22,6 +22,10 @@ const LAYER_ENTRIES = Object.entries(LAYER_LABELS);
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 const OWNERSHIP_CHANGES_PAGE_SIZE = 20;
 const OWNERSHIP_MONITOR_POLL_INTERVAL_MS = 10000;
+const OWNERSHIP_SORT_OPTIONS = [
+  { value: "recent", label: "Most Recent" },
+  { value: "impact", label: "High Impact First" },
+];
 
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -143,6 +147,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
+  const [ownershipSortMode, setOwnershipSortMode] = useState("recent");
   const [ownershipChangedField, setOwnershipChangedField] = useState("all");
   const [ownershipImpactFilter, setOwnershipImpactFilter] = useState("all");
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
@@ -337,6 +342,10 @@ export default function Settings({ onNavigateToCompany }) {
       ? "Standard impact"
       : null;
 
+  const ownershipSortLabel = ownershipSortMode === "impact"
+    ? "High impact first"
+    : "Most recent";
+
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
     integrationRequestRef.current = requestId;
@@ -384,6 +393,9 @@ export default function Settings({ onNavigateToCompany }) {
       offset: String(safeOffset),
       since_days: String(ownershipSinceDays),
     });
+    if (ownershipSortMode !== "recent") {
+      query.set("sort", ownershipSortMode);
+    }
     if (ownershipChangedField !== "all") {
       query.set("changed_field", ownershipChangedField);
     }
@@ -406,6 +418,7 @@ export default function Settings({ onNavigateToCompany }) {
           limit: Number.isFinite(Number(data?.limit)) ? Number(data.limit) : OWNERSHIP_CHANGES_PAGE_SIZE,
           offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : safeOffset,
           since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
+          sort: String(data?.sort || ownershipSortMode || "recent").toLowerCase(),
           changed_fields_filter: Array.isArray(data?.changed_fields_filter) ? data.changed_fields_filter.filter(Boolean) : [],
           changed_fields_counts: data?.changed_fields_counts && typeof data.changed_fields_counts === "object" && !Array.isArray(data.changed_fields_counts)
             ? data.changed_fields_counts
@@ -438,7 +451,7 @@ export default function Settings({ onNavigateToCompany }) {
           setOwnershipChangesLoading(false);
         }
       });
-  }, [ownershipChangedField, ownershipImpactFilter, ownershipSinceDays]);
+  }, [ownershipChangedField, ownershipImpactFilter, ownershipSinceDays, ownershipSortMode]);
 
   const handleOpenOwnershipCompany = useCallback((row) => {
     if (typeof onNavigateToCompany !== "function") return;
@@ -1170,6 +1183,7 @@ export default function Settings({ onNavigateToCompany }) {
             {!ownershipChangesLoading && ownershipChanges && (
               <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
+                {ownershipSortMode !== "recent" ? ` · sort: ${ownershipSortLabel}` : ""}
                 {ownershipChangedFieldLabel ? ` · field: ${ownershipChangedFieldLabel}` : ""}
                 {ownershipImpactFilterLabel ? ` · impact: ${ownershipImpactFilterLabel}` : ""}
               </div>
@@ -1228,6 +1242,28 @@ export default function Settings({ onNavigateToCompany }) {
               }}
             >
               {ownershipChangedFieldOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <label htmlFor="ownership-change-sort" style={{ fontSize: 12, color: "#475569" }}>
+              Sort
+            </label>
+            <select
+              id="ownership-change-sort"
+              aria-label="Ownership change sort mode"
+              value={ownershipSortMode}
+              onChange={(event) => {
+                setOwnershipSortMode(String(event.target.value || "recent"));
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {OWNERSHIP_SORT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>

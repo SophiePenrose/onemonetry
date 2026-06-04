@@ -735,6 +735,7 @@ describe("API endpoints", () => {
       assert.equal(data.limit, 25);
       assert.equal(data.offset, 0);
       assert.equal(data.since_days, 90);
+      assert.equal(typeof data.sort, "string");
       assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.equal(typeof data.changed_fields_counts, "object");
       assert.equal(typeof data.impact_filter, "string");
@@ -786,6 +787,15 @@ describe("API endpoints", () => {
           assert.equal(row.impact_level, "high");
         }
       }
+    });
+
+    it("accepts sort mode on ownership changes endpoint", async () => {
+      const { status, data } = await fetchJSON(
+        "/api/monitor/ownership/changes?limit=25&offset=0&since_days=90&sort=impact"
+      );
+      assert.equal(status, 200);
+      assert.equal(data.sort, "impact");
+      assert.equal(typeof data.impact_counts, "object");
     });
   });
 
