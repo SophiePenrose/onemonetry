@@ -105,6 +105,15 @@ const OWNERSHIP_CHANGE_FIELDS = [
   "controllers_fingerprint",
 ];
 
+const OWNERSHIP_HIGH_IMPACT_FIELDS = [
+  "structure",
+  "parent_company",
+  "parent_country",
+  "governing_law_non_uk_present",
+  "corporate_controller_count",
+  "non_uk_significant_corporate_controllers_count",
+];
+
 function normalizeOwnershipText(value) {
   if (value === null || value === undefined) return "";
   return String(value).trim().toLowerCase();
@@ -225,6 +234,19 @@ function parseOwnershipChangeFieldFilter(rawValue) {
   return [...new Set(parsedTokens)];
 }
 
+function parseOwnershipImpactFilter(rawValue) {
+  const token = String(rawValue || "").trim().toLowerCase();
+  if (token === "high" || token === "standard") return token;
+  return "all";
+}
+
+function getOwnershipImpactLevel(changedFields) {
+  if (Array.isArray(changedFields) && changedFields.some((field) => OWNERSHIP_HIGH_IMPACT_FIELDS.includes(field))) {
+    return "high";
+  }
+  return "standard";
+}
+
 export function listOwnershipChangedCompanies(options = {}) {
   const requestedLimit = Number.parseInt(String(options.limit || "100"), 10);
   const requestedOffset = Number.parseInt(String(options.offset || "0"), 10);
@@ -235,6 +257,7 @@ export function listOwnershipChangedCompanies(options = {}) {
   const changedFieldsFilter = parseOwnershipChangeFieldFilter(
     options.changed_field ?? options.changed_fields ?? options.changedFields
   );
+  const impactFilter = parseOwnershipImpactFilter(options.impact);
 
   const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
   const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
@@ -244,6 +267,10 @@ export function listOwnershipChangedCompanies(options = {}) {
   const companies = getMonitoredCompanies({ status: "active" });
   const changedRows = [];
   const changedFieldCounts = {};
+  const impactCounts = {
+    high: 0,
+    standard: 0,
+  };
 
   for (const company of companies) {
     const snapshot = getOwnershipSnapshot(company.company_number);
@@ -261,7 +288,13 @@ export function listOwnershipChangedCompanies(options = {}) {
       changedFieldCounts[field] = Number(changedFieldCounts[field] || 0) + 1;
     }
 
+    const impactLevel = getOwnershipImpactLevel(changedFields);
+    impactCounts[impactLevel] = Number(impactCounts[impactLevel] || 0) + 1;
+
     if (changedFieldsFilter.length > 0 && !changedFields.some((field) => changedFieldsFilter.includes(field))) {
+      continue;
+    }
+    if (impactFilter !== "all" && impactLevel !== impactFilter) {
       continue;
     }
 
@@ -270,6 +303,7 @@ export function listOwnershipChangedCompanies(options = {}) {
       company_name: company.company_name || null,
       change_detected: true,
       changed_fields: changedFields,
+      impact_level: impactLevel,
       last_changed_at: lastChangedAt,
       last_checked_at: snapshot?.last_checked_at || snapshot?.updated_at || snapshot?.fetched_at || null,
       structure: snapshot?.structure || null,
@@ -296,6 +330,8 @@ export function listOwnershipChangedCompanies(options = {}) {
     since_days: sinceDays,
     changed_fields_filter: changedFieldsFilter,
     changed_fields_counts: changedFieldCounts,
+    impact_filter: impactFilter,
+    impact_counts: impactCounts,
     rows: changedRows.slice(offset, offset + limit),
   };
 }
