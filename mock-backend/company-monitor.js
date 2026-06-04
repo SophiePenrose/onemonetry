@@ -240,6 +240,12 @@ function parseOwnershipImpactFilter(rawValue) {
   return "all";
 }
 
+function parseOwnershipChangeSort(rawValue) {
+  const token = String(rawValue || "").trim().toLowerCase();
+  if (token === "impact") return "impact";
+  return "recent";
+}
+
 function getOwnershipImpactLevel(changedFields) {
   if (Array.isArray(changedFields) && changedFields.some((field) => OWNERSHIP_HIGH_IMPACT_FIELDS.includes(field))) {
     return "high";
@@ -258,6 +264,7 @@ export function listOwnershipChangedCompanies(options = {}) {
     options.changed_field ?? options.changed_fields ?? options.changedFields
   );
   const impactFilter = parseOwnershipImpactFilter(options.impact);
+  const sortMode = parseOwnershipChangeSort(options.sort);
 
   const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
   const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
@@ -317,6 +324,12 @@ export function listOwnershipChangedCompanies(options = {}) {
   }
 
   changedRows.sort((a, b) => {
+    if (sortMode === "impact") {
+      const aImpactRank = a.impact_level === "high" ? 0 : 1;
+      const bImpactRank = b.impact_level === "high" ? 0 : 1;
+      if (aImpactRank !== bImpactRank) return aImpactRank - bImpactRank;
+    }
+
     const aTs = parseOwnershipChangeTimestamp(a.last_changed_at) || 0;
     const bTs = parseOwnershipChangeTimestamp(b.last_changed_at) || 0;
     if (bTs !== aTs) return bTs - aTs;
@@ -328,6 +341,7 @@ export function listOwnershipChangedCompanies(options = {}) {
     limit,
     offset,
     since_days: sinceDays,
+    sort: sortMode,
     changed_fields_filter: changedFieldsFilter,
     changed_fields_counts: changedFieldCounts,
     impact_filter: impactFilter,

@@ -57,6 +57,7 @@ describe("Settings", () => {
         const params = new URLSearchParams(search);
         const sinceDays = Number(params.get("since_days") || "30");
         const offset = Number(params.get("offset") || "0");
+        const sort = String(params.get("sort") || "recent").trim().toLowerCase();
         const changedField = String(params.get("changed_field") || "").trim();
         const impact = String(params.get("impact") || "").trim().toLowerCase();
 
@@ -102,6 +103,7 @@ describe("Settings", () => {
           limit: Number(params.get("limit") || "20"),
           offset,
           since_days: sinceDays,
+          sort,
           changed_fields_filter: changedField ? [changedField] : [],
           changed_fields_counts: {
             parent_company: 1,
@@ -338,6 +340,26 @@ describe("Settings", () => {
       return href.startsWith("/api/monitor/ownership/changes") && href.includes("impact=high");
     });
     expect(sawImpactRequest).toBe(true);
+  });
+
+  it("requests ownership changes with selected sort mode", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change sort mode" }), {
+      target: { value: "impact" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 1/2 changed companies in last 30 days · sort: High impact first")).toBeInTheDocument();
+    });
+
+    const sawSortRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("sort=impact");
+    });
+    expect(sawSortRequest).toBe(true);
   });
 
   it("opens company detail from ownership feed row action", async () => {
