@@ -61,6 +61,75 @@ const OWNERSHIP_TRIAGE_PRESET_CONFIGS = {
   },
 };
 
+const OWNERSHIP_TRIAGE_STORAGE_KEY = "settings.ownershipTriage.v1";
+
+function getDefaultOwnershipTriageState() {
+  return {
+    preset: "custom",
+    since_days: 30,
+    sort: "recent",
+    min_changed_fields: "all",
+    parent_country_scope: "all",
+    changed_field: "all",
+    impact: "all",
+  };
+}
+
+function readStoredOwnershipTriageState() {
+  const defaults = getDefaultOwnershipTriageState();
+
+  if (typeof window === "undefined" || !window.localStorage) {
+    return defaults;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY);
+    if (!raw) return defaults;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return defaults;
+    }
+
+    const preset = String(parsed.preset || defaults.preset);
+    const sort = String(parsed.sort || defaults.sort);
+    const minChangedFields = String(parsed.min_changed_fields || defaults.min_changed_fields);
+    const parentCountryScope = String(parsed.parent_country_scope || defaults.parent_country_scope);
+    const changedField = String(parsed.changed_field || defaults.changed_field).trim() || defaults.changed_field;
+    const impact = String(parsed.impact || defaults.impact);
+    const sinceDays = Number.parseInt(String(parsed.since_days ?? defaults.since_days), 10);
+
+    const validPresetValues = new Set(OWNERSHIP_TRIAGE_PRESET_OPTIONS.map((option) => option.value));
+    const validSortValues = new Set(OWNERSHIP_SORT_OPTIONS.map((option) => option.value));
+
+    return {
+      preset: validPresetValues.has(preset) ? preset : defaults.preset,
+      since_days: [30, 90, 180].includes(sinceDays) ? sinceDays : defaults.since_days,
+      sort: validSortValues.has(sort) ? sort : defaults.sort,
+      min_changed_fields: ["all", "2", "3"].includes(minChangedFields) ? minChangedFields : defaults.min_changed_fields,
+      parent_country_scope: ["all", "non_uk", "uk", "unknown"].includes(parentCountryScope)
+        ? parentCountryScope
+        : defaults.parent_country_scope,
+      changed_field: changedField,
+      impact: ["all", "high", "standard"].includes(impact) ? impact : defaults.impact,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function writeStoredOwnershipTriageState(state) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(OWNERSHIP_TRIAGE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore persistence failures (for example private mode quota restrictions).
+  }
+}
+
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
   return digits.length === 5 ? digits : null;
@@ -162,6 +231,7 @@ SegmentWeightsCard.propTypes = {
 };
 
 export default function Settings({ onNavigateToCompany }) {
+  const initialOwnershipTriageState = useMemo(() => readStoredOwnershipTriageState(), []);
   const [config, setConfig] = useState(null);
   const [localWeights, setLocalWeights] = useState({});
   const [propensityWeight, setPropensityWeight] = useState(0.15);
@@ -180,13 +250,13 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChanges, setOwnershipChanges] = useState(null);
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
-  const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
-  const [ownershipTriagePreset, setOwnershipTriagePreset] = useState("custom");
-  const [ownershipSortMode, setOwnershipSortMode] = useState("recent");
-  const [ownershipSignalDensity, setOwnershipSignalDensity] = useState("all");
-  const [ownershipParentCountryScope, setOwnershipParentCountryScope] = useState("all");
-  const [ownershipChangedField, setOwnershipChangedField] = useState("all");
-  const [ownershipImpactFilter, setOwnershipImpactFilter] = useState("all");
+  const [ownershipSinceDays, setOwnershipSinceDays] = useState(initialOwnershipTriageState.since_days);
+  const [ownershipTriagePreset, setOwnershipTriagePreset] = useState(initialOwnershipTriageState.preset);
+  const [ownershipSortMode, setOwnershipSortMode] = useState(initialOwnershipTriageState.sort);
+  const [ownershipSignalDensity, setOwnershipSignalDensity] = useState(initialOwnershipTriageState.min_changed_fields);
+  const [ownershipParentCountryScope, setOwnershipParentCountryScope] = useState(initialOwnershipTriageState.parent_country_scope);
+  const [ownershipChangedField, setOwnershipChangedField] = useState(initialOwnershipTriageState.changed_field);
+  const [ownershipImpactFilter, setOwnershipImpactFilter] = useState(initialOwnershipTriageState.impact);
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
   const [ownershipMonitorStatus, setOwnershipMonitorStatus] = useState(null);
   const [ownershipMonitorLoading, setOwnershipMonitorLoading] = useState(false);
@@ -848,6 +918,26 @@ export default function Settings({ onNavigateToCompany }) {
   useEffect(() => {
     loadOwnershipMonitorStatus();
   }, [loadOwnershipMonitorStatus]);
+
+  useEffect(() => {
+    writeStoredOwnershipTriageState({
+      preset: ownershipTriagePreset,
+      since_days: ownershipSinceDays,
+      sort: ownershipSortMode,
+      min_changed_fields: ownershipSignalDensity,
+      parent_country_scope: ownershipParentCountryScope,
+      changed_field: ownershipChangedField,
+      impact: ownershipImpactFilter,
+    });
+  }, [
+    ownershipChangedField,
+    ownershipImpactFilter,
+    ownershipParentCountryScope,
+    ownershipSignalDensity,
+    ownershipSinceDays,
+    ownershipSortMode,
+    ownershipTriagePreset,
+  ]);
 
   useEffect(() => {
     loadExclusions();
