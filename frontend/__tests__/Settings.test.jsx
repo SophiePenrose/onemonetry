@@ -611,6 +611,60 @@ describe("Settings", () => {
     });
   });
 
+  it("copies the current ownership triage URL", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change sort mode" }), {
+      target: { value: "impact" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership parent country filter" }), {
+      target: { value: "non_uk" },
+    });
+
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("ownership_sort")).toBe("impact");
+      expect(params.get("ownership_parent_country_scope")).toBe("non_uk");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy ownership triage link" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+      const copiedUrl = String(writeText.mock.calls[0]?.[0] || "");
+      expect(copiedUrl).toContain("ownership_sort=impact");
+      expect(copiedUrl).toContain("ownership_parent_country_scope=non_uk");
+      expect(screen.getByRole("button", { name: "Copy ownership triage link" })).toHaveTextContent("Copied Link");
+    });
+  });
+
+  it("shows copy failure feedback when triage URL copy fails", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard blocked"));
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy ownership triage link" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Copy ownership triage link" })).toHaveTextContent("Copy Failed");
+    });
+  });
+
   it("clears saved ownership triage preferences and resets controls", async () => {
     globalThis.localStorage?.setItem(OWNERSHIP_TRIAGE_STORAGE_KEY, JSON.stringify({
       preset: "cross_border_priority",

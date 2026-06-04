@@ -368,11 +368,13 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipBatchSize, setOwnershipBatchSize] = useState("100");
   const [ownershipSchedulerLoading, setOwnershipSchedulerLoading] = useState(false);
   const [ownershipSchedulerMessage, setOwnershipSchedulerMessage] = useState(null);
+  const [ownershipCopyLinkMessage, setOwnershipCopyLinkMessage] = useState(null);
   const integrationRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
   const skipOwnershipTriagePersistenceRef = useRef(false);
+  const ownershipCopyLinkFeedbackTimerRef = useRef(null);
 
   const segmentTotals = useMemo(
     () => SEGMENTS.reduce((totals, segment) => {
@@ -700,6 +702,38 @@ export default function Settings({ onNavigateToCompany }) {
     setOwnershipChangedField(defaults.changed_field);
     setOwnershipImpactFilter(defaults.impact);
   }, []);
+
+  const showOwnershipCopyLinkFeedback = useCallback((nextMessage) => {
+    setOwnershipCopyLinkMessage(nextMessage);
+
+    if (ownershipCopyLinkFeedbackTimerRef.current !== null) {
+      window.clearTimeout(ownershipCopyLinkFeedbackTimerRef.current);
+      ownershipCopyLinkFeedbackTimerRef.current = null;
+    }
+
+    ownershipCopyLinkFeedbackTimerRef.current = window.setTimeout(() => {
+      ownershipCopyLinkFeedbackTimerRef.current = null;
+      setOwnershipCopyLinkMessage(null);
+    }, 1800);
+  }, []);
+
+  const copyOwnershipTriageLink = useCallback(async () => {
+    if (typeof window === "undefined") {
+      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed" });
+      return;
+    }
+
+    try {
+      if (!navigator?.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        throw new Error("clipboard_unavailable");
+      }
+
+      await navigator.clipboard.writeText(window.location.href);
+      showOwnershipCopyLinkFeedback({ type: "success", text: "Link copied" });
+    } catch {
+      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed" });
+    }
+  }, [showOwnershipCopyLinkFeedback]);
 
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
@@ -1101,6 +1135,13 @@ export default function Settings({ onNavigateToCompany }) {
     }, 300);
     return () => clearTimeout(timer);
   }, [localWeights, propensityWeight, refreshPreview]);
+
+  useEffect(() => () => {
+    if (ownershipCopyLinkFeedbackTimerRef.current !== null) {
+      window.clearTimeout(ownershipCopyLinkFeedbackTimerRef.current);
+      ownershipCopyLinkFeedbackTimerRef.current = null;
+    }
+  }, []);
 
   const handleWeightChange = useCallback((segment, layer, value) => {
     setLocalWeights((prev) => ({
@@ -1798,6 +1839,21 @@ export default function Settings({ onNavigateToCompany }) {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+            <button
+              type="button"
+              aria-label="Copy ownership triage link"
+              onClick={copyOwnershipTriageLink}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+                cursor: "pointer", fontSize: 12, color: ownershipCopyLinkMessage?.type === "error" ? "#991b1b" : "#555",
+              }}
+            >
+              {ownershipCopyLinkMessage?.type === "success"
+                ? "Copied Link"
+                : ownershipCopyLinkMessage?.type === "error"
+                  ? "Copy Failed"
+                  : "Copy Triage Link"}
+            </button>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}
               style={{
