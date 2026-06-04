@@ -727,6 +727,27 @@ describe("API endpoints", () => {
       assert.equal(typeof data.change_tracking_enabled, "boolean");
       assert.equal(Array.isArray(data.change_fields), true);
     });
+
+    it("returns ownership change listing contract on GET /api/monitor/ownership/changes", async () => {
+      const { status, data } = await fetchJSON("/api/monitor/ownership/changes?limit=25&offset=0&since_days=90");
+      assert.equal(status, 200);
+      assert.equal(typeof data.total, "number");
+      assert.equal(data.limit, 25);
+      assert.equal(data.offset, 0);
+      assert.equal(data.since_days, 90);
+      assert.ok(Array.isArray(data.rows));
+
+      if (data.rows.length > 0) {
+        const row = data.rows[0];
+        assert.equal(typeof row.company_number, "string");
+        assert.equal(typeof row.company_name === "string" || row.company_name === null, true);
+        assert.equal(row.change_detected, true);
+        assert.ok(Array.isArray(row.changed_fields));
+        assert.equal(typeof row.last_changed_at === "string" || row.last_changed_at === null, true);
+        assert.equal(typeof row.last_checked_at === "string" || row.last_checked_at === null, true);
+        assert.equal(typeof row.structure === "string" || row.structure === null, true);
+      }
+    });
   });
 
   describe("GET /api/import/bulk/monthly", () => {
