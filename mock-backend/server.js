@@ -4823,6 +4823,7 @@ app.get("/api/monitor/ownership/changes", (req, res) => {
   const sinceDays = Number.parseInt(String(req.query.since_days || "30"), 10);
   const sort = req.query.sort;
   const minChangedFields = req.query.min_changed_fields;
+  const parentCountryScope = req.query.parent_country_scope;
   const changedField = req.query.changed_field ?? req.query.changed_fields;
   const impact = req.query.impact;
   const result = listOwnershipChangedCompanies({
@@ -4831,6 +4832,7 @@ app.get("/api/monitor/ownership/changes", (req, res) => {
     since_days: sinceDays,
     sort,
     min_changed_fields: minChangedFields,
+    parent_country_scope: parentCountryScope,
     changed_field: changedField,
     impact,
   });

@@ -149,6 +149,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
   const [ownershipSortMode, setOwnershipSortMode] = useState("recent");
   const [ownershipSignalDensity, setOwnershipSignalDensity] = useState("all");
+  const [ownershipParentCountryScope, setOwnershipParentCountryScope] = useState("all");
   const [ownershipChangedField, setOwnershipChangedField] = useState("all");
   const [ownershipImpactFilter, setOwnershipImpactFilter] = useState("all");
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
@@ -324,6 +325,27 @@ export default function Settings({ onNavigateToCompany }) {
     };
   }, [ownershipChanges]);
 
+  const ownershipParentCountryScopeCounts = useMemo(() => {
+    const rawCounts = ownershipChanges?.parent_country_scope_counts;
+    if (!rawCounts || typeof rawCounts !== "object" || Array.isArray(rawCounts)) {
+      return {
+        uk: 0,
+        nonUk: 0,
+        unknown: 0,
+      };
+    }
+
+    const uk = Number(rawCounts.uk);
+    const nonUk = Number(rawCounts.non_uk);
+    const unknown = Number(rawCounts.unknown);
+
+    return {
+      uk: Number.isFinite(uk) && uk > 0 ? Math.round(uk) : 0,
+      nonUk: Number.isFinite(nonUk) && nonUk > 0 ? Math.round(nonUk) : 0,
+      unknown: Number.isFinite(unknown) && unknown > 0 ? Math.round(unknown) : 0,
+    };
+  }, [ownershipChanges]);
+
   const ownershipChangedFieldOptions = useMemo(() => {
     const baseFields = Array.isArray(ownershipMonitorStatus?.change_fields)
       ? ownershipMonitorStatus.change_fields.map((field) => String(field || "").trim()).filter(Boolean)
@@ -401,6 +423,44 @@ export default function Settings({ onNavigateToCompany }) {
       ? "3+ fields"
       : null;
 
+  const ownershipParentCountryScopeOptions = useMemo(() => {
+    const allCount = ownershipParentCountryScopeCounts.uk
+      + ownershipParentCountryScopeCounts.nonUk
+      + ownershipParentCountryScopeCounts.unknown;
+    return [
+      {
+        value: "all",
+        label: allCount > 0 ? `All parent countries (${allCount})` : "All parent countries",
+      },
+      {
+        value: "non_uk",
+        label: ownershipParentCountryScopeCounts.nonUk > 0
+          ? `Non-UK parent (${ownershipParentCountryScopeCounts.nonUk})`
+          : "Non-UK parent",
+      },
+      {
+        value: "uk",
+        label: ownershipParentCountryScopeCounts.uk > 0
+          ? `UK parent (${ownershipParentCountryScopeCounts.uk})`
+          : "UK parent",
+      },
+      {
+        value: "unknown",
+        label: ownershipParentCountryScopeCounts.unknown > 0
+          ? `Unknown parent (${ownershipParentCountryScopeCounts.unknown})`
+          : "Unknown parent",
+      },
+    ];
+  }, [ownershipParentCountryScopeCounts]);
+
+  const ownershipParentCountryScopeLabel = ownershipParentCountryScope === "non_uk"
+    ? "Non-UK parent"
+    : ownershipParentCountryScope === "uk"
+      ? "UK parent"
+      : ownershipParentCountryScope === "unknown"
+        ? "Unknown parent"
+        : null;
+
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
     integrationRequestRef.current = requestId;
@@ -454,6 +514,9 @@ export default function Settings({ onNavigateToCompany }) {
     if (ownershipSignalDensity !== "all") {
       query.set("min_changed_fields", ownershipSignalDensity);
     }
+    if (ownershipParentCountryScope !== "all") {
+      query.set("parent_country_scope", ownershipParentCountryScope);
+    }
     if (ownershipChangedField !== "all") {
       query.set("changed_field", ownershipChangedField);
     }
@@ -485,6 +548,10 @@ export default function Settings({ onNavigateToCompany }) {
           changed_fields_count_buckets: data?.changed_fields_count_buckets && typeof data.changed_fields_count_buckets === "object" && !Array.isArray(data.changed_fields_count_buckets)
             ? data.changed_fields_count_buckets
             : {},
+          parent_country_scope_filter: String(data?.parent_country_scope_filter || ownershipParentCountryScope || "all").toLowerCase(),
+          parent_country_scope_counts: data?.parent_country_scope_counts && typeof data.parent_country_scope_counts === "object" && !Array.isArray(data.parent_country_scope_counts)
+            ? data.parent_country_scope_counts
+            : {},
           impact_filter: String(data?.impact_filter || ownershipImpactFilter || "all").toLowerCase(),
           impact_counts: data?.impact_counts && typeof data.impact_counts === "object" && !Array.isArray(data.impact_counts)
             ? data.impact_counts
@@ -513,7 +580,7 @@ export default function Settings({ onNavigateToCompany }) {
           setOwnershipChangesLoading(false);
         }
       });
-  }, [ownershipChangedField, ownershipImpactFilter, ownershipSignalDensity, ownershipSinceDays, ownershipSortMode]);
+  }, [ownershipChangedField, ownershipImpactFilter, ownershipParentCountryScope, ownershipSignalDensity, ownershipSinceDays, ownershipSortMode]);
 
   const handleOpenOwnershipCompany = useCallback((row) => {
     if (typeof onNavigateToCompany !== "function") return;
@@ -1247,6 +1314,7 @@ export default function Settings({ onNavigateToCompany }) {
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
                 {ownershipSortMode !== "recent" ? ` · sort: ${ownershipSortLabel}` : ""}
                 {ownershipSignalDensityLabel ? ` · signals: ${ownershipSignalDensityLabel}` : ""}
+                {ownershipParentCountryScopeLabel ? ` · parent: ${ownershipParentCountryScopeLabel}` : ""}
                 {ownershipChangedFieldLabel ? ` · field: ${ownershipChangedFieldLabel}` : ""}
                 {ownershipImpactFilterLabel ? ` · impact: ${ownershipImpactFilterLabel}` : ""}
               </div>
@@ -1349,6 +1417,28 @@ export default function Settings({ onNavigateToCompany }) {
               }}
             >
               {ownershipSignalDensityOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <label htmlFor="ownership-parent-country-filter" style={{ fontSize: 12, color: "#475569" }}>
+              Parent
+            </label>
+            <select
+              id="ownership-parent-country-filter"
+              aria-label="Ownership parent country filter"
+              value={ownershipParentCountryScope}
+              onChange={(event) => {
+                setOwnershipParentCountryScope(String(event.target.value || "all"));
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {ownershipParentCountryScopeOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>

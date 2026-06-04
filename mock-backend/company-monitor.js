@@ -252,6 +252,32 @@ function parseOwnershipMinChangedFields(rawValue) {
   return Math.max(0, Math.min(10, numeric));
 }
 
+function parseOwnershipParentCountryScope(rawValue) {
+  const token = String(rawValue || "").trim().toLowerCase();
+  if (token === "uk" || token === "non_uk" || token === "unknown") return token;
+  return "all";
+}
+
+function getOwnershipParentCountryScope(parentCountry) {
+  const normalized = String(parentCountry || "").trim().toLowerCase();
+  if (!normalized) return "unknown";
+
+  const ukTokens = new Set([
+    "uk",
+    "gb",
+    "gbr",
+    "united kingdom",
+    "great britain",
+    "england",
+    "scotland",
+    "wales",
+    "northern ireland",
+    "united kingdom of great britain and northern ireland",
+  ]);
+  if (ukTokens.has(normalized)) return "uk";
+  return "non_uk";
+}
+
 function getOwnershipImpactLevel(changedFields) {
   if (Array.isArray(changedFields) && changedFields.some((field) => OWNERSHIP_HIGH_IMPACT_FIELDS.includes(field))) {
     return "high";
@@ -274,6 +300,9 @@ export function listOwnershipChangedCompanies(options = {}) {
   const minChangedFields = parseOwnershipMinChangedFields(
     options.min_changed_fields ?? options.minChangedFields
   );
+  const parentCountryScopeFilter = parseOwnershipParentCountryScope(
+    options.parent_country_scope ?? options.parentCountryScope
+  );
 
   const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
   const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
@@ -292,6 +321,11 @@ export function listOwnershipChangedCompanies(options = {}) {
   const impactCounts = {
     high: 0,
     standard: 0,
+  };
+  const parentCountryScopeCounts = {
+    uk: 0,
+    non_uk: 0,
+    unknown: 0,
   };
 
   for (const company of companies) {
@@ -312,6 +346,9 @@ export function listOwnershipChangedCompanies(options = {}) {
     else if (changedFieldsCount === 1) changedFieldsCountBuckets["1"] += 1;
     else changedFieldsCountBuckets["0"] += 1;
 
+    const parentCountryScope = getOwnershipParentCountryScope(snapshot?.parent_country);
+    parentCountryScopeCounts[parentCountryScope] = Number(parentCountryScopeCounts[parentCountryScope] || 0) + 1;
+
     for (const field of changedFields) {
       changedFieldCounts[field] = Number(changedFieldCounts[field] || 0) + 1;
     }
@@ -328,6 +365,9 @@ export function listOwnershipChangedCompanies(options = {}) {
     if (minChangedFields > 0 && changedFieldsCount < minChangedFields) {
       continue;
     }
+    if (parentCountryScopeFilter !== "all" && parentCountryScope !== parentCountryScopeFilter) {
+      continue;
+    }
 
     changedRows.push({
       company_number: company.company_number,
@@ -336,6 +376,7 @@ export function listOwnershipChangedCompanies(options = {}) {
       changed_fields: changedFields,
       changed_fields_count: changedFieldsCount,
       impact_level: impactLevel,
+      parent_country_scope: parentCountryScope,
       last_changed_at: lastChangedAt,
       last_checked_at: snapshot?.last_checked_at || snapshot?.updated_at || snapshot?.fetched_at || null,
       structure: snapshot?.structure || null,
@@ -371,6 +412,8 @@ export function listOwnershipChangedCompanies(options = {}) {
     changed_fields_filter: changedFieldsFilter,
     changed_fields_counts: changedFieldCounts,
     changed_fields_count_buckets: changedFieldsCountBuckets,
+    parent_country_scope_filter: parentCountryScopeFilter,
+    parent_country_scope_counts: parentCountryScopeCounts,
     impact_filter: impactFilter,
     impact_counts: impactCounts,
     rows: changedRows.slice(offset, offset + limit),

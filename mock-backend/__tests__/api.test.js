@@ -740,6 +740,8 @@ describe("API endpoints", () => {
       assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.equal(typeof data.changed_fields_counts, "object");
       assert.equal(typeof data.changed_fields_count_buckets, "object");
+      assert.equal(typeof data.parent_country_scope_filter, "string");
+      assert.equal(typeof data.parent_country_scope_counts, "object");
       assert.equal(typeof data.impact_filter, "string");
       assert.equal(typeof data.impact_counts, "object");
       assert.ok(Array.isArray(data.rows));
@@ -752,6 +754,7 @@ describe("API endpoints", () => {
         assert.ok(Array.isArray(row.changed_fields));
         assert.equal(typeof row.changed_fields_count, "number");
         assert.equal(typeof row.impact_level, "string");
+        assert.equal(typeof row.parent_country_scope, "string");
         assert.equal(typeof row.last_changed_at === "string" || row.last_changed_at === null, true);
         assert.equal(typeof row.last_checked_at === "string" || row.last_checked_at === null, true);
         assert.equal(typeof row.structure === "string" || row.structure === null, true);
@@ -813,6 +816,21 @@ describe("API endpoints", () => {
         for (const row of data.rows) {
           assert.equal(typeof row.changed_fields_count, "number");
           assert.equal(row.changed_fields_count >= 2, true);
+        }
+      }
+    });
+
+    it("accepts parent_country_scope filter on ownership changes endpoint", async () => {
+      const { status, data } = await fetchJSON(
+        "/api/monitor/ownership/changes?limit=25&offset=0&since_days=90&parent_country_scope=non_uk"
+      );
+      assert.equal(status, 200);
+      assert.equal(data.parent_country_scope_filter, "non_uk");
+      assert.equal(typeof data.parent_country_scope_counts, "object");
+
+      if (data.rows.length > 0) {
+        for (const row of data.rows) {
+          assert.equal(row.parent_country_scope, "non_uk");
         }
       }
     });

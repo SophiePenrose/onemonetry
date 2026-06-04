@@ -59,8 +59,16 @@ describe("Settings", () => {
         const offset = Number(params.get("offset") || "0");
         const sort = String(params.get("sort") || "recent").trim().toLowerCase();
         const minChangedFields = Number(params.get("min_changed_fields") || "0");
+        const parentCountryScope = String(params.get("parent_country_scope") || "all").trim().toLowerCase();
         const changedField = String(params.get("changed_field") || "").trim();
         const impact = String(params.get("impact") || "").trim().toLowerCase();
+
+        const resolveParentCountryScope = (value) => {
+          const normalized = String(value || "").trim().toLowerCase();
+          if (!normalized) return "unknown";
+          if (["uk", "gb", "gbr", "united kingdom", "great britain"].includes(normalized)) return "uk";
+          return "non_uk";
+        };
 
         const allRows = [
           {
@@ -86,8 +94,8 @@ describe("Settings", () => {
             last_changed_at: "2026-06-04T09:45:00.000Z",
             last_checked_at: "2026-06-04T10:10:00.000Z",
             structure: "independent",
-            parent_company: null,
-            parent_country: null,
+            parent_company: "Beta Global Inc",
+            parent_country: "United States",
           },
         ];
         const filteredRows = allRows.filter((row) => {
@@ -96,6 +104,9 @@ describe("Settings", () => {
             if (changedFieldsCount < minChangedFields) {
               return false;
             }
+          }
+          if (parentCountryScope !== "all" && resolveParentCountryScope(row.parent_country) !== parentCountryScope) {
+            return false;
           }
           if (changedField && (!Array.isArray(row.changed_fields) || !row.changed_fields.includes(changedField))) {
             return false;
@@ -126,12 +137,21 @@ describe("Settings", () => {
             "2": 1,
             "3_plus": 0,
           },
+          parent_country_scope_filter: parentCountryScope,
+          parent_country_scope_counts: {
+            uk: 1,
+            non_uk: 1,
+            unknown: 0,
+          },
           impact_filter: impact || "all",
           impact_counts: {
             high: 1,
             standard: 1,
           },
-          rows,
+          rows: rows.map((row) => ({
+            ...row,
+            parent_country_scope: resolveParentCountryScope(row.parent_country),
+          })),
         });
       }
 
@@ -401,6 +421,31 @@ describe("Settings", () => {
       return href.startsWith("/api/monitor/ownership/changes") && href.includes("min_changed_fields=2");
     });
     expect(sawSignalDensityRequest).toBe(true);
+  });
+
+  it("filters ownership changes by selected parent country scope", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Non-UK parent (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership parent country filter" }), {
+      target: { value: "non_uk" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Beta Payments Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/1 changed companies in last 30 days · parent: Non-UK parent")).toBeInTheDocument();
+    });
+
+    const sawParentScopeRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("parent_country_scope=non_uk");
+    });
+    expect(sawParentScopeRequest).toBe(true);
   });
 
   it("opens company detail from ownership feed row action", async () => {
