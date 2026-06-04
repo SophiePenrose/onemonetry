@@ -27,6 +27,7 @@ describe("Settings", () => {
 
   beforeEach(() => {
     globalThis.localStorage?.clear();
+    window.history.replaceState({}, "", "/");
     schedulerEnabled = false;
     ownershipMonitorRunning = false;
     fetchMock = vi.fn((url, options) => {
@@ -511,6 +512,43 @@ describe("Settings", () => {
     expect(sawRestoredRequest).toBe(true);
   });
 
+  it("restores ownership triage preferences from URL query when present", async () => {
+    globalThis.localStorage?.setItem(OWNERSHIP_TRIAGE_STORAGE_KEY, JSON.stringify({
+      preset: "cross_border_priority",
+      since_days: 90,
+      sort: "impact",
+      min_changed_fields: "all",
+      parent_country_scope: "non_uk",
+      changed_field: "all",
+      impact: "all",
+    }));
+
+    window.history.replaceState({}, "", "/settings?ownership_since_days=180&ownership_sort=recent&ownership_parent_country_scope=uk&ownership_changed_field=confidence&ownership_impact=standard");
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership change window" })).toHaveValue("180");
+      expect(screen.getByRole("combobox", { name: "Ownership change sort mode" })).toHaveValue("recent");
+      expect(screen.getByRole("combobox", { name: "Ownership parent country filter" })).toHaveValue("uk");
+      expect(screen.getByRole("combobox", { name: "Ownership changed field filter" })).toHaveValue("confidence");
+      expect(screen.getByRole("combobox", { name: "Ownership impact filter" })).toHaveValue("standard");
+    });
+
+    const sawQueryRestoredRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes")
+        && href.includes("since_days=180")
+        && href.includes("parent_country_scope=uk")
+        && href.includes("changed_field=confidence")
+        && href.includes("impact=standard")
+        && !href.includes("sort=impact");
+    });
+    expect(sawQueryRestoredRequest).toBe(true);
+  });
+
   it("persists ownership triage preferences after preset and manual updates", async () => {
     render(<Settings />);
 
@@ -536,6 +574,40 @@ describe("Settings", () => {
       const saved = JSON.parse(globalThis.localStorage?.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY) || "{}");
       expect(saved.preset).toBe("custom");
       expect(saved.impact).toBe("standard");
+    });
+  });
+
+  it("syncs ownership triage selections to URL query params", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change sort mode" }), {
+      target: { value: "impact" },
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership parent country filter" }), {
+      target: { value: "non_uk" },
+    });
+
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("ownership_sort")).toBe("impact");
+      expect(params.get("ownership_parent_country_scope")).toBe("non_uk");
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change sort mode" }), {
+      target: { value: "recent" },
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership parent country filter" }), {
+      target: { value: "all" },
+    });
+
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("ownership_sort")).toBeNull();
+      expect(params.get("ownership_parent_country_scope")).toBeNull();
     });
   });
 
@@ -569,6 +641,7 @@ describe("Settings", () => {
       expect(screen.getByRole("combobox", { name: "Ownership changed field filter" })).toHaveValue("all");
       expect(screen.getByRole("combobox", { name: "Ownership impact filter" })).toHaveValue("all");
       expect(globalThis.localStorage?.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY)).toBeNull();
+      expect(window.location.search).toBe("");
     });
 
     const sawResetDefaultsRequest = fetchMock.mock.calls.some(([url]) => {
