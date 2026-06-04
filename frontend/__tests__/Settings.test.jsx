@@ -539,6 +539,48 @@ describe("Settings", () => {
     });
   });
 
+  it("clears saved ownership triage preferences and resets controls", async () => {
+    globalThis.localStorage?.setItem(OWNERSHIP_TRIAGE_STORAGE_KEY, JSON.stringify({
+      preset: "cross_border_priority",
+      since_days: 90,
+      sort: "impact",
+      min_changed_fields: "all",
+      parent_country_scope: "non_uk",
+      changed_field: "all",
+      impact: "all",
+    }));
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("cross_border_priority");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset saved triage preferences" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("custom");
+      expect(screen.getByRole("combobox", { name: "Ownership change window" })).toHaveValue("30");
+      expect(screen.getByRole("combobox", { name: "Ownership change sort mode" })).toHaveValue("recent");
+      expect(screen.getByRole("combobox", { name: "Ownership signal density filter" })).toHaveValue("all");
+      expect(screen.getByRole("combobox", { name: "Ownership parent country filter" })).toHaveValue("all");
+      expect(screen.getByRole("combobox", { name: "Ownership changed field filter" })).toHaveValue("all");
+      expect(screen.getByRole("combobox", { name: "Ownership impact filter" })).toHaveValue("all");
+      expect(globalThis.localStorage?.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY)).toBeNull();
+    });
+
+    const sawResetDefaultsRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes")
+        && href.includes("since_days=30")
+        && !href.includes("sort=impact")
+        && !href.includes("parent_country_scope=non_uk");
+    });
+    expect(sawResetDefaultsRequest).toBe(true);
+  });
+
   it("opens company detail from ownership feed row action", async () => {
     const onNavigateToCompany = vi.fn();
     render(<Settings onNavigateToCompany={onNavigateToCompany} />);
