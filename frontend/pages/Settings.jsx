@@ -62,6 +62,15 @@ const OWNERSHIP_TRIAGE_PRESET_CONFIGS = {
 };
 
 const OWNERSHIP_TRIAGE_STORAGE_KEY = "settings.ownershipTriage.v1";
+const OWNERSHIP_TRIAGE_QUERY_PARAMS = {
+  preset: "ownership_preset",
+  since_days: "ownership_since_days",
+  sort: "ownership_sort",
+  min_changed_fields: "ownership_min_changed_fields",
+  parent_country_scope: "ownership_parent_country_scope",
+  changed_field: "ownership_changed_field",
+  impact: "ownership_impact",
+};
 
 function getDefaultOwnershipTriageState() {
   return {
@@ -75,46 +84,124 @@ function getDefaultOwnershipTriageState() {
   };
 }
 
-function readStoredOwnershipTriageState() {
+function sanitizeOwnershipTriageState(rawState) {
   const defaults = getDefaultOwnershipTriageState();
+  const source = rawState && typeof rawState === "object" && !Array.isArray(rawState)
+    ? rawState
+    : {};
 
+  const preset = String(source.preset ?? defaults.preset);
+  const sort = String(source.sort ?? defaults.sort);
+  const minChangedFields = String(source.min_changed_fields ?? defaults.min_changed_fields);
+  const parentCountryScope = String(source.parent_country_scope ?? defaults.parent_country_scope);
+  const changedField = String(source.changed_field ?? defaults.changed_field).trim() || defaults.changed_field;
+  const impact = String(source.impact ?? defaults.impact);
+  const sinceDays = Number.parseInt(String(source.since_days ?? defaults.since_days), 10);
+
+  const validPresetValues = new Set(OWNERSHIP_TRIAGE_PRESET_OPTIONS.map((option) => option.value));
+  const validSortValues = new Set(OWNERSHIP_SORT_OPTIONS.map((option) => option.value));
+
+  return {
+    preset: validPresetValues.has(preset) ? preset : defaults.preset,
+    since_days: [30, 90, 180].includes(sinceDays) ? sinceDays : defaults.since_days,
+    sort: validSortValues.has(sort) ? sort : defaults.sort,
+    min_changed_fields: ["all", "2", "3"].includes(minChangedFields) ? minChangedFields : defaults.min_changed_fields,
+    parent_country_scope: ["all", "non_uk", "uk", "unknown"].includes(parentCountryScope)
+      ? parentCountryScope
+      : defaults.parent_country_scope,
+    changed_field: changedField,
+    impact: ["all", "high", "standard"].includes(impact) ? impact : defaults.impact,
+  };
+}
+
+function readStoredOwnershipTriageState() {
   if (typeof window === "undefined" || !window.localStorage) {
-    return defaults;
+    return getDefaultOwnershipTriageState();
   }
 
   try {
     const raw = window.localStorage.getItem(OWNERSHIP_TRIAGE_STORAGE_KEY);
-    if (!raw) return defaults;
+    if (!raw) return getDefaultOwnershipTriageState();
 
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return defaults;
+    return sanitizeOwnershipTriageState(parsed);
+  } catch {
+    return getDefaultOwnershipTriageState();
+  }
+}
+
+function readOwnershipTriageStateFromQuery() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const query = new URLSearchParams(window.location.search || "");
+    const hasTriageQuery = Object.values(OWNERSHIP_TRIAGE_QUERY_PARAMS)
+      .some((paramName) => query.has(paramName));
+    if (!hasTriageQuery) {
+      return null;
     }
 
-    const preset = String(parsed.preset || defaults.preset);
-    const sort = String(parsed.sort || defaults.sort);
-    const minChangedFields = String(parsed.min_changed_fields || defaults.min_changed_fields);
-    const parentCountryScope = String(parsed.parent_country_scope || defaults.parent_country_scope);
-    const changedField = String(parsed.changed_field || defaults.changed_field).trim() || defaults.changed_field;
-    const impact = String(parsed.impact || defaults.impact);
-    const sinceDays = Number.parseInt(String(parsed.since_days ?? defaults.since_days), 10);
-
-    const validPresetValues = new Set(OWNERSHIP_TRIAGE_PRESET_OPTIONS.map((option) => option.value));
-    const validSortValues = new Set(OWNERSHIP_SORT_OPTIONS.map((option) => option.value));
-
-    return {
-      preset: validPresetValues.has(preset) ? preset : defaults.preset,
-      since_days: [30, 90, 180].includes(sinceDays) ? sinceDays : defaults.since_days,
-      sort: validSortValues.has(sort) ? sort : defaults.sort,
-      min_changed_fields: ["all", "2", "3"].includes(minChangedFields) ? minChangedFields : defaults.min_changed_fields,
-      parent_country_scope: ["all", "non_uk", "uk", "unknown"].includes(parentCountryScope)
-        ? parentCountryScope
-        : defaults.parent_country_scope,
-      changed_field: changedField,
-      impact: ["all", "high", "standard"].includes(impact) ? impact : defaults.impact,
-    };
+    return sanitizeOwnershipTriageState({
+      preset: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.preset),
+      since_days: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.since_days),
+      sort: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.sort),
+      min_changed_fields: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.min_changed_fields),
+      parent_country_scope: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.parent_country_scope),
+      changed_field: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.changed_field),
+      impact: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.impact),
+    });
   } catch {
-    return defaults;
+    return null;
+  }
+}
+
+function writeOwnershipTriageStateToQuery(state) {
+  if (typeof window === "undefined" || !window.history || typeof window.history.replaceState !== "function") {
+    return;
+  }
+
+  try {
+    const defaults = getDefaultOwnershipTriageState();
+    const normalized = sanitizeOwnershipTriageState(state);
+    const url = new URL(window.location.href);
+    const query = url.searchParams;
+
+    for (const queryParam of Object.values(OWNERSHIP_TRIAGE_QUERY_PARAMS)) {
+      query.delete(queryParam);
+    }
+
+    if (normalized.preset !== defaults.preset) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.preset, normalized.preset);
+    }
+    if (normalized.since_days !== defaults.since_days) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.since_days, String(normalized.since_days));
+    }
+    if (normalized.sort !== defaults.sort) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.sort, normalized.sort);
+    }
+    if (normalized.min_changed_fields !== defaults.min_changed_fields) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.min_changed_fields, normalized.min_changed_fields);
+    }
+    if (normalized.parent_country_scope !== defaults.parent_country_scope) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.parent_country_scope, normalized.parent_country_scope);
+    }
+    if (normalized.changed_field !== defaults.changed_field) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.changed_field, normalized.changed_field);
+    }
+    if (normalized.impact !== defaults.impact) {
+      query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.impact, normalized.impact);
+    }
+
+    const nextSearch = query.toString();
+    const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  } catch {
+    // Ignore browser URL state failures.
   }
 }
 
@@ -243,7 +330,10 @@ SegmentWeightsCard.propTypes = {
 };
 
 export default function Settings({ onNavigateToCompany }) {
-  const initialOwnershipTriageState = useMemo(() => readStoredOwnershipTriageState(), []);
+  const initialOwnershipTriageState = useMemo(() => {
+    const queryState = readOwnershipTriageStateFromQuery();
+    return queryState || readStoredOwnershipTriageState();
+  }, []);
   const [config, setConfig] = useState(null);
   const [localWeights, setLocalWeights] = useState({});
   const [propensityWeight, setPropensityWeight] = useState(0.15);
@@ -953,6 +1043,26 @@ export default function Settings({ onNavigateToCompany }) {
     }
 
     writeStoredOwnershipTriageState({
+      preset: ownershipTriagePreset,
+      since_days: ownershipSinceDays,
+      sort: ownershipSortMode,
+      min_changed_fields: ownershipSignalDensity,
+      parent_country_scope: ownershipParentCountryScope,
+      changed_field: ownershipChangedField,
+      impact: ownershipImpactFilter,
+    });
+  }, [
+    ownershipChangedField,
+    ownershipImpactFilter,
+    ownershipParentCountryScope,
+    ownershipSignalDensity,
+    ownershipSinceDays,
+    ownershipSortMode,
+    ownershipTriagePreset,
+  ]);
+
+  useEffect(() => {
+    writeOwnershipTriageStateToQuery({
       preset: ownershipTriagePreset,
       since_days: ownershipSinceDays,
       sort: ownershipSortMode,
