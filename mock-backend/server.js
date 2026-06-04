@@ -4821,10 +4821,12 @@ app.get("/api/monitor/ownership/changes", (req, res) => {
   const limit = Number.parseInt(String(req.query.limit || "100"), 10);
   const offset = Number.parseInt(String(req.query.offset || "0"), 10);
   const sinceDays = Number.parseInt(String(req.query.since_days || "30"), 10);
+  const changedField = req.query.changed_field ?? req.query.changed_fields;
   const result = listOwnershipChangedCompanies({
     limit,
     offset,
     since_days: sinceDays,
+    changed_field: changedField,
   });
 
   res.json(result);

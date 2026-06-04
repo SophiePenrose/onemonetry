@@ -143,6 +143,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
+  const [ownershipChangedField, setOwnershipChangedField] = useState("all");
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
   const [ownershipMonitorStatus, setOwnershipMonitorStatus] = useState(null);
   const [ownershipMonitorLoading, setOwnershipMonitorLoading] = useState(false);
@@ -265,6 +266,21 @@ export default function Settings({ onNavigateToCompany }) {
     return total > ownershipRows.length;
   }, [ownershipChanges, ownershipRows]);
 
+  const ownershipChangedFieldOptions = useMemo(() => {
+    const fields = Array.isArray(ownershipMonitorStatus?.change_fields)
+      ? ownershipMonitorStatus.change_fields.map((field) => String(field || "").trim()).filter(Boolean)
+      : [];
+    const uniqueFields = [...new Set(fields)];
+    return [
+      { value: "all", label: "All fields" },
+      ...uniqueFields.map((field) => ({ value: field, label: humanizeFieldToken(field) })),
+    ];
+  }, [ownershipMonitorStatus]);
+
+  const ownershipChangedFieldLabel = ownershipChangedField !== "all"
+    ? humanizeFieldToken(ownershipChangedField)
+    : null;
+
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
     integrationRequestRef.current = requestId;
@@ -312,6 +328,9 @@ export default function Settings({ onNavigateToCompany }) {
       offset: String(safeOffset),
       since_days: String(ownershipSinceDays),
     });
+    if (ownershipChangedField !== "all") {
+      query.set("changed_field", ownershipChangedField);
+    }
 
     fetch(`/api/monitor/ownership/changes?${query.toString()}`)
       .then(async (response) => {
@@ -328,6 +347,7 @@ export default function Settings({ onNavigateToCompany }) {
           limit: Number.isFinite(Number(data?.limit)) ? Number(data.limit) : OWNERSHIP_CHANGES_PAGE_SIZE,
           offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : safeOffset,
           since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
+          changed_fields_filter: Array.isArray(data?.changed_fields_filter) ? data.changed_fields_filter.filter(Boolean) : [],
           rows: Array.isArray(data?.rows) ? data.rows : [],
         };
 
@@ -352,7 +372,7 @@ export default function Settings({ onNavigateToCompany }) {
           setOwnershipChangesLoading(false);
         }
       });
-  }, [ownershipSinceDays]);
+  }, [ownershipChangedField, ownershipSinceDays]);
 
   const handleOpenOwnershipCompany = useCallback((row) => {
     if (typeof onNavigateToCompany !== "function") return;
@@ -1084,6 +1104,7 @@ export default function Settings({ onNavigateToCompany }) {
             {!ownershipChangesLoading && ownershipChanges && (
               <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
+                {ownershipChangedFieldLabel ? ` · field: ${ownershipChangedFieldLabel}` : ""}
               </div>
             )}
             {!ownershipChangesLoading && ownershipChangesCheckedAt && (
@@ -1120,6 +1141,28 @@ export default function Settings({ onNavigateToCompany }) {
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
               <option value={180}>180 days</option>
+            </select>
+            <label htmlFor="ownership-change-field" style={{ fontSize: 12, color: "#475569" }}>
+              Field
+            </label>
+            <select
+              id="ownership-change-field"
+              aria-label="Ownership changed field filter"
+              value={ownershipChangedField}
+              onChange={(event) => {
+                setOwnershipChangedField(String(event.target.value || "all"));
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {ownershipChangedFieldOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}

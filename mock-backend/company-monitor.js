@@ -204,12 +204,36 @@ function parseOwnershipChangeTimestamp(value) {
   return Number.isFinite(ts) ? ts : null;
 }
 
+function normalizeOwnershipChangeFieldToken(value) {
+  const token = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+  if (!token) return null;
+  return OWNERSHIP_CHANGE_FIELDS.includes(token) ? token : null;
+}
+
+function parseOwnershipChangeFieldFilter(rawValue) {
+  const sourceValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+  const parsedTokens = [];
+
+  for (const source of sourceValues) {
+    const parts = String(source || "").split(",");
+    for (const part of parts) {
+      const token = normalizeOwnershipChangeFieldToken(part);
+      if (token) parsedTokens.push(token);
+    }
+  }
+
+  return [...new Set(parsedTokens)];
+}
+
 export function listOwnershipChangedCompanies(options = {}) {
   const requestedLimit = Number.parseInt(String(options.limit || "100"), 10);
   const requestedOffset = Number.parseInt(String(options.offset || "0"), 10);
   const requestedSinceDays = Number.parseInt(
     String(options.since_days ?? options.sinceDays ?? "30"),
     10
+  );
+  const changedFieldsFilter = parseOwnershipChangeFieldFilter(
+    options.changed_field ?? options.changed_fields ?? options.changedFields
   );
 
   const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
@@ -224,6 +248,13 @@ export function listOwnershipChangedCompanies(options = {}) {
     const snapshot = getOwnershipSnapshot(company.company_number);
     if (!snapshot?.change_detected) continue;
 
+    const changedFields = Array.isArray(snapshot?.changed_fields)
+      ? snapshot.changed_fields.map((field) => normalizeOwnershipChangeFieldToken(field)).filter(Boolean)
+      : [];
+    if (changedFieldsFilter.length > 0 && !changedFields.some((field) => changedFieldsFilter.includes(field))) {
+      continue;
+    }
+
     const lastChangedAt = snapshot?.last_changed_at || null;
     const lastChangedMs = parseOwnershipChangeTimestamp(lastChangedAt);
     if (lastChangedMs !== null && lastChangedMs < sinceMs) continue;
@@ -232,7 +263,7 @@ export function listOwnershipChangedCompanies(options = {}) {
       company_number: company.company_number,
       company_name: company.company_name || null,
       change_detected: true,
-      changed_fields: Array.isArray(snapshot?.changed_fields) ? snapshot.changed_fields.filter(Boolean) : [],
+      changed_fields: changedFields,
       last_changed_at: lastChangedAt,
       last_checked_at: snapshot?.last_checked_at || snapshot?.updated_at || snapshot?.fetched_at || null,
       structure: snapshot?.structure || null,
@@ -257,6 +288,7 @@ export function listOwnershipChangedCompanies(options = {}) {
     limit,
     offset,
     since_days: sinceDays,
+    changed_fields_filter: changedFieldsFilter,
     rows: changedRows.slice(offset, offset + limit),
   };
 }
