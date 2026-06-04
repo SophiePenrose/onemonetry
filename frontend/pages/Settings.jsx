@@ -234,6 +234,22 @@ export default function Settings() {
     [preview],
   );
 
+  const ownershipProgress = useMemo(
+    () => (ownershipMonitorStatus?.progress && typeof ownershipMonitorStatus.progress === "object"
+      ? ownershipMonitorStatus.progress
+      : null),
+    [ownershipMonitorStatus],
+  );
+
+  const ownershipProgressPercent = useMemo(() => {
+    if (!ownershipProgress) return 0;
+    const total = Number(ownershipProgress.total || 0);
+    const checked = Number(ownershipProgress.checked || 0);
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    if (!Number.isFinite(checked) || checked <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round((checked / total) * 100)));
+  }, [ownershipProgress]);
+
   const ownershipRows = useMemo(
     () => (Array.isArray(ownershipChanges?.rows) ? ownershipChanges.rows : []),
     [ownershipChanges],
@@ -831,7 +847,61 @@ export default function Settings() {
               {formatIntervalLabel(ownershipMonitorStatus?.check_interval_ms)}
             </div>
           </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Last Run</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>
+              {formatTimestampLabel(ownershipMonitorStatus?.last_run)}
+            </div>
+          </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Next Run</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1f2937" }}>
+              {formatTimestampLabel(ownershipMonitorStatus?.next_run)}
+            </div>
+          </div>
         </div>
+
+        {ownershipProgress && (
+          <div style={{
+            marginBottom: 10,
+            border: "1px solid #dbeafe",
+            background: "#eff6ff",
+            borderRadius: 6,
+            padding: "10px 12px",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1e3a8a" }}>
+                {ownershipMonitorStatus?.running ? "Ownership refresh in progress" : "Latest ownership refresh summary"}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#1d4ed8" }}>
+                {ownershipProgressPercent}% complete
+              </div>
+            </div>
+
+            <div style={{
+              height: 8,
+              borderRadius: 999,
+              background: "#bfdbfe",
+              overflow: "hidden",
+              marginBottom: 8,
+            }}>
+              <div style={{
+                width: `${ownershipProgressPercent}%`,
+                height: "100%",
+                borderRadius: 999,
+                background: "#2563eb",
+                transition: "width 180ms ease",
+              }} />
+            </div>
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#1e3a8a" }}>
+              <span>Checked {Number(ownershipProgress.checked || 0)}/{Number(ownershipProgress.total || 0)}</span>
+              <span>Refreshed {Number(ownershipProgress.refreshed || 0)}</span>
+              <span>Changed {Number(ownershipProgress.changed || 0)}</span>
+              <span>Errors {Number(ownershipProgress.errors || 0)}</span>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
