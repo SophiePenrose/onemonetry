@@ -44,7 +44,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS exclusions (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     prohibited_industries TEXT NOT NULL DEFAULT '[]',
-    excluded_company_ids TEXT NOT NULL DEFAULT '[]'
+    excluded_company_ids TEXT NOT NULL DEFAULT '[]',
+    prohibited_sic_codes TEXT NOT NULL DEFAULT '[]'
   );
 
   CREATE TABLE IF NOT EXISTS closed_won_registry (
@@ -245,6 +246,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_suppression_type ON suppression_list(type);
 `);
 
+try {
+  db.exec("ALTER TABLE exclusions ADD COLUMN prohibited_sic_codes TEXT NOT NULL DEFAULT '[]'");
+} catch {
+  // Column already exists on upgraded databases.
+}
+
 function ensureAnalysisQueueSchema() {
   const columns = db.prepare("PRAGMA table_info(analysis_queue)").all();
   const names = new Set(columns.map((col) => col.name));
@@ -402,23 +409,42 @@ export function listReports() {
 
 export function getExclusions() {
   const row = db.prepare("SELECT * FROM exclusions WHERE id = 1").get();
+  const parseArray = (value, fallback = []) => {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
   if (!row) {
     return {
       prohibited_industries: ["Gambling", "Tobacco", "Weapons", "Adult Entertainment"],
       excluded_company_ids: [],
+      prohibited_sic_codes: [],
     };
   }
+
   return {
-    prohibited_industries: JSON.parse(row.prohibited_industries),
-    excluded_company_ids: JSON.parse(row.excluded_company_ids),
+    prohibited_industries: parseArray(row.prohibited_industries),
+    excluded_company_ids: parseArray(row.excluded_company_ids),
+    prohibited_sic_codes: parseArray(row.prohibited_sic_codes),
   };
 }
 
 export function setExclusions(exclusions) {
   db.prepare(`
-    INSERT INTO exclusions (id, prohibited_industries, excluded_company_ids) VALUES (1, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET prohibited_industries = excluded.prohibited_industries, excluded_company_ids = excluded.excluded_company_ids
-  `).run(JSON.stringify(exclusions.prohibited_industries), JSON.stringify(exclusions.excluded_company_ids));
+    INSERT INTO exclusions (id, prohibited_industries, excluded_company_ids, prohibited_sic_codes) VALUES (1, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      prohibited_industries = excluded.prohibited_industries,
+      excluded_company_ids = excluded.excluded_company_ids,
+      prohibited_sic_codes = excluded.prohibited_sic_codes
+  `).run(
+    JSON.stringify(exclusions.prohibited_industries),
+    JSON.stringify(exclusions.excluded_company_ids),
+    JSON.stringify(exclusions.prohibited_sic_codes || []),
+  );
 }
 
 function normalizeCompanyNumber(value) {

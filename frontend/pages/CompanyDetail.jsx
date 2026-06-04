@@ -109,6 +109,8 @@ export default function CompanyDetail({ companyId }) {
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [ownershipRefreshing, setOwnershipRefreshing] = useState(false);
+  const [ownershipRefreshError, setOwnershipRefreshError] = useState(null);
   const [transitions, setTransitions] = useState({});
   const companyRequestRef = useRef(0);
   const companyPendingRequestsRef = useRef(0);
@@ -184,6 +186,33 @@ export default function CompanyDetail({ companyId }) {
     loadCompanyDetail(true);
   }, [loadCompanyDetail]);
 
+  const refreshOwnershipStructure = useCallback(async () => {
+    if (!companyId) return;
+
+    setOwnershipRefreshing(true);
+    setOwnershipRefreshError(null);
+    try {
+      const res = await fetch(`/api/company/${encodeURIComponent(companyId)}/ownership/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to refresh ownership structure");
+      }
+
+      setCompany((prev) => prev ? {
+        ...prev,
+        ownership_structure: data.ownership_structure || null,
+      } : prev);
+    } catch (err) {
+      setOwnershipRefreshError(err.message || "Failed to refresh ownership structure");
+    } finally {
+      setOwnershipRefreshing(false);
+    }
+  }, [companyId]);
+
   const analysisStatus = company?.analysis_status || (company?.analysis ? "ready" : "none");
   const analysisStatusLabel = analysisStatus === "queued"
     ? "In progress"
@@ -198,6 +227,17 @@ export default function CompanyDetail({ companyId }) {
   const cadenceHistory = company?.cadence_history || EMPTY_ARRAY;
   const workflowHistory = company?.workflow_history || EMPTY_ARRAY;
   const keyPeople = company?.analysis?.key_people || EMPTY_ARRAY;
+  const sicCodes = Array.isArray(company?.sic_codes) ? company.sic_codes : EMPTY_ARRAY;
+  const ownershipStructure = company?.ownership_structure || null;
+  const significantControllers = Array.isArray(ownershipStructure?.significant_corporate_controllers)
+    ? ownershipStructure.significant_corporate_controllers
+    : EMPTY_ARRAY;
+  const nonUkControllers = Array.isArray(ownershipStructure?.non_uk_significant_corporate_controllers)
+    ? ownershipStructure.non_uk_significant_corporate_controllers
+    : EMPTY_ARRAY;
+  const ownershipClassLabel = String(ownershipStructure?.structure || "unknown")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
   const eligibleMotionsLabel = useMemo(
     () => allMotionScores.map((motion) => motion.motion).join(", "),
@@ -244,6 +284,7 @@ export default function CompanyDetail({ companyId }) {
           </a>
         </Field>
         <Field label="Industry">{company.industry}</Field>
+        <Field label="SIC Codes">{sicCodes.length > 0 ? sicCodes.join(", ") : "—"}</Field>
         <Field label="Turnover">{formatTurnover(company.turnover)}</Field>
         <Field label="Employees">{company.employee_count?.toLocaleString()}</Field>
         <Field label="Annual Report">
@@ -339,6 +380,71 @@ export default function CompanyDetail({ companyId }) {
           </div>
         </div>
       )}
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <h3 style={{ fontSize: 16, margin: 0 }}>Ownership Structure (Companies House)</h3>
+          <button
+            type="button"
+            onClick={refreshOwnershipStructure}
+            disabled={ownershipRefreshing}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #d1d5db",
+              background: "#fff",
+              fontSize: 12,
+              cursor: ownershipRefreshing ? "wait" : "pointer",
+            }}
+          >
+            {ownershipRefreshing ? "Refreshing…" : "Refresh from CH"}
+          </button>
+        </div>
+
+        {ownershipRefreshError && (
+          <div style={{ marginBottom: 10, fontSize: 12, color: "#991b1b" }}>{ownershipRefreshError}</div>
+        )}
+
+        {ownershipStructure ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Classified Structure</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{ownershipClassLabel}</div>
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Parent Entity</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{ownershipStructure.parent_company || "—"}</div>
+              <div style={{ fontSize: 12, color: "#475569" }}>{ownershipStructure.parent_country || "Country unknown"}</div>
+            </div>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Significant Corporate Controllers</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{Number(ownershipStructure.significant_corporate_controllers_count || significantControllers.length || 0)}</div>
+              <div style={{ fontSize: 12, color: "#475569" }}>Non-UK: {Number(ownershipStructure.non_uk_significant_corporate_controllers_count || nonUkControllers.length || 0)}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: "#64748b" }}>
+            No ownership structure cached yet. Refresh to fetch PSC corporate-controller signals from Companies House.
+          </div>
+        )}
+
+        {significantControllers.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>Top significant corporate controllers</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {significantControllers.slice(0, 5).map((controller, idx) => (
+                <div key={`${controller.name || "controller"}-${idx}`} style={{ padding: "8px 10px", borderRadius: 6, background: "#f8f9fb", fontSize: 12, color: "#334155" }}>
+                  <strong>{controller.name || "Unknown controller"}</strong>
+                  <span style={{ color: "#64748b" }}> · {controller.country_registered || "Country unknown"}</span>
+                  {controller.non_uk_jurisdiction && (
+                    <span style={{ marginLeft: 6, color: "#b45309", fontWeight: 600 }}>Non-UK</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="detail-two-column">
         <CompetitorPanel

@@ -57,6 +57,28 @@ describe("Settings", () => {
         });
       }
 
+      if (url === "/api/exclusions" && method === "GET") {
+        return jsonResponse({
+          exclusions: {
+            prohibited_industries: ["Gambling"],
+            excluded_company_ids: [],
+            prohibited_sic_codes: ["62012"],
+          },
+          suppressed_states: ["closed_won"],
+        });
+      }
+
+      if (url === "/api/exclusions" && method === "PUT") {
+        const payload = JSON.parse(options?.body || "{}");
+        return jsonResponse({
+          exclusions: {
+            prohibited_industries: ["Gambling"],
+            excluded_company_ids: [],
+            prohibited_sic_codes: payload.prohibited_sic_codes || [],
+          },
+        });
+      }
+
       if (url === "/api/scoring-weights" && method === "PUT") {
         return jsonResponse({ ok: true }, true);
       }
@@ -101,5 +123,37 @@ describe("Settings", () => {
       ([url, options]) => url === "/api/scoring-weights" && options?.method === "PUT"
     );
     expect(putCalls).toHaveLength(0);
+  });
+
+  it("loads and saves SIC exclusion policy with normalization", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("SIC Exclusion Policy")).toBeInTheDocument();
+    const input = await screen.findByPlaceholderText("Examples: 64201, 64202, 64301");
+
+    await waitFor(() => {
+      expect(input.value).toBe("62012");
+    });
+
+    fireEvent.change(input, { target: { value: "62012, 64201, invalid, 62012" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save SIC Policy" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        ([url, options]) => url === "/api/exclusions" && options?.method === "PUT"
+      );
+      expect(putCall).toBeTruthy();
+    });
+
+    const exclusionsPutCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === "/api/exclusions" && options?.method === "PUT"
+    );
+    expect(exclusionsPutCall).toBeTruthy();
+    const payload = JSON.parse(exclusionsPutCall[1].body);
+    expect(payload.prohibited_sic_codes).toEqual(["62012", "64201"]);
+
+    await waitFor(() => {
+      expect(input.value).toBe("62012, 64201");
+    });
   });
 });
