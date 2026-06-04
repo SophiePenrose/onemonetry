@@ -20,8 +20,10 @@ const baseWeights = {
 
 describe("Settings", () => {
   let fetchMock;
+  let schedulerEnabled;
 
   beforeEach(() => {
+    schedulerEnabled = false;
     fetchMock = vi.fn((url, options) => {
       const method = options?.method || "GET";
 
@@ -75,7 +77,37 @@ describe("Settings", () => {
 
       if (url === "/api/monitor/ownership/status") {
         return jsonResponse({
-          enabled: true,
+          enabled: schedulerEnabled,
+          running: false,
+          stale_days: 30,
+          batch_size: 100,
+          check_interval_ms: 3600000,
+          schedule: "Daily",
+          change_tracking_enabled: true,
+          change_fields: ["parent_company", "structure"],
+        });
+      }
+
+      if (url === "/api/monitor/ownership/scheduler/start" && method === "POST") {
+        schedulerEnabled = true;
+        return jsonResponse({
+          message: "Ownership stale monitor scheduler started",
+          enabled: schedulerEnabled,
+          running: false,
+          stale_days: 30,
+          batch_size: 100,
+          check_interval_ms: 3600000,
+          schedule: "Daily",
+          change_tracking_enabled: true,
+          change_fields: ["parent_company", "structure"],
+        });
+      }
+
+      if (url === "/api/monitor/ownership/scheduler/stop" && method === "POST") {
+        schedulerEnabled = false;
+        return jsonResponse({
+          message: "Ownership stale monitor scheduler stopped",
+          enabled: schedulerEnabled,
           running: false,
           stale_days: 30,
           batch_size: 100,
@@ -207,6 +239,41 @@ describe("Settings", () => {
     );
     expect(runCall).toBeTruthy();
     expect(JSON.parse(runCall[1].body)).toEqual({ batch_size: 42 });
+  });
+
+  it("starts and stops ownership scheduler", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    const startButton = await screen.findByRole("button", { name: "Start Scheduler" });
+    const stopButton = await screen.findByRole("button", { name: "Stop Scheduler" });
+    expect(startButton).toBeEnabled();
+    expect(stopButton).toBeDisabled();
+
+    fireEvent.click(startButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Ownership stale monitor scheduler started")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Stop Scheduler" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop Scheduler" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Ownership stale monitor scheduler stopped")).toBeInTheDocument();
+    });
+
+    const startCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === "/api/monitor/ownership/scheduler/start" && options?.method === "POST"
+    );
+    const stopCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === "/api/monitor/ownership/scheduler/stop" && options?.method === "POST"
+    );
+    expect(startCall).toBeTruthy();
+    expect(stopCall).toBeTruthy();
   });
 
   it("shows validation error and blocks save when segment totals are invalid", async () => {
