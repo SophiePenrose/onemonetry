@@ -144,6 +144,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
   const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
   const [ownershipChangedField, setOwnershipChangedField] = useState("all");
+  const [ownershipImpactFilter, setOwnershipImpactFilter] = useState("all");
   const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
   const [ownershipMonitorStatus, setOwnershipMonitorStatus] = useState(null);
   const [ownershipMonitorLoading, setOwnershipMonitorLoading] = useState(false);
@@ -280,6 +281,19 @@ export default function Settings({ onNavigateToCompany }) {
     return normalized;
   }, [ownershipChanges]);
 
+  const ownershipImpactCounts = useMemo(() => {
+    const rawCounts = ownershipChanges?.impact_counts;
+    if (!rawCounts || typeof rawCounts !== "object" || Array.isArray(rawCounts)) {
+      return { high: 0, standard: 0 };
+    }
+    const high = Number(rawCounts.high);
+    const standard = Number(rawCounts.standard);
+    return {
+      high: Number.isFinite(high) && high > 0 ? Math.round(high) : 0,
+      standard: Number.isFinite(standard) && standard > 0 ? Math.round(standard) : 0,
+    };
+  }, [ownershipChanges]);
+
   const ownershipChangedFieldOptions = useMemo(() => {
     const baseFields = Array.isArray(ownershipMonitorStatus?.change_fields)
       ? ownershipMonitorStatus.change_fields.map((field) => String(field || "").trim()).filter(Boolean)
@@ -304,6 +318,24 @@ export default function Settings({ onNavigateToCompany }) {
   const ownershipChangedFieldLabel = ownershipChangedField !== "all"
     ? humanizeFieldToken(ownershipChangedField)
     : null;
+
+  const ownershipImpactOptions = useMemo(() => [
+    { value: "all", label: "All impact levels" },
+    {
+      value: "high",
+      label: ownershipImpactCounts.high > 0 ? `High impact (${ownershipImpactCounts.high})` : "High impact",
+    },
+    {
+      value: "standard",
+      label: ownershipImpactCounts.standard > 0 ? `Standard impact (${ownershipImpactCounts.standard})` : "Standard impact",
+    },
+  ], [ownershipImpactCounts]);
+
+  const ownershipImpactFilterLabel = ownershipImpactFilter === "high"
+    ? "High impact"
+    : ownershipImpactFilter === "standard"
+      ? "Standard impact"
+      : null;
 
   const loadIntegrationStatus = useCallback(() => {
     const requestId = integrationRequestRef.current + 1;
@@ -355,6 +387,9 @@ export default function Settings({ onNavigateToCompany }) {
     if (ownershipChangedField !== "all") {
       query.set("changed_field", ownershipChangedField);
     }
+    if (ownershipImpactFilter !== "all") {
+      query.set("impact", ownershipImpactFilter);
+    }
 
     fetch(`/api/monitor/ownership/changes?${query.toString()}`)
       .then(async (response) => {
@@ -374,6 +409,10 @@ export default function Settings({ onNavigateToCompany }) {
           changed_fields_filter: Array.isArray(data?.changed_fields_filter) ? data.changed_fields_filter.filter(Boolean) : [],
           changed_fields_counts: data?.changed_fields_counts && typeof data.changed_fields_counts === "object" && !Array.isArray(data.changed_fields_counts)
             ? data.changed_fields_counts
+            : {},
+          impact_filter: String(data?.impact_filter || ownershipImpactFilter || "all").toLowerCase(),
+          impact_counts: data?.impact_counts && typeof data.impact_counts === "object" && !Array.isArray(data.impact_counts)
+            ? data.impact_counts
             : {},
           rows: Array.isArray(data?.rows) ? data.rows : [],
         };
@@ -399,7 +438,7 @@ export default function Settings({ onNavigateToCompany }) {
           setOwnershipChangesLoading(false);
         }
       });
-  }, [ownershipChangedField, ownershipSinceDays]);
+  }, [ownershipChangedField, ownershipImpactFilter, ownershipSinceDays]);
 
   const handleOpenOwnershipCompany = useCallback((row) => {
     if (typeof onNavigateToCompany !== "function") return;
@@ -1132,6 +1171,7 @@ export default function Settings({ onNavigateToCompany }) {
               <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
                 Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
                 {ownershipChangedFieldLabel ? ` · field: ${ownershipChangedFieldLabel}` : ""}
+                {ownershipImpactFilterLabel ? ` · impact: ${ownershipImpactFilterLabel}` : ""}
               </div>
             )}
             {!ownershipChangesLoading && ownershipChangesCheckedAt && (
@@ -1191,6 +1231,28 @@ export default function Settings({ onNavigateToCompany }) {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+            <label htmlFor="ownership-impact-filter" style={{ fontSize: 12, color: "#475569" }}>
+              Impact
+            </label>
+            <select
+              id="ownership-impact-filter"
+              aria-label="Ownership impact filter"
+              value={ownershipImpactFilter}
+              onChange={(event) => {
+                setOwnershipImpactFilter(String(event.target.value || "all"));
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              {ownershipImpactOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}
               style={{
@@ -1226,6 +1288,7 @@ export default function Settings({ onNavigateToCompany }) {
                 <tr style={{ background: "#f8fafc", color: "#475569" }}>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Company</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Changed Fields</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Impact</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Last Changed</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Structure</th>
                   <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Parent</th>
@@ -1238,6 +1301,7 @@ export default function Settings({ onNavigateToCompany }) {
                     ? row.changed_fields.filter(Boolean).map((field) => humanizeFieldToken(field))
                     : [];
                   const changedFieldsLabel = fields.length > 0 ? fields.join(", ") : "None recorded";
+                  const impactLevel = row?.impact_level === "high" ? "High" : "Standard";
                   const lastChangedLabel = formatTimestampLabel(row?.last_changed_at || row?.last_checked_at);
                   const structureLabel = row?.structure ? humanizeFieldToken(row.structure) : "Unknown";
                   const parentLabel = row?.parent_company || "-";
@@ -1250,6 +1314,9 @@ export default function Settings({ onNavigateToCompany }) {
                         <div style={{ color: "#64748b", fontSize: 11 }}>{row?.company_number || "N/A"}</div>
                       </td>
                       <td style={{ padding: "7px 8px", color: "#334155" }}>{changedFieldsLabel}</td>
+                      <td style={{ padding: "7px 8px", color: row?.impact_level === "high" ? "#9a3412" : "#334155", fontWeight: 600 }}>
+                        {impactLevel}
+                      </td>
                       <td style={{ padding: "7px 8px", color: "#334155" }}>{lastChangedLabel}</td>
                       <td style={{ padding: "7px 8px", color: "#334155" }}>{structureLabel}</td>
                       <td style={{ padding: "7px 8px" }}>

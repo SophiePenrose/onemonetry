@@ -737,6 +737,8 @@ describe("API endpoints", () => {
       assert.equal(data.since_days, 90);
       assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.equal(typeof data.changed_fields_counts, "object");
+      assert.equal(typeof data.impact_filter, "string");
+      assert.equal(typeof data.impact_counts, "object");
       assert.ok(Array.isArray(data.rows));
 
       if (data.rows.length > 0) {
@@ -745,6 +747,7 @@ describe("API endpoints", () => {
         assert.equal(typeof row.company_name === "string" || row.company_name === null, true);
         assert.equal(row.change_detected, true);
         assert.ok(Array.isArray(row.changed_fields));
+        assert.equal(typeof row.impact_level, "string");
         assert.equal(typeof row.last_changed_at === "string" || row.last_changed_at === null, true);
         assert.equal(typeof row.last_checked_at === "string" || row.last_checked_at === null, true);
         assert.equal(typeof row.structure === "string" || row.structure === null, true);
@@ -759,11 +762,28 @@ describe("API endpoints", () => {
       assert.equal(Array.isArray(data.changed_fields_filter), true);
       assert.deepEqual(data.changed_fields_filter, ["parent_company"]);
       assert.equal(typeof data.changed_fields_counts, "object");
+      assert.equal(typeof data.impact_filter, "string");
+      assert.equal(typeof data.impact_counts, "object");
 
       if (data.rows.length > 0) {
         for (const row of data.rows) {
           assert.equal(Array.isArray(row.changed_fields), true);
           assert.equal(row.changed_fields.includes("parent_company"), true);
+        }
+      }
+    });
+
+    it("accepts impact filter on ownership changes endpoint", async () => {
+      const { status, data } = await fetchJSON(
+        "/api/monitor/ownership/changes?limit=25&offset=0&since_days=90&impact=high"
+      );
+      assert.equal(status, 200);
+      assert.equal(data.impact_filter, "high");
+      assert.equal(typeof data.impact_counts, "object");
+
+      if (data.rows.length > 0) {
+        for (const row of data.rows) {
+          assert.equal(row.impact_level, "high");
         }
       }
     });

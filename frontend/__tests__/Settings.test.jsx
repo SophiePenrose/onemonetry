@@ -58,6 +58,7 @@ describe("Settings", () => {
         const sinceDays = Number(params.get("since_days") || "30");
         const offset = Number(params.get("offset") || "0");
         const changedField = String(params.get("changed_field") || "").trim();
+        const impact = String(params.get("impact") || "").trim().toLowerCase();
 
         const allRows = [
           {
@@ -65,6 +66,7 @@ describe("Settings", () => {
             company_name: "Acme Holdings Ltd",
             change_detected: true,
             changed_fields: ["parent_company", "structure"],
+            impact_level: "high",
             last_changed_at: "2026-06-04T10:00:00.000Z",
             last_checked_at: "2026-06-04T10:15:00.000Z",
             structure: "subsidiary",
@@ -76,6 +78,7 @@ describe("Settings", () => {
             company_name: "Beta Payments Ltd",
             change_detected: true,
             changed_fields: ["confidence"],
+            impact_level: "standard",
             last_changed_at: "2026-06-04T09:45:00.000Z",
             last_checked_at: "2026-06-04T10:10:00.000Z",
             structure: "independent",
@@ -83,9 +86,15 @@ describe("Settings", () => {
             parent_country: null,
           },
         ];
-        const filteredRows = changedField
-          ? allRows.filter((row) => Array.isArray(row.changed_fields) && row.changed_fields.includes(changedField))
-          : allRows;
+        const filteredRows = allRows.filter((row) => {
+          if (changedField && (!Array.isArray(row.changed_fields) || !row.changed_fields.includes(changedField))) {
+            return false;
+          }
+          if (impact && impact !== "all" && row.impact_level !== impact) {
+            return false;
+          }
+          return true;
+        });
         const rows = filteredRows.slice(offset, offset + 1);
 
         return jsonResponse({
@@ -98,6 +107,11 @@ describe("Settings", () => {
             parent_company: 1,
             structure: 1,
             confidence: 1,
+          },
+          impact_filter: impact || "all",
+          impact_counts: {
+            high: 1,
+            standard: 1,
           },
           rows,
         });
@@ -299,6 +313,31 @@ describe("Settings", () => {
       return href.startsWith("/api/monitor/ownership/changes") && href.includes("changed_field=parent_company");
     });
     expect(sawFieldRequest).toBe(true);
+  });
+
+  it("filters ownership changes by selected impact", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "High impact (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership impact filter" }), {
+      target: { value: "high" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme Holdings Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/1 changed companies in last 30 days · impact: High impact")).toBeInTheDocument();
+    });
+
+    const sawImpactRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes") && href.includes("impact=high");
+    });
+    expect(sawImpactRequest).toBe(true);
   });
 
   it("opens company detail from ownership feed row action", async () => {
