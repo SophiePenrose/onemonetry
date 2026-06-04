@@ -246,6 +246,12 @@ function parseOwnershipChangeSort(rawValue) {
   return "recent";
 }
 
+function parseOwnershipMinChangedFields(rawValue) {
+  const numeric = Number.parseInt(String(rawValue ?? "0"), 10);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(10, numeric));
+}
+
 function getOwnershipImpactLevel(changedFields) {
   if (Array.isArray(changedFields) && changedFields.some((field) => OWNERSHIP_HIGH_IMPACT_FIELDS.includes(field))) {
     return "high";
@@ -265,6 +271,9 @@ export function listOwnershipChangedCompanies(options = {}) {
   );
   const impactFilter = parseOwnershipImpactFilter(options.impact);
   const sortMode = parseOwnershipChangeSort(options.sort);
+  const minChangedFields = parseOwnershipMinChangedFields(
+    options.min_changed_fields ?? options.minChangedFields
+  );
 
   const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? requestedLimit : 100));
   const offset = Math.max(0, Number.isFinite(requestedOffset) ? requestedOffset : 0);
@@ -274,6 +283,12 @@ export function listOwnershipChangedCompanies(options = {}) {
   const companies = getMonitoredCompanies({ status: "active" });
   const changedRows = [];
   const changedFieldCounts = {};
+  const changedFieldsCountBuckets = {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3_plus": 0,
+  };
   const impactCounts = {
     high: 0,
     standard: 0,
@@ -291,6 +306,12 @@ export function listOwnershipChangedCompanies(options = {}) {
     const lastChangedMs = parseOwnershipChangeTimestamp(lastChangedAt);
     if (lastChangedMs !== null && lastChangedMs < sinceMs) continue;
 
+    const changedFieldsCount = changedFields.length;
+    if (changedFieldsCount >= 3) changedFieldsCountBuckets["3_plus"] += 1;
+    else if (changedFieldsCount === 2) changedFieldsCountBuckets["2"] += 1;
+    else if (changedFieldsCount === 1) changedFieldsCountBuckets["1"] += 1;
+    else changedFieldsCountBuckets["0"] += 1;
+
     for (const field of changedFields) {
       changedFieldCounts[field] = Number(changedFieldCounts[field] || 0) + 1;
     }
@@ -304,12 +325,16 @@ export function listOwnershipChangedCompanies(options = {}) {
     if (impactFilter !== "all" && impactLevel !== impactFilter) {
       continue;
     }
+    if (minChangedFields > 0 && changedFieldsCount < minChangedFields) {
+      continue;
+    }
 
     changedRows.push({
       company_number: company.company_number,
       company_name: company.company_name || null,
       change_detected: true,
       changed_fields: changedFields,
+      changed_fields_count: changedFieldsCount,
       impact_level: impactLevel,
       last_changed_at: lastChangedAt,
       last_checked_at: snapshot?.last_checked_at || snapshot?.updated_at || snapshot?.fetched_at || null,
@@ -342,8 +367,10 @@ export function listOwnershipChangedCompanies(options = {}) {
     offset,
     since_days: sinceDays,
     sort: sortMode,
+    min_changed_fields: minChangedFields,
     changed_fields_filter: changedFieldsFilter,
     changed_fields_counts: changedFieldCounts,
+    changed_fields_count_buckets: changedFieldsCountBuckets,
     impact_filter: impactFilter,
     impact_counts: impactCounts,
     rows: changedRows.slice(offset, offset + limit),
