@@ -148,6 +148,8 @@ export default function Settings() {
   const [ownershipRunLoading, setOwnershipRunLoading] = useState(false);
   const [ownershipRunMessage, setOwnershipRunMessage] = useState(null);
   const [ownershipBatchSize, setOwnershipBatchSize] = useState("100");
+  const [ownershipSchedulerLoading, setOwnershipSchedulerLoading] = useState(false);
+  const [ownershipSchedulerMessage, setOwnershipSchedulerMessage] = useState(null);
   const integrationRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
@@ -379,6 +381,46 @@ export default function Settings() {
       setOwnershipRunLoading(false);
     }
   }, [ownershipBatchSize, loadOwnershipChanges, loadOwnershipMonitorStatus]);
+
+  const updateOwnershipScheduler = useCallback(async (action) => {
+    const endpoint = action === "start"
+      ? "/api/monitor/ownership/scheduler/start"
+      : "/api/monitor/ownership/scheduler/stop";
+    const fallbackMessage = action === "start"
+      ? "Ownership scheduler started"
+      : "Ownership scheduler stopped";
+
+    setOwnershipSchedulerLoading(true);
+    setOwnershipSchedulerMessage(null);
+
+    try {
+      const response = await fetch(endpoint, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to ${action} ownership scheduler`);
+      }
+
+      setOwnershipSchedulerMessage({
+        type: "success",
+        text: data.message || fallbackMessage,
+      });
+
+      if (data && typeof data === "object") {
+        setOwnershipMonitorStatus((prev) => ({
+          ...(prev || {}),
+          ...data,
+        }));
+      }
+      loadOwnershipMonitorStatus();
+    } catch (err) {
+      setOwnershipSchedulerMessage({
+        type: "error",
+        text: err?.message || `Failed to ${action} ownership scheduler`,
+      });
+    } finally {
+      setOwnershipSchedulerLoading(false);
+    }
+  }, [loadOwnershipMonitorStatus]);
 
   const loadExclusions = useCallback(() => {
     setExclusionsLoading(true);
@@ -827,8 +869,42 @@ export default function Settings() {
               Refresh Monitor
             </button>
             <button
+              onClick={() => updateOwnershipScheduler("start")}
+              disabled={ownershipSchedulerLoading || ownershipMonitorStatus?.enabled === true}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: "#0369a1",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: ownershipSchedulerLoading || ownershipMonitorStatus?.enabled === true ? "not-allowed" : "pointer",
+                opacity: ownershipSchedulerLoading || ownershipMonitorStatus?.enabled === true ? 0.65 : 1,
+              }}
+            >
+              {ownershipSchedulerLoading ? "Updating..." : "Start Scheduler"}
+            </button>
+            <button
+              onClick={() => updateOwnershipScheduler("stop")}
+              disabled={ownershipSchedulerLoading || ownershipMonitorStatus?.enabled !== true}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: "#7f1d1d",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: ownershipSchedulerLoading || ownershipMonitorStatus?.enabled !== true ? "not-allowed" : "pointer",
+                opacity: ownershipSchedulerLoading || ownershipMonitorStatus?.enabled !== true ? 0.65 : 1,
+              }}
+            >
+              {ownershipSchedulerLoading ? "Updating..." : "Stop Scheduler"}
+            </button>
+            <button
               onClick={runOwnershipRefresh}
-              disabled={ownershipRunLoading || ownershipMonitorStatus?.running === true}
+              disabled={ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running === true}
               style={{
                 padding: "6px 12px",
                 borderRadius: 6,
@@ -837,8 +913,8 @@ export default function Settings() {
                 color: "#fff",
                 fontWeight: 600,
                 fontSize: 12,
-                cursor: ownershipRunLoading || ownershipMonitorStatus?.running ? "not-allowed" : "pointer",
-                opacity: ownershipRunLoading || ownershipMonitorStatus?.running ? 0.65 : 1,
+                cursor: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running ? "not-allowed" : "pointer",
+                opacity: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running ? 0.65 : 1,
               }}
             >
               {ownershipRunLoading
@@ -857,6 +933,19 @@ export default function Settings() {
         {!ownershipMonitorLoading && ownershipMonitorError && (
           <div style={{ marginBottom: 8, fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 10px" }}>
             {ownershipMonitorError}
+          </div>
+        )}
+
+        {ownershipSchedulerMessage && (
+          <div style={{
+            marginBottom: 10,
+            fontSize: 12,
+            borderRadius: 6,
+            padding: "8px 10px",
+            color: ownershipSchedulerMessage.type === "success" ? "#065f46" : "#991b1b",
+            background: ownershipSchedulerMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+          }}>
+            {ownershipSchedulerMessage.text}
           </div>
         )}
 
