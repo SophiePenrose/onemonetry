@@ -21,6 +21,7 @@ const LAYER_ENTRIES = Object.entries(LAYER_LABELS);
 
 const SEGMENTS = ["SMB", "Mid-Market", "Enterprise"];
 const OWNERSHIP_CHANGES_PAGE_SIZE = 20;
+const OWNERSHIP_MONITOR_POLL_INTERVAL_MS = 10000;
 
 function normalizeSicToken(value) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -255,6 +256,9 @@ export default function Settings({ onNavigateToCompany }) {
     () => (Array.isArray(ownershipChanges?.rows) ? ownershipChanges.rows : []),
     [ownershipChanges],
   );
+
+  const ownershipMonitorRunning = ownershipMonitorStatus?.running === true;
+  const ownershipChangesRefreshing = ownershipChangesLoading && ownershipRows.length > 0;
 
   const ownershipHasMore = useMemo(() => {
     const total = Number(ownershipChanges?.total || 0);
@@ -567,6 +571,15 @@ export default function Settings({ onNavigateToCompany }) {
   useEffect(() => {
     loadExclusions();
   }, [loadExclusions]);
+
+  useEffect(() => {
+    if (!ownershipMonitorRunning) return undefined;
+    const timer = setInterval(() => {
+      loadOwnershipMonitorStatus();
+      loadOwnershipChanges({ offset: 0 });
+    }, OWNERSHIP_MONITOR_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [ownershipMonitorRunning, loadOwnershipChanges, loadOwnershipMonitorStatus]);
 
   useEffect(() => {
     if (!localWeights || Object.keys(localWeights).length === 0) return;
@@ -898,12 +911,18 @@ export default function Settings({ onNavigateToCompany }) {
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#1e3a8a" }}>
-                {ownershipMonitorStatus?.running ? "Ownership refresh in progress" : "Latest ownership refresh summary"}
+                {ownershipMonitorRunning ? "Ownership refresh in progress" : "Latest ownership refresh summary"}
               </div>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#1d4ed8" }}>
                 {ownershipProgressPercent}% complete
               </div>
             </div>
+
+            {ownershipMonitorRunning && (
+              <div style={{ marginBottom: 6, fontSize: 11, color: "#1e40af" }}>
+                Auto-refreshing every 10 seconds while run is active.
+              </div>
+            )}
 
             <div style={{
               height: 8,
@@ -1001,7 +1020,7 @@ export default function Settings({ onNavigateToCompany }) {
             </button>
             <button
               onClick={runOwnershipRefresh}
-              disabled={ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running === true}
+              disabled={ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorRunning}
               style={{
                 padding: "6px 12px",
                 borderRadius: 6,
@@ -1010,13 +1029,13 @@ export default function Settings({ onNavigateToCompany }) {
                 color: "#fff",
                 fontWeight: 600,
                 fontSize: 12,
-                cursor: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running ? "not-allowed" : "pointer",
-                opacity: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorStatus?.running ? 0.65 : 1,
+                cursor: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorRunning ? "not-allowed" : "pointer",
+                opacity: ownershipRunLoading || ownershipSchedulerLoading || ownershipMonitorRunning ? 0.65 : 1,
               }}
             >
               {ownershipRunLoading
                 ? "Starting..."
-                : ownershipMonitorStatus?.running
+                : ownershipMonitorRunning
                   ? "Run in progress"
                   : "Run Ownership Refresh"}
             </button>
@@ -1072,6 +1091,11 @@ export default function Settings({ onNavigateToCompany }) {
                 Last checked: {formattedOwnershipCheckedAt}
               </div>
             )}
+            {ownershipChangesRefreshing && (
+              <div style={{ marginTop: 3, fontSize: 11, color: "#1d4ed8" }}>
+                Refreshing change feed...
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1109,7 +1133,7 @@ export default function Settings({ onNavigateToCompany }) {
           </div>
         </div>
 
-        {ownershipChangesLoading && (
+        {ownershipChangesLoading && ownershipRows.length === 0 && (
           <div style={{ fontSize: 12, color: "#888" }}>Loading ownership changes...</div>
         )}
 
@@ -1125,7 +1149,7 @@ export default function Settings({ onNavigateToCompany }) {
           </div>
         )}
 
-        {!ownershipChangesLoading && !ownershipChangesError && ownershipRows.length > 0 && (
+        {!ownershipChangesError && ownershipRows.length > 0 && (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
