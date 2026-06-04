@@ -448,6 +448,37 @@ describe("Settings", () => {
     expect(sawParentScopeRequest).toBe(true);
   });
 
+  it("applies ownership triage preset and resets to custom on manual filter edits", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership triage preset" }), {
+      target: { value: "cross_border_priority" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 1/1 changed companies in last 90 days · preset: Cross-border Priority · sort: High impact first · parent: Non-UK parent")).toBeInTheDocument();
+    });
+
+    const sawPresetRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes")
+        && href.includes("since_days=90")
+        && href.includes("sort=impact")
+        && href.includes("parent_country_scope=non_uk");
+    });
+    expect(sawPresetRequest).toBe(true);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership impact filter" }), {
+      target: { value: "high" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("custom");
+    });
+  });
+
   it("opens company detail from ownership feed row action", async () => {
     const onNavigateToCompany = vi.fn();
     render(<Settings onNavigateToCompany={onNavigateToCompany} />);
