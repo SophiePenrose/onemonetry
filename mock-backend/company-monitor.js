@@ -5,8 +5,10 @@ import {
   upsertMonitoredCompanies,
   getMonitorStats,
   getMonitoredCompanyCount,
+  getSetting,
+  setSetting,
 } from "./db.js";
-import { lookupCompany, isCompaniesHouseConfigured } from "./companies-house.js";
+import { lookupCompany, lookupCompanyOwnership, isCompaniesHouseConfigured } from "./companies-house.js";
 import { parseCsvRow, parseNonEmptyCsvLines } from "./csv-utils.js";
 import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 
@@ -19,11 +21,20 @@ const STALE_LOOKUP_INTERVAL_DAYS = parseInt(process.env.STALE_LOOKUP_INTERVAL_DA
 const STALE_MONITOR_CHECK_INTERVAL_MS = parseInt(
   process.env.STALE_MONITOR_CHECK_INTERVAL_MS || String(24 * 60 * 60 * 1000)
 );
+const OWNERSHIP_STALE_DAYS = Math.max(1, Number.parseInt(process.env.OWNERSHIP_STALE_DAYS || "14", 10) || 14);
+const OWNERSHIP_STALE_BATCH_SIZE = Math.max(1, Number.parseInt(process.env.OWNERSHIP_STALE_BATCH_SIZE || "100", 10) || 100);
+const OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS = Math.max(
+  60000,
+  Number.parseInt(process.env.OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10)
+  || (24 * 60 * 60 * 1000)
+);
 
 let monitorRunning = false;
 let monitorProgress = null;
 let staleMonitorRunning = false;
 let staleMonitorProgress = null;
+let ownershipStaleMonitorRunning = false;
+let ownershipStaleMonitorProgress = null;
 
 export function getMonitorProgress() {
   return monitorProgress;
@@ -41,8 +52,16 @@ export function isStaleMonitorRunning() {
   return staleMonitorRunning;
 }
 
+export function getOwnershipStaleMonitorProgress() {
+  return ownershipStaleMonitorProgress;
+}
+
+export function isOwnershipStaleMonitorRunning() {
+  return ownershipStaleMonitorRunning;
+}
+
 function anyMonitorRunning() {
-  return monitorRunning || staleMonitorRunning;
+  return monitorRunning || staleMonitorRunning || ownershipStaleMonitorRunning;
 }
 
 function sleep(ms) {
@@ -53,6 +72,53 @@ function buildStaleDueAtIso(fromDate = new Date()) {
   const next = new Date(fromDate);
   next.setDate(next.getDate() + STALE_LOOKUP_INTERVAL_DAYS);
   return next.toISOString();
+}
+
+function getOwnershipSnapshot(companyNumber) {
+  if (!companyNumber) return null;
+  return getSetting(`ownership_${companyNumber}`, null);
+}
+
+function parseOwnershipSnapshotTimestamp(snapshot) {
+  const raw = snapshot?.updated_at || snapshot?.fetched_at;
+  if (!raw) return null;
+  const ts = Date.parse(String(raw));
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function isOwnershipSnapshotStale(snapshot, nowMs = Date.now()) {
+  const timestamp = parseOwnershipSnapshotTimestamp(snapshot);
+  if (timestamp === null) return true;
+  return nowMs - timestamp >= OWNERSHIP_STALE_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function getOwnershipStaleCompanies(limit = OWNERSHIP_STALE_BATCH_SIZE) {
+  const maxRows = Math.max(1, Number.parseInt(String(limit || OWNERSHIP_STALE_BATCH_SIZE), 10) || OWNERSHIP_STALE_BATCH_SIZE);
+  const staleRows = [];
+  const nowMs = Date.now();
+  let offset = 0;
+  const pageSize = Math.max(100, maxRows);
+
+  while (staleRows.length < maxRows) {
+    const rows = getMonitoredCompanies({
+      status: "active",
+      limit: pageSize,
+      offset,
+    });
+    if (!rows.length) break;
+    offset += rows.length;
+
+    for (const row of rows) {
+      const snapshot = getOwnershipSnapshot(row.company_number);
+      if (!isOwnershipSnapshotStale(snapshot, nowMs)) continue;
+      staleRows.push(row);
+      if (staleRows.length >= maxRows) break;
+    }
+
+    if (rows.length < pageSize) break;
+  }
+
+  return staleRows;
 }
 
 function getNewFilingsSince(chData, lastFilingDate) {
@@ -252,6 +318,65 @@ export async function runStaleFilingFortnightlyBatch(batchSize = BATCH_SIZE) {
   return { ...staleMonitorProgress };
 }
 
+export async function runOwnershipStaleBatch(batchSize = OWNERSHIP_STALE_BATCH_SIZE) {
+  if (!isCompaniesHouseConfigured()) {
+    return { error: "Companies House API key not set (COMPANIES_HOUSE_API_KEY or CH_API_KEY)" };
+  }
+
+  if (anyMonitorRunning()) {
+    return {
+      error: "Monitor already running",
+      progress: monitorProgress,
+      stale_progress: staleMonitorProgress,
+      ownership_progress: ownershipStaleMonitorProgress,
+    };
+  }
+
+  ownershipStaleMonitorRunning = true;
+  const companies = getOwnershipStaleCompanies(batchSize);
+
+  ownershipStaleMonitorProgress = {
+    started_at: new Date().toISOString(),
+    total: companies.length,
+    checked: 0,
+    refreshed: 0,
+    missing_snapshot: 0,
+    errors: 0,
+  };
+
+  try {
+    for (let i = 0; i < companies.length; i++) {
+      const company = companies[i];
+      try {
+        const existingSnapshot = getOwnershipSnapshot(company.company_number);
+        const ownershipLookup = await lookupCompanyOwnership(company.company_number);
+        if (ownershipLookup?.error || !ownershipLookup?.summary) {
+          ownershipStaleMonitorProgress.errors++;
+        } else {
+          if (!existingSnapshot) {
+            ownershipStaleMonitorProgress.missing_snapshot++;
+          }
+          setSetting(`ownership_${company.company_number}`, {
+            ...ownershipLookup.summary,
+            source: "companies_house_api",
+          });
+          ownershipStaleMonitorProgress.refreshed++;
+        }
+      } catch {
+        ownershipStaleMonitorProgress.errors++;
+      }
+
+      ownershipStaleMonitorProgress.checked = i + 1;
+      await sleep(API_DELAY_MS);
+    }
+
+    ownershipStaleMonitorProgress.completed_at = new Date().toISOString();
+    return { ...ownershipStaleMonitorProgress };
+  } finally {
+    ownershipStaleMonitorRunning = false;
+  }
+}
+
 export function parseCompanyListCSV(csvContent) {
   const lines = parseNonEmptyCsvLines(csvContent);
   if (lines.length === 0) return [];
@@ -384,6 +509,14 @@ let staleMonitorStatus = {
   last_result: null,
   schedule: `Checks due stale filings every ${Math.max(1, Math.round(STALE_MONITOR_CHECK_INTERVAL_MS / 3600000))}h (${STALE_LOOKUP_INTERVAL_DAYS}-day cadence per stale company)`,
 };
+let ownershipStaleMonitorTimer = null;
+let ownershipStaleMonitorStatus = {
+  enabled: false,
+  last_run: null,
+  next_run: null,
+  last_result: null,
+  schedule: `Checks ownership every ${Math.max(1, Math.round(OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS / 3600000))}h (refreshes ownership older than ${OWNERSHIP_STALE_DAYS} days)`,
+};
 
 function getNextSaturdayEvening() {
   return getNextWeeklyZonedRun({
@@ -412,6 +545,18 @@ export function getStaleFilingMonitorStatus() {
     total_monitored: getMonitoredCompanyCount(),
     stale_months_threshold: STALE_FILING_MONTHS,
     stale_recheck_days: STALE_LOOKUP_INTERVAL_DAYS,
+  };
+}
+
+export function getOwnershipStaleMonitorStatus() {
+  return {
+    ...ownershipStaleMonitorStatus,
+    running: ownershipStaleMonitorRunning,
+    progress: ownershipStaleMonitorProgress,
+    total_monitored: getMonitoredCompanyCount(),
+    stale_days: OWNERSHIP_STALE_DAYS,
+    batch_size: OWNERSHIP_STALE_BATCH_SIZE,
+    check_interval_ms: OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS,
   };
 }
 
@@ -482,4 +627,42 @@ export function stopStaleFilingMonitor() {
   staleMonitorStatus.enabled = false;
   staleMonitorStatus.next_run = null;
   return staleMonitorStatus;
+}
+
+async function runOwnershipStaleSchedulerCycle() {
+  ownershipStaleMonitorStatus.last_run = new Date().toISOString();
+  try {
+    const result = await runOwnershipStaleBatch(OWNERSHIP_STALE_BATCH_SIZE);
+    ownershipStaleMonitorStatus.last_result = result;
+  } catch (err) {
+    ownershipStaleMonitorStatus.last_result = { error: err.message };
+  }
+  ownershipStaleMonitorStatus.next_run = new Date(Date.now() + OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS).toISOString();
+}
+
+export function startOwnershipStaleMonitor() {
+  if (ownershipStaleMonitorTimer) clearInterval(ownershipStaleMonitorTimer);
+
+  ownershipStaleMonitorStatus.enabled = true;
+  ownershipStaleMonitorStatus.next_run = new Date(Date.now() + OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS).toISOString();
+
+  ownershipStaleMonitorTimer = setInterval(() => {
+    runOwnershipStaleSchedulerCycle().catch(() => {});
+  }, OWNERSHIP_STALE_MONITOR_CHECK_INTERVAL_MS);
+
+  setTimeout(() => {
+    runOwnershipStaleSchedulerCycle().catch(() => {});
+  }, 15000);
+
+  return ownershipStaleMonitorStatus;
+}
+
+export function stopOwnershipStaleMonitor() {
+  if (ownershipStaleMonitorTimer) {
+    clearInterval(ownershipStaleMonitorTimer);
+    ownershipStaleMonitorTimer = null;
+  }
+  ownershipStaleMonitorStatus.enabled = false;
+  ownershipStaleMonitorStatus.next_run = null;
+  return ownershipStaleMonitorStatus;
 }

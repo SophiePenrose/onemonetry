@@ -703,6 +703,28 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("Ownership stale monitor endpoints", () => {
+    it("includes ownership monitor snapshot on GET /api/monitor/status", async () => {
+      const { status, data } = await fetchJSON("/api/monitor/status");
+      assert.equal(status, 200);
+      assert.equal(typeof data.ownership_monitor, "object");
+      assert.equal(typeof data.ownership_monitor.enabled, "boolean");
+      assert.equal(typeof data.ownership_monitor.running, "boolean");
+      assert.equal(typeof data.ownership_monitor.stale_days, "number");
+      assert.equal(typeof data.ownership_monitor.batch_size, "number");
+    });
+
+    it("returns ownership scheduler metadata on GET /api/monitor/ownership/status", async () => {
+      const { status, data } = await fetchJSON("/api/monitor/ownership/status");
+      assert.equal(status, 200);
+      assert.equal(typeof data.enabled, "boolean");
+      assert.equal(typeof data.running, "boolean");
+      assert.equal(typeof data.stale_days, "number");
+      assert.equal(typeof data.check_interval_ms, "number");
+      assert.equal(typeof data.schedule, "string");
+    });
+  });
+
   describe("GET /api/import/bulk/monthly", () => {
     it("returns monthly ZIP file list from Companies House", async () => {
       const { status, data } = await fetchJSON("/api/import/bulk/monthly");
