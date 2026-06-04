@@ -48,6 +48,31 @@ describe("Settings", () => {
         });
       }
 
+      if (typeof url === "string" && url.startsWith("/api/monitor/ownership/changes")) {
+        const search = url.includes("?") ? url.split("?")[1] : "";
+        const params = new URLSearchParams(search);
+        const sinceDays = Number(params.get("since_days") || "30");
+        return jsonResponse({
+          total: 1,
+          limit: Number(params.get("limit") || "20"),
+          offset: Number(params.get("offset") || "0"),
+          since_days: sinceDays,
+          rows: [
+            {
+              company_number: "01234567",
+              company_name: "Acme Holdings Ltd",
+              change_detected: true,
+              changed_fields: ["parent_company", "structure"],
+              last_changed_at: "2026-06-04T10:00:00.000Z",
+              last_checked_at: "2026-06-04T10:15:00.000Z",
+              structure: "subsidiary",
+              parent_company: "Acme Group plc",
+              parent_country: "United Kingdom",
+            },
+          ],
+        });
+      }
+
       if (url === "/api/unified-shortlist") {
         return jsonResponse({
           companies: [
@@ -105,6 +130,34 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(screen.getByText("Acme")).toBeInTheDocument();
       expect(screen.getByText("N/A")).toBeInTheDocument();
+    });
+  });
+
+  it("renders ownership change feed and refreshes when window changes", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Acme Holdings Ltd")).toBeInTheDocument();
+      expect(screen.getByText("Parent Company, Structure")).toBeInTheDocument();
+      expect(screen.getByText("Showing 1/1 changed companies in last 30 days")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change window" }), {
+      target: { value: "90" },
+    });
+
+    await waitFor(() => {
+      const sawWindowRequest = fetchMock.mock.calls.some(([url]) => {
+        const href = String(url || "");
+        return href.startsWith("/api/monitor/ownership/changes") && href.includes("since_days=90");
+      });
+      expect(sawWindowRequest).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing 1/1 changed companies in last 90 days")).toBeInTheDocument();
     });
   });
 

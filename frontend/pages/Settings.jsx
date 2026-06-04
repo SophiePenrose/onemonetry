@@ -34,6 +34,19 @@ function parseSicListInput(rawValue) {
   return [...new Set(parts)];
 }
 
+function formatTimestampLabel(value) {
+  if (!value) return "Unknown";
+  const ts = Date.parse(String(value));
+  if (!Number.isFinite(ts)) return "Unknown";
+  return new Date(ts).toLocaleString("en-GB");
+}
+
+function humanizeFieldToken(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -112,7 +125,13 @@ export default function Settings() {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
+  const [ownershipChanges, setOwnershipChanges] = useState(null);
+  const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
+  const [ownershipChangesError, setOwnershipChangesError] = useState(null);
+  const [ownershipSinceDays, setOwnershipSinceDays] = useState(30);
+  const [ownershipChangesCheckedAt, setOwnershipChangesCheckedAt] = useState(null);
   const integrationRequestRef = useRef(0);
+  const ownershipChangesRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
 
   const segmentTotals = useMemo(
@@ -178,6 +197,11 @@ export default function Settings() {
     [integrationCheckedAt],
   );
 
+  const formattedOwnershipCheckedAt = useMemo(
+    () => (ownershipChangesCheckedAt ? new Date(ownershipChangesCheckedAt).toLocaleString("en-GB") : null),
+    [ownershipChangesCheckedAt],
+  );
+
   const previewRows = useMemo(
     () => (preview || []).map((company) => {
       const numericScore = Number(company.combined_score);
@@ -187,6 +211,11 @@ export default function Settings() {
       };
     }),
     [preview],
+  );
+
+  const ownershipRows = useMemo(
+    () => (Array.isArray(ownershipChanges?.rows) ? ownershipChanges.rows : []),
+    [ownershipChanges],
   );
 
   const loadIntegrationStatus = useCallback(() => {
@@ -219,6 +248,50 @@ export default function Settings() {
         }
       });
   }, []);
+
+  const loadOwnershipChanges = useCallback(() => {
+    const requestId = ownershipChangesRequestRef.current + 1;
+    ownershipChangesRequestRef.current = requestId;
+
+    setOwnershipChangesLoading(true);
+    setOwnershipChangesError(null);
+
+    const query = new URLSearchParams({
+      limit: "20",
+      offset: "0",
+      since_days: String(ownershipSinceDays),
+    });
+
+    fetch(`/api/monitor/ownership/changes?${query.toString()}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load ownership changes (${response.status})`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (ownershipChangesRequestRef.current !== requestId) return;
+        setOwnershipChanges({
+          total: Number.isFinite(Number(data?.total)) ? Number(data.total) : 0,
+          limit: Number.isFinite(Number(data?.limit)) ? Number(data.limit) : 20,
+          offset: Number.isFinite(Number(data?.offset)) ? Number(data.offset) : 0,
+          since_days: Number.isFinite(Number(data?.since_days)) ? Number(data.since_days) : ownershipSinceDays,
+          rows: Array.isArray(data?.rows) ? data.rows : [],
+        });
+        setOwnershipChangesCheckedAt(new Date().toISOString());
+      })
+      .catch((err) => {
+        if (ownershipChangesRequestRef.current !== requestId) return;
+        setOwnershipChanges(null);
+        setOwnershipChangesError(err?.message || "Ownership change feed unavailable");
+        setOwnershipChangesCheckedAt(new Date().toISOString());
+      })
+      .finally(() => {
+        if (ownershipChangesRequestRef.current === requestId) {
+          setOwnershipChangesLoading(false);
+        }
+      });
+  }, [ownershipSinceDays]);
 
   const loadExclusions = useCallback(() => {
     setExclusionsLoading(true);
@@ -310,6 +383,10 @@ export default function Settings() {
   useEffect(() => {
     loadIntegrationStatus();
   }, [loadIntegrationStatus]);
+
+  useEffect(() => {
+    loadOwnershipChanges();
+  }, [loadOwnershipChanges]);
 
   useEffect(() => {
     loadExclusions();
@@ -591,6 +668,118 @@ export default function Settings() {
                 </pre>
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 8, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <div>
+            <h4 style={{ margin: 0, fontSize: 15 }}>Ownership Change Feed</h4>
+            {!ownershipChangesLoading && ownershipChanges && (
+              <div style={{ marginTop: 3, fontSize: 12, color: "#475569" }}>
+                Showing {ownershipRows.length}/{ownershipChanges.total} changed companies in last {ownershipChanges.since_days} days
+              </div>
+            )}
+            {!ownershipChangesLoading && ownershipChangesCheckedAt && (
+              <div style={{ marginTop: 3, fontSize: 11, color: "#64748b" }}>
+                Last checked: {formattedOwnershipCheckedAt}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label htmlFor="ownership-change-window" style={{ fontSize: 12, color: "#475569" }}>
+              Window
+            </label>
+            <select
+              id="ownership-change-window"
+              aria-label="Ownership change window"
+              value={ownershipSinceDays}
+              onChange={(event) => {
+                setOwnershipSinceDays(Number.parseInt(event.target.value, 10) || 30);
+              }}
+              style={{
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+              }}
+            >
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={180}>180 days</option>
+            </select>
+            <button
+              onClick={loadOwnershipChanges}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+                cursor: "pointer", fontSize: 12, color: "#555",
+              }}
+            >
+              Refresh Changes
+            </button>
+          </div>
+        </div>
+
+        {ownershipChangesLoading && (
+          <div style={{ fontSize: 12, color: "#888" }}>Loading ownership changes...</div>
+        )}
+
+        {!ownershipChangesLoading && ownershipChangesError && (
+          <div style={{ fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 10px" }}>
+            {ownershipChangesError}
+          </div>
+        )}
+
+        {!ownershipChangesLoading && !ownershipChangesError && ownershipChanges && ownershipRows.length === 0 && (
+          <div style={{ fontSize: 12, color: "#64748b", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+            No ownership changes detected in the selected window.
+          </div>
+        )}
+
+        {!ownershipChangesLoading && !ownershipChangesError && ownershipRows.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc", color: "#475569" }}>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Company</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Changed Fields</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Last Changed</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Structure</th>
+                  <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "1px solid #e2e8f0" }}>Parent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ownershipRows.map((row, index) => {
+                  const fields = Array.isArray(row?.changed_fields)
+                    ? row.changed_fields.filter(Boolean).map((field) => humanizeFieldToken(field))
+                    : [];
+                  const changedFieldsLabel = fields.length > 0 ? fields.join(", ") : "None recorded";
+                  const lastChangedLabel = formatTimestampLabel(row?.last_changed_at || row?.last_checked_at);
+                  const structureLabel = row?.structure ? humanizeFieldToken(row.structure) : "Unknown";
+                  const parentLabel = row?.parent_company || "-";
+                  const parentCountryLabel = row?.parent_country || "Country unknown";
+
+                  return (
+                    <tr key={`${row?.company_number || "unknown"}-${index}`} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "7px 8px" }}>
+                        <div style={{ fontWeight: 600, color: "#1f2937" }}>{row?.company_name || "Unknown company"}</div>
+                        <div style={{ color: "#64748b", fontSize: 11 }}>{row?.company_number || "N/A"}</div>
+                      </td>
+                      <td style={{ padding: "7px 8px", color: "#334155" }}>{changedFieldsLabel}</td>
+                      <td style={{ padding: "7px 8px", color: "#334155" }}>{lastChangedLabel}</td>
+                      <td style={{ padding: "7px 8px", color: "#334155" }}>{structureLabel}</td>
+                      <td style={{ padding: "7px 8px" }}>
+                        <div style={{ color: "#1f2937" }}>{parentLabel}</div>
+                        <div style={{ color: "#64748b", fontSize: 11 }}>{parentCountryLabel}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
