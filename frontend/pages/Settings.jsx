@@ -205,6 +205,21 @@ function writeOwnershipTriageStateToQuery(state) {
   }
 }
 
+function buildOwnershipTriageQueryOnly(state) {
+  const normalized = sanitizeOwnershipTriageState(state);
+  const query = new URLSearchParams();
+
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.preset, normalized.preset);
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.since_days, String(normalized.since_days));
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.sort, normalized.sort);
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.min_changed_fields, normalized.min_changed_fields);
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.parent_country_scope, normalized.parent_country_scope);
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.changed_field, normalized.changed_field);
+  query.set(OWNERSHIP_TRIAGE_QUERY_PARAMS.impact, normalized.impact);
+
+  return `?${query.toString()}`;
+}
+
 function writeStoredOwnershipTriageState(state) {
   if (typeof window === "undefined" || !window.localStorage) {
     return;
@@ -369,7 +384,8 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipSchedulerLoading, setOwnershipSchedulerLoading] = useState(false);
   const [ownershipSchedulerMessage, setOwnershipSchedulerMessage] = useState(null);
   const [ownershipCopyLinkMessage, setOwnershipCopyLinkMessage] = useState(null);
-  const [ownershipCopyFallbackUrl, setOwnershipCopyFallbackUrl] = useState("");
+  const [ownershipCopyFallbackValue, setOwnershipCopyFallbackValue] = useState("");
+  const [ownershipCopyFallbackType, setOwnershipCopyFallbackType] = useState(null);
   const integrationRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
@@ -719,27 +735,52 @@ export default function Settings({ onNavigateToCompany }) {
     }, 1800);
   }, []);
 
-  const copyOwnershipTriageLink = useCallback(async () => {
+  const copyOwnershipTriageLink = useCallback(async (copyMode = "link") => {
     if (typeof window === "undefined") {
-      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed" });
+      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed", target: copyMode });
       return;
     }
 
-    const copySourceUrl = window.location.href;
+    const copySourceValue = copyMode === "query"
+      ? buildOwnershipTriageQueryOnly({
+        preset: ownershipTriagePreset,
+        since_days: ownershipSinceDays,
+        sort: ownershipSortMode,
+        min_changed_fields: ownershipSignalDensity,
+        parent_country_scope: ownershipParentCountryScope,
+        changed_field: ownershipChangedField,
+        impact: ownershipImpactFilter,
+      })
+      : window.location.href;
 
     try {
       if (!navigator?.clipboard || typeof navigator.clipboard.writeText !== "function") {
         throw new Error("clipboard_unavailable");
       }
 
-      await navigator.clipboard.writeText(copySourceUrl);
-      setOwnershipCopyFallbackUrl("");
-      showOwnershipCopyLinkFeedback({ type: "success", text: "Link copied" });
+      await navigator.clipboard.writeText(copySourceValue);
+      setOwnershipCopyFallbackValue("");
+      setOwnershipCopyFallbackType(null);
+      showOwnershipCopyLinkFeedback({
+        type: "success",
+        text: copyMode === "query" ? "Query copied" : "Link copied",
+        target: copyMode,
+      });
     } catch {
-      setOwnershipCopyFallbackUrl(copySourceUrl);
-      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed" });
+      setOwnershipCopyFallbackValue(copySourceValue);
+      setOwnershipCopyFallbackType(copyMode);
+      showOwnershipCopyLinkFeedback({ type: "error", text: "Copy failed", target: copyMode });
     }
-  }, [showOwnershipCopyLinkFeedback]);
+  }, [
+    ownershipChangedField,
+    ownershipImpactFilter,
+    ownershipParentCountryScope,
+    ownershipSignalDensity,
+    ownershipSinceDays,
+    ownershipSortMode,
+    ownershipTriagePreset,
+    showOwnershipCopyLinkFeedback,
+  ]);
 
   const selectOwnershipCopyFallback = useCallback(() => {
     if (!ownershipCopyFallbackInputRef.current) return;
@@ -1156,12 +1197,12 @@ export default function Settings({ onNavigateToCompany }) {
   }, []);
 
   useEffect(() => {
-    if (!ownershipCopyFallbackUrl || !ownershipCopyFallbackInputRef.current) {
+    if (!ownershipCopyFallbackValue || !ownershipCopyFallbackInputRef.current) {
       return;
     }
     ownershipCopyFallbackInputRef.current.focus();
     ownershipCopyFallbackInputRef.current.select();
-  }, [ownershipCopyFallbackUrl]);
+  }, [ownershipCopyFallbackValue]);
 
   const handleWeightChange = useCallback((segment, layer, value) => {
     setLocalWeights((prev) => ({
@@ -1862,17 +1903,32 @@ export default function Settings({ onNavigateToCompany }) {
             <button
               type="button"
               aria-label="Copy ownership triage link"
-              onClick={copyOwnershipTriageLink}
+              onClick={() => copyOwnershipTriageLink("link")}
               style={{
                 padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
-                cursor: "pointer", fontSize: 12, color: ownershipCopyLinkMessage?.type === "error" ? "#991b1b" : "#555",
+                cursor: "pointer", fontSize: 12, color: ownershipCopyLinkMessage?.target === "link" && ownershipCopyLinkMessage?.type === "error" ? "#991b1b" : "#555",
               }}
             >
-              {ownershipCopyLinkMessage?.type === "success"
+              {ownershipCopyLinkMessage?.target === "link" && ownershipCopyLinkMessage?.type === "success"
                 ? "Copied Link"
-                : ownershipCopyLinkMessage?.type === "error"
+                : ownershipCopyLinkMessage?.target === "link" && ownershipCopyLinkMessage?.type === "error"
                   ? "Copy Failed"
                   : "Copy Triage Link"}
+            </button>
+            <button
+              type="button"
+              aria-label="Copy ownership triage query only"
+              onClick={() => copyOwnershipTriageLink("query")}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff",
+                cursor: "pointer", fontSize: 12, color: ownershipCopyLinkMessage?.target === "query" && ownershipCopyLinkMessage?.type === "error" ? "#991b1b" : "#555",
+              }}
+            >
+              {ownershipCopyLinkMessage?.target === "query" && ownershipCopyLinkMessage?.type === "success"
+                ? "Copied Query"
+                : ownershipCopyLinkMessage?.target === "query" && ownershipCopyLinkMessage?.type === "error"
+                  ? "Copy Failed"
+                  : "Copy Query Only"}
             </button>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}
@@ -1886,31 +1942,36 @@ export default function Settings({ onNavigateToCompany }) {
           </div>
         </div>
 
-        {ownershipCopyFallbackUrl && (
+        {ownershipCopyFallbackValue && (
           <div style={{ marginBottom: 10, fontSize: 12, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
-            <div style={{ marginBottom: 6 }}>Clipboard access was blocked. Copy the triage link manually:</div>
+            <div style={{ marginBottom: 6 }}>
+              Clipboard access was blocked. Copy the triage {ownershipCopyFallbackType === "query" ? "query" : "link"} manually:
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <input
                 ref={ownershipCopyFallbackInputRef}
                 type="text"
                 readOnly
-                aria-label="Ownership triage link fallback"
-                value={ownershipCopyFallbackUrl}
+                aria-label="Ownership triage copy fallback"
+                value={ownershipCopyFallbackValue}
                 onFocus={(event) => event.currentTarget.select()}
                 style={{ flex: 1, minWidth: 260, borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", fontSize: 12, padding: "6px 8px", color: "#1f2937" }}
               />
               <button
                 type="button"
-                aria-label="Select ownership triage link fallback"
+                aria-label="Select ownership triage copy fallback"
                 onClick={selectOwnershipCopyFallback}
                 style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12, color: "#374151" }}
               >
-                Select Link
+                Select Value
               </button>
               <button
                 type="button"
-                aria-label="Dismiss ownership triage link fallback"
-                onClick={() => setOwnershipCopyFallbackUrl("")}
+                aria-label="Dismiss ownership triage copy fallback"
+                onClick={() => {
+                  setOwnershipCopyFallbackValue("");
+                  setOwnershipCopyFallbackType(null);
+                }}
                 style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12, color: "#374151" }}
               >
                 Dismiss
