@@ -132,6 +132,31 @@ function normalizeCompanyNumber(value) {
   return null;
 }
 
+function normalizeConnectorId(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function parseConnectorFilterInput(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const rawItems = Array.isArray(value)
+    ? value
+    : (typeof value === "string" ? value.split(/[\s,;]+/) : [value]);
+
+  const parsed = [];
+  for (const rawItem of rawItems) {
+    const normalized = normalizeConnectorId(rawItem);
+    if (!normalized) continue;
+    if (!parsed.includes(normalized)) {
+      parsed.push(normalized);
+    }
+  }
+
+  return parsed;
+}
+
 function toFiniteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -2231,6 +2256,27 @@ export async function syncExternalSignals(input = {}) {
     input.enableStatusDiscovery ?? input.enable_status_discovery,
     parseBooleanFlag(process.env.ENABLE_STATUS_URL_DISCOVERY, false)
   );
+  const requestedConnectors = parseConnectorFilterInput(
+    input.connectors ?? input.connectorIds ?? input.connector_ids ?? input.connector
+  );
+  const availableConnectorIds = CONNECTOR_DEFINITIONS.map((definition) => definition.id);
+  const availableConnectorIdSet = new Set(availableConnectorIds);
+  const unknownRequestedConnectors = requestedConnectors === null
+    ? []
+    : requestedConnectors.filter((id) => !availableConnectorIdSet.has(id));
+  const connectorDefinitions = requestedConnectors === null
+    ? CONNECTOR_DEFINITIONS
+    : CONNECTOR_DEFINITIONS.filter((definition) => requestedConnectors.includes(definition.id));
+
+  if (requestedConnectors !== null && connectorDefinitions.length === 0) {
+    return {
+      status: "invalid_input",
+      updated: false,
+      error: "valid connector id is required",
+      requested_connectors: requestedConnectors,
+      available_connectors: availableConnectorIds,
+    };
+  }
 
   const context = {
     company_number: companyNumber,
@@ -2243,7 +2289,7 @@ export async function syncExternalSignals(input = {}) {
   const runtimeStatuses = [];
   const enabled = [];
 
-  for (const definition of CONNECTOR_DEFINITIONS) {
+  for (const definition of connectorDefinitions) {
     const status = buildConnectorRuntimeStatus(definition, context, {
       enableStatusDiscovery,
     });
@@ -2262,6 +2308,8 @@ export async function syncExternalSignals(input = {}) {
       succeeded: 0,
       failed: 0,
       status_url_discovery_enabled: enableStatusDiscovery,
+      requested_connectors: requestedConnectors,
+      ignored_connectors: unknownRequestedConnectors,
       connectors: runtimeStatuses,
       telemetry: {
         request_timeout_ms: timeoutMs,
@@ -2285,9 +2333,10 @@ export async function syncExternalSignals(input = {}) {
   let httpFailures = 0;
   let requestFailures = 0;
   const keysUpdated = new Set();
+  const connectorDefinitionById = new Map(connectorDefinitions.map((definition) => [definition.id, definition]));
 
   for (const status of enabled) {
-    const definition = CONNECTOR_DEFINITIONS.find((entry) => entry.id === status.id);
+    const definition = connectorDefinitionById.get(status.id);
     if (!definition) continue;
 
     const fetched = await fetchConnectorPayload(definition, status.request_urls, timeoutMs);
@@ -2384,6 +2433,8 @@ export async function syncExternalSignals(input = {}) {
     company_name: companyName || null,
     company_domain: companyDomain || null,
     status_url_discovery_enabled: enableStatusDiscovery,
+    requested_connectors: requestedConnectors,
+    ignored_connectors: unknownRequestedConnectors,
     attempted: enabled.length,
     succeeded,
     failed,

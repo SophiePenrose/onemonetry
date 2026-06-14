@@ -24,12 +24,14 @@ describe("Settings", () => {
   let fetchMock;
   let schedulerEnabled;
   let ownershipMonitorRunning;
+  let endoleSyncResponse;
 
   beforeEach(() => {
     globalThis.localStorage?.clear();
     window.history.replaceState({}, "", "/");
     schedulerEnabled = false;
     ownershipMonitorRunning = false;
+    endoleSyncResponse = null;
     fetchMock = vi.fn((url, options) => {
       const method = options?.method || "GET";
 
@@ -53,6 +55,24 @@ describe("Settings", () => {
           ready_for_production: true,
           missing_required: [],
           env_template: ["ENDOLE_API_KEY=", "BUILTWITH_KEY="],
+        });
+      }
+
+      if (typeof url === "string" && url.startsWith("/api/signals/sync/") && method === "POST") {
+        if (endoleSyncResponse && typeof endoleSyncResponse === "object") {
+          return jsonResponse(endoleSyncResponse.body || {}, endoleSyncResponse.ok === true, endoleSyncResponse.status || 500);
+        }
+
+        const companyNumber = String(url.split("/").pop() || "").trim();
+        return jsonResponse({
+          status: "updated",
+          updated: true,
+          company_number: companyNumber,
+          attempted: 1,
+          succeeded: 1,
+          failed: 0,
+          requested_connectors: ["endole"],
+          connectors: [{ id: "endole", ok: true }],
         });
       }
 
@@ -278,6 +298,83 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(screen.getByText("Acme")).toBeInTheDocument();
       expect(screen.getByText("N/A")).toBeInTheDocument();
+    });
+  });
+
+  it("runs targeted Endole sync using Endole-only connector scope", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+      target: { value: "ch-6" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Endole sync completed for 00000006 (1/1 connectors succeeded).")).toBeInTheDocument();
+    });
+
+    const syncCall = fetchMock.mock.calls.find(
+      ([url, options]) => String(url || "").startsWith("/api/signals/sync/00000006") && options?.method === "POST"
+    );
+    expect(syncCall).toBeTruthy();
+    expect(JSON.parse(syncCall[1].body)).toEqual({ connectors: ["endole"] });
+  });
+
+  it("shows validation message for invalid Endole sync company number", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+      target: { value: "!!!" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Enter a valid company number.")).toBeInTheDocument();
+    });
+
+    const syncCalls = fetchMock.mock.calls.filter(
+      ([url]) => String(url || "").startsWith("/api/signals/sync/")
+    );
+    expect(syncCalls).toHaveLength(0);
+  });
+
+  it("shows backend error when targeted Endole sync fails", async () => {
+    endoleSyncResponse = {
+      status: 502,
+      ok: false,
+      body: { error: "Endole sync upstream failed" },
+    };
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+      target: { value: "00000006" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Endole sync upstream failed")).toBeInTheDocument();
     });
   });
 

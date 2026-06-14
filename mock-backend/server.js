@@ -5162,6 +5162,7 @@ app.post("/api/signals/sync/:number", async (req, res) => {
       companyName,
       companyDomain,
       timeoutMs: req.body?.timeout_ms,
+      connectors: req.body?.connectors ?? req.body?.connector_ids ?? req.body?.connector,
       enableStatusDiscovery: parseBooleanInput(
         req.body?.discover_status_urls,
         (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true"

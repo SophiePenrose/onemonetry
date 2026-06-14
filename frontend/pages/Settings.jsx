@@ -198,6 +198,24 @@ function parseOwnershipTriageStateFromShareValue(rawValue) {
   }
 }
 
+function normalizeCompanyNumberToken(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+
+  const stripped = raw.replace(/^CH-/, "").replace(/\s+/g, "");
+  if (!stripped) return null;
+
+  if (/^\d{1,8}$/.test(stripped)) {
+    return stripped.padStart(8, "0");
+  }
+
+  if (/^[A-Z0-9]{2,12}$/.test(stripped)) {
+    return stripped;
+  }
+
+  return null;
+}
+
 function writeOwnershipTriageStateToQuery(state) {
   if (typeof window === "undefined" || !window.history || typeof window.history.replaceState !== "function") {
     return;
@@ -405,6 +423,9 @@ export default function Settings({ onNavigateToCompany }) {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
+  const [endoleSyncCompanyNumber, setEndoleSyncCompanyNumber] = useState("");
+  const [endoleSyncLoading, setEndoleSyncLoading] = useState(false);
+  const [endoleSyncMessage, setEndoleSyncMessage] = useState(null);
   const [ownershipChanges, setOwnershipChanges] = useState(null);
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
@@ -494,6 +515,7 @@ export default function Settings({ onNavigateToCompany }) {
     requiredCount,
     requiredConfiguredCount,
   } = integrationView;
+  const endoleConfigured = integrationStatus?.integrations?.endole?.configured === true;
 
   const formattedCheckedAt = useMemo(
     () => (integrationCheckedAt ? new Date(integrationCheckedAt).toLocaleString("en-GB") : null),
@@ -927,6 +949,60 @@ export default function Settings({ onNavigateToCompany }) {
         }
       });
   }, []);
+
+  const runEndoleSync = useCallback(async () => {
+    const companyNumber = normalizeCompanyNumberToken(endoleSyncCompanyNumber);
+    if (!companyNumber) {
+      setEndoleSyncMessage({ type: "error", text: "Enter a valid company number." });
+      return;
+    }
+
+    setEndoleSyncLoading(true);
+    setEndoleSyncMessage(null);
+
+    try {
+      const response = await fetch(`/api/signals/sync/${encodeURIComponent(companyNumber)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectors: ["endole"] }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || data?.detail || `Failed to run Endole sync (${response.status})`);
+      }
+
+      setEndoleSyncCompanyNumber(companyNumber);
+
+      if (data?.status === "no_connectors_configured") {
+        setEndoleSyncMessage({
+          type: "error",
+          text: "Endole connector is not configured in this environment.",
+        });
+        return;
+      }
+
+      const succeeded = Number(data?.succeeded || 0);
+      const attempted = Number(data?.attempted || 0);
+      const summary = Number.isFinite(succeeded) && Number.isFinite(attempted) && attempted > 0
+        ? ` (${succeeded}/${attempted} connectors succeeded).`
+        : ".";
+
+      setEndoleSyncMessage({
+        type: data?.updated ? "success" : "error",
+        text: data?.updated
+          ? `Endole sync completed for ${companyNumber}${summary}`
+          : (data?.error || "Endole sync finished with no updates."),
+      });
+    } catch (err) {
+      setEndoleSyncMessage({
+        type: "error",
+        text: err?.message || "Failed to run Endole sync",
+      });
+    } finally {
+      setEndoleSyncLoading(false);
+    }
+  }, [endoleSyncCompanyNumber]);
 
   const loadOwnershipChanges = useCallback((options = {}) => {
     const requestId = ownershipChangesRequestRef.current + 1;
@@ -1571,6 +1647,85 @@ export default function Settings({ onNavigateToCompany }) {
               {integrationStatus.ready_for_production
                 ? "Required integrations are configured."
                 : `Missing required: ${(integrationStatus.missing_required || []).join(", ")}`}
+            </div>
+
+            <div style={{
+              marginTop: 12,
+              border: "1px solid #e2e8f0",
+              background: "#f8fafc",
+              borderRadius: 6,
+              padding: "10px 12px",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>
+                Targeted Endole Sync
+              </div>
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
+                Run Endole-only signal sync for one company without invoking other connectors.
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  id="endole-sync-company-number"
+                  aria-label="Endole sync company number"
+                  type="text"
+                  placeholder="Company number (e.g. 00000006)"
+                  value={endoleSyncCompanyNumber}
+                  onChange={(event) => {
+                    setEndoleSyncCompanyNumber(event.target.value);
+                    setEndoleSyncMessage(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    runEndoleSync();
+                  }}
+                  style={{
+                    minWidth: 180,
+                    maxWidth: 260,
+                    width: "100%",
+                    borderRadius: 6,
+                    border: "1px solid #d1d5db",
+                    padding: "6px 8px",
+                    fontSize: 12,
+                    boxSizing: "border-box",
+                  }}
+                />
+                <button
+                  onClick={runEndoleSync}
+                  disabled={endoleSyncLoading || !endoleConfigured}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: "#0f766e",
+                    color: "#fff",
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: endoleSyncLoading || !endoleConfigured ? "not-allowed" : "pointer",
+                    opacity: endoleSyncLoading || !endoleConfigured ? 0.65 : 1,
+                  }}
+                >
+                  {endoleSyncLoading ? "Running..." : "Run Endole Sync"}
+                </button>
+              </div>
+
+              {!endoleConfigured && (
+                <div style={{ marginTop: 8, fontSize: 11, color: "#92400e" }}>
+                  Endole is not configured. Add ENDOLE_API_KEY to enable this action.
+                </div>
+              )}
+
+              {endoleSyncMessage && (
+                <div style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  background: endoleSyncMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+                  color: endoleSyncMessage.type === "success" ? "#065f46" : "#991b1b",
+                }}>
+                  {endoleSyncMessage.text}
+                </div>
+              )}
             </div>
 
             {integrationStatus.env_template?.length > 0 && (
