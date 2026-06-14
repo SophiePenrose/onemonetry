@@ -722,6 +722,46 @@ describe("Settings", () => {
     expect(sawSharedQueryRequest).toBe(true);
   });
 
+  it("pastes and applies ownership triage shared query from clipboard", async () => {
+    const readText = vi.fn().mockResolvedValue("?ownership_since_days=180&ownership_sort=impact&ownership_impact=high");
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Paste and apply ownership triage shared query" }));
+
+    await waitFor(() => {
+      expect(readText).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("combobox", { name: "Ownership change window" })).toHaveValue("180");
+      expect(screen.getByRole("combobox", { name: "Ownership change sort mode" })).toHaveValue("impact");
+      expect(screen.getByRole("combobox", { name: "Ownership impact filter" })).toHaveValue("high");
+      expect(screen.getByText("Applied shared triage query.")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Ownership triage shared query input" })).toHaveValue("");
+    });
+  });
+
+  it("shows clipboard-unavailable error when paste-and-apply is not supported", async () => {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn() },
+    });
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Paste and apply ownership triage shared query" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Clipboard paste unavailable.")).toBeInTheDocument();
+    });
+  });
+
   it("shows an error when shared query input has no ownership params", async () => {
     render(<Settings />);
 
