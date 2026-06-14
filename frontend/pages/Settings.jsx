@@ -423,9 +423,9 @@ export default function Settings({ onNavigateToCompany }) {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
-  const [endoleSyncCompanyNumber, setEndoleSyncCompanyNumber] = useState("");
-  const [endoleSyncLoading, setEndoleSyncLoading] = useState(false);
-  const [endoleSyncMessage, setEndoleSyncMessage] = useState(null);
+  const [targetedSyncCompanyNumber, setTargetedSyncCompanyNumber] = useState("");
+  const [targetedSyncLoading, setTargetedSyncLoading] = useState(false);
+  const [targetedSyncMessage, setTargetedSyncMessage] = useState(null);
   const [ownershipChanges, setOwnershipChanges] = useState(null);
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
@@ -515,7 +515,18 @@ export default function Settings({ onNavigateToCompany }) {
     requiredCount,
     requiredConfiguredCount,
   } = integrationView;
-  const endoleConfigured = integrationStatus?.integrations?.endole?.configured === true;
+  const targetedSyncConnectorId = useMemo(() => {
+    if (integrationStatus?.integrations?.opencorporates?.configured === true) return "opencorporates";
+    if (integrationStatus?.integrations?.endole?.configured === true) return "endole";
+    return "opencorporates";
+  }, [integrationStatus]);
+  const targetedSyncConnector = integrationStatus?.integrations?.[targetedSyncConnectorId] || null;
+  const targetedSyncConnectorConfigured = targetedSyncConnector?.configured === true;
+  const targetedSyncConnectorLabel = targetedSyncConnectorId === "opencorporates" ? "OpenCorporates" : "Endole";
+  const targetedSyncConnectorEnv = targetedSyncConnector?.env_var
+    || (targetedSyncConnectorId === "opencorporates"
+      ? "OPENCORPORATES_URL_TEMPLATE"
+      : "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE");
 
   const formattedCheckedAt = useMemo(
     () => (integrationCheckedAt ? new Date(integrationCheckedAt).toLocaleString("en-GB") : null),
@@ -950,34 +961,34 @@ export default function Settings({ onNavigateToCompany }) {
       });
   }, []);
 
-  const runEndoleSync = useCallback(async () => {
-    const companyNumber = normalizeCompanyNumberToken(endoleSyncCompanyNumber);
+  const runTargetedConnectorSync = useCallback(async () => {
+    const companyNumber = normalizeCompanyNumberToken(targetedSyncCompanyNumber);
     if (!companyNumber) {
-      setEndoleSyncMessage({ type: "error", text: "Enter a valid company number." });
+      setTargetedSyncMessage({ type: "error", text: "Enter a valid company number." });
       return;
     }
 
-    setEndoleSyncLoading(true);
-    setEndoleSyncMessage(null);
+    setTargetedSyncLoading(true);
+    setTargetedSyncMessage(null);
 
     try {
       const response = await fetch(`/api/signals/sync/${encodeURIComponent(companyNumber)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connectors: ["endole"] }),
+        body: JSON.stringify({ connectors: [targetedSyncConnectorId] }),
       });
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data?.error || data?.detail || `Failed to run Endole sync (${response.status})`);
+        throw new Error(data?.error || data?.detail || `Failed to run ${targetedSyncConnectorLabel} sync (${response.status})`);
       }
 
-      setEndoleSyncCompanyNumber(companyNumber);
+      setTargetedSyncCompanyNumber(companyNumber);
 
       if (data?.status === "no_connectors_configured") {
-        setEndoleSyncMessage({
+        setTargetedSyncMessage({
           type: "error",
-          text: "Endole connector is not configured in this environment.",
+          text: `${targetedSyncConnectorLabel} connector is not configured in this environment.`,
         });
         return;
       }
@@ -988,21 +999,21 @@ export default function Settings({ onNavigateToCompany }) {
         ? ` (${succeeded}/${attempted} connectors succeeded).`
         : ".";
 
-      setEndoleSyncMessage({
+      setTargetedSyncMessage({
         type: data?.updated ? "success" : "error",
         text: data?.updated
-          ? `Endole sync completed for ${companyNumber}${summary}`
-          : (data?.error || "Endole sync finished with no updates."),
+          ? `${targetedSyncConnectorLabel} sync completed for ${companyNumber}${summary}`
+          : (data?.error || `${targetedSyncConnectorLabel} sync finished with no updates.`),
       });
     } catch (err) {
-      setEndoleSyncMessage({
+      setTargetedSyncMessage({
         type: "error",
-        text: err?.message || "Failed to run Endole sync",
+        text: err?.message || `Failed to run ${targetedSyncConnectorLabel} sync`,
       });
     } finally {
-      setEndoleSyncLoading(false);
+      setTargetedSyncLoading(false);
     }
-  }, [endoleSyncCompanyNumber]);
+  }, [targetedSyncCompanyNumber, targetedSyncConnectorId, targetedSyncConnectorLabel]);
 
   const loadOwnershipChanges = useCallback((options = {}) => {
     const requestId = ownershipChangesRequestRef.current + 1;
@@ -1657,26 +1668,26 @@ export default function Settings({ onNavigateToCompany }) {
               padding: "10px 12px",
             }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>
-                Targeted Endole Sync
+                Targeted Ownership Sync
               </div>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
-                Run Endole-only signal sync for one company without invoking other connectors.
+                Run a single ownership connector for one company. Prefers OpenCorporates and falls back to Endole.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <input
-                  id="endole-sync-company-number"
-                  aria-label="Endole sync company number"
+                  id="targeted-sync-company-number"
+                  aria-label="Targeted sync company number"
                   type="text"
                   placeholder="Company number (e.g. 00000006)"
-                  value={endoleSyncCompanyNumber}
+                  value={targetedSyncCompanyNumber}
                   onChange={(event) => {
-                    setEndoleSyncCompanyNumber(event.target.value);
-                    setEndoleSyncMessage(null);
+                    setTargetedSyncCompanyNumber(event.target.value);
+                    setTargetedSyncMessage(null);
                   }}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
                     event.preventDefault();
-                    runEndoleSync();
+                    runTargetedConnectorSync();
                   }}
                   style={{
                     minWidth: 180,
@@ -1690,8 +1701,8 @@ export default function Settings({ onNavigateToCompany }) {
                   }}
                 />
                 <button
-                  onClick={runEndoleSync}
-                  disabled={endoleSyncLoading || !endoleConfigured}
+                  onClick={runTargetedConnectorSync}
+                  disabled={targetedSyncLoading || !targetedSyncConnectorConfigured}
                   style={{
                     padding: "6px 12px",
                     borderRadius: 6,
@@ -1700,30 +1711,30 @@ export default function Settings({ onNavigateToCompany }) {
                     color: "#fff",
                     fontWeight: 600,
                     fontSize: 12,
-                    cursor: endoleSyncLoading || !endoleConfigured ? "not-allowed" : "pointer",
-                    opacity: endoleSyncLoading || !endoleConfigured ? 0.65 : 1,
+                    cursor: targetedSyncLoading || !targetedSyncConnectorConfigured ? "not-allowed" : "pointer",
+                    opacity: targetedSyncLoading || !targetedSyncConnectorConfigured ? 0.65 : 1,
                   }}
                 >
-                  {endoleSyncLoading ? "Running..." : "Run Endole Sync"}
+                  {targetedSyncLoading ? "Running..." : `Run ${targetedSyncConnectorLabel} Sync`}
                 </button>
               </div>
 
-              {!endoleConfigured && (
+              {!targetedSyncConnectorConfigured && (
                 <div style={{ marginTop: 8, fontSize: 11, color: "#92400e" }}>
-                  Endole is not configured. Add ENDOLE_API_KEY to enable this action.
+                  {targetedSyncConnectorLabel} is not configured. Add {targetedSyncConnectorEnv} to enable this action.
                 </div>
               )}
 
-              {endoleSyncMessage && (
+              {targetedSyncMessage && (
                 <div style={{
                   marginTop: 8,
                   fontSize: 12,
                   borderRadius: 6,
                   padding: "6px 8px",
-                  background: endoleSyncMessage.type === "success" ? "#d1fae5" : "#fee2e2",
-                  color: endoleSyncMessage.type === "success" ? "#065f46" : "#991b1b",
+                  background: targetedSyncMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+                  color: targetedSyncMessage.type === "success" ? "#065f46" : "#991b1b",
                 }}>
-                  {endoleSyncMessage.text}
+                  {targetedSyncMessage.text}
                 </div>
               )}
             </div>

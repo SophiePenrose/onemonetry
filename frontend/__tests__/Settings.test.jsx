@@ -24,14 +24,14 @@ describe("Settings", () => {
   let fetchMock;
   let schedulerEnabled;
   let ownershipMonitorRunning;
-  let endoleSyncResponse;
+  let targetedSyncResponse;
 
   beforeEach(() => {
     globalThis.localStorage?.clear();
     window.history.replaceState({}, "", "/");
     schedulerEnabled = false;
     ownershipMonitorRunning = false;
-    endoleSyncResponse = null;
+    targetedSyncResponse = null;
     fetchMock = vi.fn((url, options) => {
       const method = options?.method || "GET";
 
@@ -49,18 +49,23 @@ describe("Settings", () => {
       if (url === "/api/integrations/status") {
         return jsonResponse({
           integrations: {
-            endole: { configured: true, required: true, purpose: "Company data", env_var: "ENDOLE_API_KEY" },
+            opencorporates: {
+              configured: true,
+              required: false,
+              purpose: "Registry data",
+              env_var: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
+            },
             builtwith: { configured: false, required: false, purpose: "Tech stack", env_var: "BUILTWITH_KEY" },
           },
           ready_for_production: true,
           missing_required: [],
-          env_template: ["ENDOLE_API_KEY=", "BUILTWITH_KEY="],
+          env_template: ["OPENCORPORATES_URL_TEMPLATE=", "BUILTWITH_KEY="],
         });
       }
 
       if (typeof url === "string" && url.startsWith("/api/signals/sync/") && method === "POST") {
-        if (endoleSyncResponse && typeof endoleSyncResponse === "object") {
-          return jsonResponse(endoleSyncResponse.body || {}, endoleSyncResponse.ok === true, endoleSyncResponse.status || 500);
+        if (targetedSyncResponse && typeof targetedSyncResponse === "object") {
+          return jsonResponse(targetedSyncResponse.body || {}, targetedSyncResponse.ok === true, targetedSyncResponse.status || 500);
         }
 
         const companyNumber = String(url.split("/").pop() || "").trim();
@@ -71,8 +76,8 @@ describe("Settings", () => {
           attempted: 1,
           succeeded: 1,
           failed: 0,
-          requested_connectors: ["endole"],
-          connectors: [{ id: "endole", ok: true }],
+          requested_connectors: ["opencorporates"],
+          connectors: [{ id: "opencorporates", ok: true }],
         });
       }
 
@@ -301,7 +306,7 @@ describe("Settings", () => {
     });
   });
 
-  it("runs targeted Endole sync using Endole-only connector scope", async () => {
+  it("runs targeted ownership sync using OpenCorporates connector scope", async () => {
     render(<Settings />);
 
     expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
@@ -310,24 +315,24 @@ describe("Settings", () => {
       expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Targeted sync company number" }), {
       target: { value: "ch-6" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Endole sync completed for 00000006 (1/1 connectors succeeded).")).toBeInTheDocument();
+      expect(screen.getByText("OpenCorporates sync completed for 00000006 (1/1 connectors succeeded).")).toBeInTheDocument();
     });
 
     const syncCall = fetchMock.mock.calls.find(
       ([url, options]) => String(url || "").startsWith("/api/signals/sync/00000006") && options?.method === "POST"
     );
     expect(syncCall).toBeTruthy();
-    expect(JSON.parse(syncCall[1].body)).toEqual({ connectors: ["endole"] });
+    expect(JSON.parse(syncCall[1].body)).toEqual({ connectors: ["opencorporates"] });
   });
 
-  it("shows validation message for invalid Endole sync company number", async () => {
+  it("shows validation message for invalid targeted sync company number", async () => {
     render(<Settings />);
 
     expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
@@ -336,11 +341,11 @@ describe("Settings", () => {
       expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Targeted sync company number" }), {
       target: { value: "!!!" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
 
     await waitFor(() => {
       expect(screen.getByText("Enter a valid company number.")).toBeInTheDocument();
@@ -352,11 +357,11 @@ describe("Settings", () => {
     expect(syncCalls).toHaveLength(0);
   });
 
-  it("shows backend error when targeted Endole sync fails", async () => {
-    endoleSyncResponse = {
+  it("shows backend error when targeted OpenCorporates sync fails", async () => {
+    targetedSyncResponse = {
       status: 502,
       ok: false,
-      body: { error: "Endole sync upstream failed" },
+      body: { error: "OpenCorporates sync upstream failed" },
     };
 
     render(<Settings />);
@@ -367,14 +372,14 @@ describe("Settings", () => {
       expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Targeted sync company number" }), {
       target: { value: "00000006" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Endole sync upstream failed")).toBeInTheDocument();
+      expect(screen.getByText("OpenCorporates sync upstream failed")).toBeInTheDocument();
     });
   });
 
