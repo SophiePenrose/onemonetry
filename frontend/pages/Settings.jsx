@@ -849,6 +849,48 @@ export default function Settings({ onNavigateToCompany }) {
     });
   }, [ownershipSharedQueryInput]);
 
+  const pasteOwnershipTriageSharedQuery = useCallback(async () => {
+    if (!navigator?.clipboard || typeof navigator.clipboard.readText !== "function") {
+      setOwnershipSharedQueryMessage({
+        type: "error",
+        text: "Clipboard paste unavailable.",
+      });
+      return;
+    }
+
+    try {
+      const clipboardValue = await navigator.clipboard.readText();
+      setOwnershipSharedQueryInput(clipboardValue);
+
+      const parsedState = parseOwnershipTriageStateFromShareValue(clipboardValue);
+      if (!parsedState) {
+        setOwnershipSharedQueryMessage({
+          type: "error",
+          text: "No ownership triage parameters found.",
+        });
+        return;
+      }
+
+      setOwnershipTriagePreset(parsedState.preset);
+      setOwnershipSinceDays(parsedState.since_days);
+      setOwnershipSortMode(parsedState.sort);
+      setOwnershipSignalDensity(parsedState.min_changed_fields);
+      setOwnershipParentCountryScope(parsedState.parent_country_scope);
+      setOwnershipChangedField(parsedState.changed_field);
+      setOwnershipImpactFilter(parsedState.impact);
+      setOwnershipSharedQueryInput("");
+      setOwnershipSharedQueryMessage({
+        type: "success",
+        text: "Applied shared triage query.",
+      });
+    } catch {
+      setOwnershipSharedQueryMessage({
+        type: "error",
+        text: "Clipboard paste failed.",
+      });
+    }
+  }, []);
+
   const selectOwnershipCopyFallback = useCallback(() => {
     if (!ownershipCopyFallbackInputRef.current) return;
     ownershipCopyFallbackInputRef.current.focus();
@@ -2035,6 +2077,22 @@ export default function Settings({ onNavigateToCompany }) {
               }}
             >
               Apply Shared Query
+            </button>
+            <button
+              type="button"
+              aria-label="Paste and apply ownership triage shared query"
+              onClick={pasteOwnershipTriageSharedQuery}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #ddd",
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "#555",
+              }}
+            >
+              Paste & Apply
             </button>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}
