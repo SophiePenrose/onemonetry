@@ -130,6 +130,22 @@ function readStoredOwnershipTriageState() {
   }
 }
 
+function readOwnershipTriageStateFromParams(query) {
+  if (!query || typeof query.get !== "function") {
+    return null;
+  }
+
+  return sanitizeOwnershipTriageState({
+    preset: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.preset),
+    since_days: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.since_days),
+    sort: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.sort),
+    min_changed_fields: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.min_changed_fields),
+    parent_country_scope: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.parent_country_scope),
+    changed_field: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.changed_field),
+    impact: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.impact),
+  });
+}
+
 function readOwnershipTriageStateFromQuery() {
   if (typeof window === "undefined") {
     return null;
@@ -143,15 +159,40 @@ function readOwnershipTriageStateFromQuery() {
       return null;
     }
 
-    return sanitizeOwnershipTriageState({
-      preset: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.preset),
-      since_days: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.since_days),
-      sort: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.sort),
-      min_changed_fields: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.min_changed_fields),
-      parent_country_scope: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.parent_country_scope),
-      changed_field: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.changed_field),
-      impact: query.get(OWNERSHIP_TRIAGE_QUERY_PARAMS.impact),
-    });
+    return readOwnershipTriageStateFromParams(query);
+  } catch {
+    return null;
+  }
+}
+
+function parseOwnershipTriageStateFromShareValue(rawValue) {
+  const inputValue = String(rawValue || "").trim();
+  if (!inputValue) {
+    return null;
+  }
+
+  try {
+    let query;
+    const hasAbsoluteUrlScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(inputValue);
+
+    if (hasAbsoluteUrlScheme || inputValue.startsWith("/")) {
+      const baseOrigin = typeof window !== "undefined" && window.location?.origin
+        ? window.location.origin
+        : "https://example.com";
+      query = new URL(inputValue, baseOrigin).searchParams;
+    } else if (inputValue.includes("?")) {
+      query = new URLSearchParams(inputValue.slice(inputValue.indexOf("?") + 1));
+    } else {
+      query = new URLSearchParams(inputValue.startsWith("?") ? inputValue.slice(1) : inputValue);
+    }
+
+    const hasTriageQuery = Object.values(OWNERSHIP_TRIAGE_QUERY_PARAMS)
+      .some((paramName) => query.has(paramName));
+    if (!hasTriageQuery) {
+      return null;
+    }
+
+    return readOwnershipTriageStateFromParams(query);
   } catch {
     return null;
   }
@@ -384,6 +425,8 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipSchedulerLoading, setOwnershipSchedulerLoading] = useState(false);
   const [ownershipSchedulerMessage, setOwnershipSchedulerMessage] = useState(null);
   const [ownershipCopyLinkMessage, setOwnershipCopyLinkMessage] = useState(null);
+  const [ownershipSharedQueryInput, setOwnershipSharedQueryInput] = useState("");
+  const [ownershipSharedQueryMessage, setOwnershipSharedQueryMessage] = useState(null);
   const [ownershipCopyFallbackValue, setOwnershipCopyFallbackValue] = useState("");
   const [ownershipCopyFallbackType, setOwnershipCopyFallbackType] = useState(null);
   const integrationRequestRef = useRef(0);
@@ -781,6 +824,30 @@ export default function Settings({ onNavigateToCompany }) {
     ownershipTriagePreset,
     showOwnershipCopyLinkFeedback,
   ]);
+
+  const applyOwnershipTriageSharedQuery = useCallback(() => {
+    const parsedState = parseOwnershipTriageStateFromShareValue(ownershipSharedQueryInput);
+    if (!parsedState) {
+      setOwnershipSharedQueryMessage({
+        type: "error",
+        text: "No ownership triage parameters found.",
+      });
+      return;
+    }
+
+    setOwnershipTriagePreset(parsedState.preset);
+    setOwnershipSinceDays(parsedState.since_days);
+    setOwnershipSortMode(parsedState.sort);
+    setOwnershipSignalDensity(parsedState.min_changed_fields);
+    setOwnershipParentCountryScope(parsedState.parent_country_scope);
+    setOwnershipChangedField(parsedState.changed_field);
+    setOwnershipImpactFilter(parsedState.impact);
+    setOwnershipSharedQueryInput("");
+    setOwnershipSharedQueryMessage({
+      type: "success",
+      text: "Applied shared triage query.",
+    });
+  }, [ownershipSharedQueryInput]);
 
   const selectOwnershipCopyFallback = useCallback(() => {
     if (!ownershipCopyFallbackInputRef.current) return;
@@ -1930,6 +1997,45 @@ export default function Settings({ onNavigateToCompany }) {
                   ? "Copy Failed"
                   : "Copy Query Only"}
             </button>
+            <label htmlFor="ownership-shared-query-input" style={{ fontSize: 12, color: "#475569" }}>
+              Apply
+            </label>
+            <input
+              id="ownership-shared-query-input"
+              type="text"
+              aria-label="Ownership triage shared query input"
+              value={ownershipSharedQueryInput}
+              onChange={(event) => {
+                setOwnershipSharedQueryInput(event.target.value);
+                setOwnershipSharedQueryMessage(null);
+              }}
+              placeholder="?ownership_sort=impact"
+              style={{
+                width: 230,
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontSize: 12,
+                padding: "6px 8px",
+                boxSizing: "border-box",
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Apply ownership triage shared query"
+              onClick={applyOwnershipTriageSharedQuery}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #ddd",
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "#555",
+              }}
+            >
+              Apply Shared Query
+            </button>
             <button
               onClick={() => loadOwnershipChanges({ offset: 0 })}
               style={{
@@ -1941,6 +2047,19 @@ export default function Settings({ onNavigateToCompany }) {
             </button>
           </div>
         </div>
+
+        {ownershipSharedQueryMessage && (
+          <div style={{
+            marginBottom: 10,
+            fontSize: 12,
+            borderRadius: 6,
+            padding: "8px 10px",
+            color: ownershipSharedQueryMessage.type === "success" ? "#065f46" : "#991b1b",
+            background: ownershipSharedQueryMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+          }}>
+            {ownershipSharedQueryMessage.text}
+          </div>
+        )}
 
         {ownershipCopyFallbackValue && (
           <div style={{ marginBottom: 10, fontSize: 12, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>

@@ -674,6 +674,72 @@ describe("Settings", () => {
     });
   });
 
+  it("applies a pasted ownership triage shared query", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Ownership triage shared query input" }), {
+      target: {
+        value: "?ownership_since_days=90&ownership_sort=impact&ownership_min_changed_fields=2&ownership_parent_country_scope=non_uk&ownership_changed_field=parent_company&ownership_impact=high",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply ownership triage shared query" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Ownership triage preset" })).toHaveValue("custom");
+      expect(screen.getByRole("combobox", { name: "Ownership change window" })).toHaveValue("90");
+      expect(screen.getByRole("combobox", { name: "Ownership change sort mode" })).toHaveValue("impact");
+      expect(screen.getByRole("combobox", { name: "Ownership signal density filter" })).toHaveValue("2");
+      expect(screen.getByRole("combobox", { name: "Ownership parent country filter" })).toHaveValue("non_uk");
+      expect(screen.getByRole("combobox", { name: "Ownership changed field filter" })).toHaveValue("parent_company");
+      expect(screen.getByRole("combobox", { name: "Ownership impact filter" })).toHaveValue("high");
+      expect(screen.getByText("Applied shared triage query.")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Ownership triage shared query input" })).toHaveValue("");
+    });
+
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("ownership_since_days")).toBe("90");
+      expect(params.get("ownership_sort")).toBe("impact");
+      expect(params.get("ownership_min_changed_fields")).toBe("2");
+      expect(params.get("ownership_parent_country_scope")).toBe("non_uk");
+      expect(params.get("ownership_changed_field")).toBe("parent_company");
+      expect(params.get("ownership_impact")).toBe("high");
+    });
+
+    const sawSharedQueryRequest = fetchMock.mock.calls.some(([url]) => {
+      const href = String(url || "");
+      return href.startsWith("/api/monitor/ownership/changes")
+        && href.includes("since_days=90")
+        && href.includes("sort=impact")
+        && href.includes("min_changed_fields=2")
+        && href.includes("parent_country_scope=non_uk")
+        && href.includes("changed_field=parent_company")
+        && href.includes("impact=high");
+    });
+    expect(sawSharedQueryRequest).toBe(true);
+  });
+
+  it("shows an error when shared query input has no ownership params", async () => {
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Ownership triage shared query input" }), {
+      target: { value: "foo=bar&region=uk" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply ownership triage shared query" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No ownership triage parameters found.")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Ownership change window" })).toHaveValue("30");
+      expect(screen.getByRole("textbox", { name: "Ownership triage shared query input" })).toHaveValue("foo=bar&region=uk");
+    });
+  });
+
   it("shows copy failure feedback when triage URL copy fails", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("clipboard blocked"));
     Object.defineProperty(globalThis.navigator, "clipboard", {
