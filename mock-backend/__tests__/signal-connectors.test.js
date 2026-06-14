@@ -64,6 +64,73 @@ describe("external signal connectors", () => {
     assert.equal(result.telemetry?.retry_attempts_total, 0);
   });
 
+  it("runs only requested connectors when connector filter is provided", async () => {
+    process.env.ENDOLE_API_KEY = "test-endole-key";
+    process.env.ENDOLE_URL_TEMPLATE = "https://signals.example.test/endole/{company_number}";
+    process.env.STATUSPAGE_URL_TEMPLATE = "https://signals.example.test/status/{company_number}";
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url) => {
+      const href = String(url);
+      if (href === "https://signals.example.test/status/99111113") {
+        assert.fail("statuspage connector should not be called when endole is explicitly requested");
+      }
+
+      assert.equal(href, "https://signals.example.test/endole/99111113");
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            shareholders: [
+              {
+                name: "Acme Holdings BV",
+                type: "corporate entity",
+                country_registered: "Netherlands",
+                share_percent: 60,
+              },
+            ],
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111113",
+      companyName: "Example Co",
+      connectors: ["endole"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    assert.equal(result.attempted, 1);
+    assert.equal(result.succeeded, 1);
+    assert.deepEqual(result.requested_connectors, ["endole"]);
+    assert.equal(result.ignored_connectors?.length || 0, 0);
+    assert.equal(Array.isArray(result.connectors), true);
+    assert.equal(result.connectors.length, 1);
+    assert.equal(result.connectors[0]?.id, "endole");
+  });
+
+  it("returns invalid_input when connector filter contains no valid connector IDs", async () => {
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111199",
+      connectors: ["not_a_real_connector"],
+    });
+
+    assert.equal(result.status, "invalid_input");
+    assert.equal(result.updated, false);
+    assert.equal(result.error, "valid connector id is required");
+    assert.deepEqual(result.requested_connectors, ["not_a_real_connector"]);
+    assert.equal(Array.isArray(result.available_connectors), true);
+    assert.equal(result.available_connectors.includes("endole"), true);
+  });
+
   it("syncs configured connector payload into ownership and hiring envelopes", async () => {
     process.env.ENDOLE_API_KEY = "test-endole-key";
     process.env.ENDOLE_URL_TEMPLATE = "https://signals.example.test/company/{company_number}";

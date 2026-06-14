@@ -135,6 +135,97 @@ describe("POST /api/signals/sync/:number", () => {
     }
   });
 
+  it("runs only Endole when connectors filter is provided", async () => {
+    let statuspageCalls = 0;
+    const connectorServer = http.createServer((req, res) => {
+      const route = String(req.url || "");
+
+      if (route.includes("/endole/00000006")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          shareholders: [
+            {
+              name: "Global Parent BV",
+              type: "corporate entity",
+              country_registered: "Netherlands",
+              share_percent: 60,
+            },
+          ],
+        }));
+        return;
+      }
+
+      if (route.includes("/statuspage/00000006")) {
+        statuspageCalls += 1;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          page: { name: "Should Not Execute" },
+          components: [],
+          incidents: [],
+        }));
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not_found" }));
+    });
+
+    await new Promise((resolve) => connectorServer.listen(0, "127.0.0.1", resolve));
+    const connectorPort = connectorServer.address().port;
+
+    const ctx = await startApiServer({
+      ENDOLE_API_KEY: "test-endole-key",
+      ENDOLE_URL_TEMPLATE: `http://127.0.0.1:${connectorPort}/endole/{company_number}`,
+      ENDOLE_AUTH_SCHEME: "none",
+      ENDOLE_AUTH_HEADER: "x-api-key",
+      OPENCORPORATES_API_TOKEN: "",
+      OPENCORPORATES_URL_TEMPLATE: "",
+      SIMILARWEB_API_KEY: "",
+      SIMILARWEB_URL_TEMPLATE: "",
+      BUILTWITH_API_KEY: "",
+      BUILTWITH_URL_TEMPLATE: "",
+      ADZUNA_APP_ID: "",
+      ADZUNA_APP_KEY: "",
+      ADZUNA_URL_TEMPLATE: "",
+      CRUNCHBASE_API_KEY: "",
+      CRUNCHBASE_URL_TEMPLATE: "",
+      CLEARBIT_API_KEY: "",
+      CLEARBIT_URL_TEMPLATE: "",
+      STATUSPAGE_URL_TEMPLATE: `http://127.0.0.1:${connectorPort}/statuspage/{company_number}`,
+      STATUS_FEED_URL_TEMPLATE: "",
+      STATUS_API_URL_TEMPLATE: "",
+      STATUS_INSTATUS_URL_TEMPLATE: "",
+      STATUS_CACHET_URL_TEMPLATE: "",
+      ENABLE_STATUS_URL_DISCOVERY: "false",
+    });
+
+    try {
+      const { status, data } = await fetchJSON(ctx.baseUrl, "/api/signals/sync/00000006", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: "Connector Test Co",
+          connectors: ["endole"],
+        }),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.status, "updated");
+      assert.equal(data.updated, true);
+      assert.equal(data.attempted, 1);
+      assert.equal(data.succeeded, 1);
+      assert.deepEqual(data.requested_connectors, ["endole"]);
+      assert.deepEqual(data.ignored_connectors, []);
+      assert.ok(Array.isArray(data.connectors));
+      assert.equal(data.connectors.length, 1);
+      assert.equal(data.connectors[0]?.id, "endole");
+      assert.equal(statuspageCalls, 0);
+    } finally {
+      await ctx.stop();
+      connectorServer.close();
+    }
+  });
+
   it("syncs configured Endole connector and returns updated envelopes", async () => {
     const connectorServer = http.createServer((req, res) => {
       const route = String(req.url || "");
