@@ -1963,7 +1963,7 @@ export default function Settings({ onNavigateToCompany }) {
                 onClick={selectOwnershipCopyFallback}
                 style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 12, color: "#374151" }}
               >
-                Select Link
+                Select Value
               </button>
               <button
                 type="button"
