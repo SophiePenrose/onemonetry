@@ -646,6 +646,34 @@ describe("Settings", () => {
     });
   });
 
+  it("copies ownership triage query parameters only", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(<Settings />);
+
+    expect(await screen.findByText("Ownership Change Feed")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Ownership change sort mode" }), {
+      target: { value: "impact" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy ownership triage query only" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+      const copiedQuery = String(writeText.mock.calls[0]?.[0] || "");
+      expect(copiedQuery.startsWith("?")).toBe(true);
+      expect(copiedQuery).toContain("ownership_sort=impact");
+      expect(copiedQuery).toContain("ownership_since_days=30");
+      expect(copiedQuery).not.toContain("http");
+      expect(screen.getByRole("button", { name: "Copy ownership triage query only" })).toHaveTextContent("Copied Query");
+    });
+  });
+
   it("shows copy failure feedback when triage URL copy fails", async () => {
     const writeText = vi.fn().mockRejectedValue(new Error("clipboard blocked"));
     Object.defineProperty(globalThis.navigator, "clipboard", {
@@ -664,13 +692,13 @@ describe("Settings", () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("button", { name: "Copy ownership triage link" })).toHaveTextContent("Copy Failed");
-      expect(screen.getByLabelText("Ownership triage link fallback")).toHaveValue(expectedFallbackUrl);
+      expect(screen.getByLabelText("Ownership triage copy fallback")).toHaveValue(expectedFallbackUrl);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss ownership triage link fallback" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss ownership triage copy fallback" }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("Ownership triage link fallback")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Ownership triage copy fallback")).not.toBeInTheDocument();
     });
   });
 
