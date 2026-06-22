@@ -31,7 +31,7 @@ describe("Settings", () => {
     window.history.replaceState({}, "", "/");
     schedulerEnabled = false;
     ownershipMonitorRunning = false;
-    targetedSyncResponse = null;
+    endoleSyncResponse = null;
     fetchMock = vi.fn((url, options) => {
       const method = options?.method || "GET";
 
@@ -78,6 +78,24 @@ describe("Settings", () => {
           failed: 0,
           requested_connectors: ["prospeo"],
           connectors: [{ id: "prospeo", ok: true }],
+        });
+      }
+
+      if (typeof url === "string" && url.startsWith("/api/signals/sync/") && method === "POST") {
+        if (endoleSyncResponse && typeof endoleSyncResponse === "object") {
+          return jsonResponse(endoleSyncResponse.body || {}, endoleSyncResponse.ok === true, endoleSyncResponse.status || 500);
+        }
+
+        const companyNumber = String(url.split("/").pop() || "").trim();
+        return jsonResponse({
+          status: "updated",
+          updated: true,
+          company_number: companyNumber,
+          attempted: 1,
+          succeeded: 1,
+          failed: 0,
+          requested_connectors: ["endole"],
+          connectors: [{ id: "endole", ok: true }],
         });
       }
 
@@ -372,14 +390,14 @@ describe("Settings", () => {
       expect(screen.getByText(/1\/2 configured/)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Targeted sync company number" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Endole sync company number" }), {
       target: { value: "00000006" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run Prospeo Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run Endole Sync" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Prospeo sync upstream failed")).toBeInTheDocument();
+      expect(screen.getByText("Endole sync upstream failed")).toBeInTheDocument();
     });
   });
 

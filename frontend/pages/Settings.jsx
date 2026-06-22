@@ -435,9 +435,9 @@ export default function Settings({ onNavigateToCompany }) {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
-  const [targetedSyncCompanyNumber, setTargetedSyncCompanyNumber] = useState("");
-  const [targetedSyncLoading, setTargetedSyncLoading] = useState(false);
-  const [targetedSyncMessage, setTargetedSyncMessage] = useState(null);
+  const [endoleSyncCompanyNumber, setEndoleSyncCompanyNumber] = useState("");
+  const [endoleSyncLoading, setEndoleSyncLoading] = useState(false);
+  const [endoleSyncMessage, setEndoleSyncMessage] = useState(null);
   const [ownershipChanges, setOwnershipChanges] = useState(null);
   const [ownershipChangesLoading, setOwnershipChangesLoading] = useState(false);
   const [ownershipChangesError, setOwnershipChangesError] = useState(null);
