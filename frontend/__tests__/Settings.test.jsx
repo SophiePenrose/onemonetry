@@ -49,17 +49,17 @@ describe("Settings", () => {
       if (url === "/api/integrations/status") {
         return jsonResponse({
           integrations: {
-            opencorporates: {
+            prospeo: {
               configured: true,
               required: false,
-              purpose: "Registry data",
-              env_var: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
+              purpose: "Contact and company intelligence",
+              env_var: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
             },
             builtwith: { configured: false, required: false, purpose: "Tech stack", env_var: "BUILTWITH_KEY" },
           },
           ready_for_production: true,
           missing_required: [],
-          env_template: ["OPENCORPORATES_URL_TEMPLATE=", "BUILTWITH_KEY="],
+          env_template: ["PROSPEO_URL_TEMPLATE=", "BUILTWITH_KEY="],
         });
       }
 
@@ -76,8 +76,8 @@ describe("Settings", () => {
           attempted: 1,
           succeeded: 1,
           failed: 0,
-          requested_connectors: ["opencorporates"],
-          connectors: [{ id: "opencorporates", ok: true }],
+          requested_connectors: ["prospeo"],
+          connectors: [{ id: "prospeo", ok: true }],
         });
       }
 
@@ -306,7 +306,7 @@ describe("Settings", () => {
     });
   });
 
-  it("runs targeted ownership sync using OpenCorporates connector scope", async () => {
+  it("runs targeted connector sync using Prospeo connector scope", async () => {
     render(<Settings />);
 
     expect(await screen.findByText("Scoring Settings")).toBeInTheDocument();
@@ -319,17 +319,17 @@ describe("Settings", () => {
       target: { value: "ch-6" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run Prospeo Sync" }));
 
     await waitFor(() => {
-      expect(screen.getByText("OpenCorporates sync completed for 00000006 (1/1 connectors succeeded).")).toBeInTheDocument();
+      expect(screen.getByText("Prospeo sync completed for 00000006 (1/1 connectors succeeded).")).toBeInTheDocument();
     });
 
     const syncCall = fetchMock.mock.calls.find(
       ([url, options]) => String(url || "").startsWith("/api/signals/sync/00000006") && options?.method === "POST"
     );
     expect(syncCall).toBeTruthy();
-    expect(JSON.parse(syncCall[1].body)).toEqual({ connectors: ["opencorporates"] });
+    expect(JSON.parse(syncCall[1].body)).toEqual({ connectors: ["prospeo"] });
   });
 
   it("shows validation message for invalid targeted sync company number", async () => {
@@ -345,7 +345,7 @@ describe("Settings", () => {
       target: { value: "!!!" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run Prospeo Sync" }));
 
     await waitFor(() => {
       expect(screen.getByText("Enter a valid company number.")).toBeInTheDocument();
@@ -357,11 +357,11 @@ describe("Settings", () => {
     expect(syncCalls).toHaveLength(0);
   });
 
-  it("shows backend error when targeted OpenCorporates sync fails", async () => {
+  it("shows backend error when targeted Prospeo sync fails", async () => {
     targetedSyncResponse = {
       status: 502,
       ok: false,
-      body: { error: "OpenCorporates sync upstream failed" },
+      body: { error: "Prospeo sync upstream failed" },
     };
 
     render(<Settings />);
@@ -376,10 +376,10 @@ describe("Settings", () => {
       target: { value: "00000006" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Run OpenCorporates Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run Prospeo Sync" }));
 
     await waitFor(() => {
-      expect(screen.getByText("OpenCorporates sync upstream failed")).toBeInTheDocument();
+      expect(screen.getByText("Prospeo sync upstream failed")).toBeInTheDocument();
     });
   });
 

@@ -72,6 +72,18 @@ const OWNERSHIP_TRIAGE_QUERY_PARAMS = {
   impact: "ownership_impact",
 };
 
+const TARGETED_SYNC_CONNECTOR_PRIORITY = ["prospeo", "opencorporates", "endole"];
+const TARGETED_SYNC_CONNECTOR_LABELS = {
+  prospeo: "Prospeo",
+  opencorporates: "OpenCorporates",
+  endole: "Endole",
+};
+const TARGETED_SYNC_CONNECTOR_ENV_HINTS = {
+  prospeo: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
+  opencorporates: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
+  endole: "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE",
+};
+
 function getDefaultOwnershipTriageState() {
   return {
     preset: "custom",
@@ -516,17 +528,20 @@ export default function Settings({ onNavigateToCompany }) {
     requiredConfiguredCount,
   } = integrationView;
   const targetedSyncConnectorId = useMemo(() => {
-    if (integrationStatus?.integrations?.opencorporates?.configured === true) return "opencorporates";
-    if (integrationStatus?.integrations?.endole?.configured === true) return "endole";
-    return "opencorporates";
+    const integrations = integrationStatus?.integrations || {};
+    for (const connectorId of TARGETED_SYNC_CONNECTOR_PRIORITY) {
+      if (integrations?.[connectorId]?.configured === true) {
+        return connectorId;
+      }
+    }
+    return "prospeo";
   }, [integrationStatus]);
   const targetedSyncConnector = integrationStatus?.integrations?.[targetedSyncConnectorId] || null;
   const targetedSyncConnectorConfigured = targetedSyncConnector?.configured === true;
-  const targetedSyncConnectorLabel = targetedSyncConnectorId === "opencorporates" ? "OpenCorporates" : "Endole";
+  const targetedSyncConnectorLabel = TARGETED_SYNC_CONNECTOR_LABELS[targetedSyncConnectorId] || "Prospeo";
   const targetedSyncConnectorEnv = targetedSyncConnector?.env_var
-    || (targetedSyncConnectorId === "opencorporates"
-      ? "OPENCORPORATES_URL_TEMPLATE"
-      : "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE");
+    || TARGETED_SYNC_CONNECTOR_ENV_HINTS[targetedSyncConnectorId]
+    || TARGETED_SYNC_CONNECTOR_ENV_HINTS.prospeo;
 
   const formattedCheckedAt = useMemo(
     () => (integrationCheckedAt ? new Date(integrationCheckedAt).toLocaleString("en-GB") : null),
@@ -1668,10 +1683,10 @@ export default function Settings({ onNavigateToCompany }) {
               padding: "10px 12px",
             }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>
-                Targeted Ownership Sync
+                Targeted Connector Sync
               </div>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
-                Run a single ownership connector for one company. Prefers OpenCorporates and falls back to Endole.
+                Run a single connector for one company. Prefers Prospeo, then OpenCorporates, then Endole.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <input

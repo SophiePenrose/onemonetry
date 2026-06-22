@@ -152,6 +152,23 @@ Primary envelope targets:
 
 - ownership
 
+### Prospeo
+
+Configuration note:
+
+- PROSPEO_URL_TEMPLATE is required
+- PROSPEO_API_KEY is optional (used when provided)
+
+Expected source structures accepted:
+
+- jobs[] / open_roles (when provided)
+- technologies[] / tech_stack[]
+- monthly_web_traffic / traffic_geography
+
+Primary envelope targets:
+
+- hiring_signals, marketing_intelligence, tech_stack
+
 ### Similarweb
 
 Expected source structures accepted:
