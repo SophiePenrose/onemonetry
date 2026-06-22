@@ -81,24 +81,6 @@ describe("Settings", () => {
         });
       }
 
-      if (typeof url === "string" && url.startsWith("/api/signals/sync/") && method === "POST") {
-        if (endoleSyncResponse && typeof endoleSyncResponse === "object") {
-          return jsonResponse(endoleSyncResponse.body || {}, endoleSyncResponse.ok === true, endoleSyncResponse.status || 500);
-        }
-
-        const companyNumber = String(url.split("/").pop() || "").trim();
-        return jsonResponse({
-          status: "updated",
-          updated: true,
-          company_number: companyNumber,
-          attempted: 1,
-          succeeded: 1,
-          failed: 0,
-          requested_connectors: ["endole"],
-          connectors: [{ id: "endole", ok: true }],
-        });
-      }
-
       if (typeof url === "string" && url.startsWith("/api/monitor/ownership/changes")) {
         const search = url.includes("?") ? url.split("?")[1] : "";
         const params = new URLSearchParams(search);
