@@ -13,6 +13,7 @@
     "benchmark:delta": "node ./scripts/scoring-calibration-benchmark-delta.mjs",
     "benchmark:apply-review": "node ./scripts/scoring-calibration-apply-review.mjs",
     "import:monitor-list": "node ./scripts/import-monitor-list-bulk.mjs",
+    "import:monitor-seed-list": "node ./scripts/import-monitor-seed-list.mjs",
     "logs": "bash -lc 'echo Backend: && tail -n 120 /tmp/onemonetry-backend.log && echo && echo Frontend: && tail -n 120 /tmp/onemonetry-frontend.log'",
     "logs:backend": "tail -n 120 /tmp/onemonetry-backend.log",
     "logs:frontend": "tail -n 120 /tmp/onemonetry-frontend.log",

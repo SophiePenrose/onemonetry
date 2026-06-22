@@ -1,0 +1,18 @@
+{
+  "company": {
+    "name": "Native Prospeo Co",
+    "domain": "native-prospeo.co.uk"
+  },
+  "open_roles": 5,
+  "jobs": [
+    { "title": "Senior Treasury Analyst" },
+    { "title": "Finance Manager" }
+  ],
+  "technologies": ["HubSpot", "Salesforce", "Stripe"],
+  "monthly_web_traffic": 120000,
+  "traffic_geography": {
+    "UK": 0.61,
+    "US": 0.22,
+    "DE": 0.09
+  }
+}

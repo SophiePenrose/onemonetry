@@ -31,6 +31,7 @@ import {
 import {
   isCompaniesHouseConfigured,
   lookupCompany,
+  searchCompaniesByName,
   lookupCompanyCharges,
   lookupCompanyOwnership,
   parseCompanyNumbersCSV,
@@ -97,6 +98,7 @@ import {
   getShortlistCount,
   getMonitoredCompany,
   upsertMonitoredCompany,
+  upsertMonitoredCompanies,
   clearMonitoredCompanyWebsiteHints,
   getCompanyChargeSummary,
   upsertCompanyChargeSummary,
@@ -1655,6 +1657,286 @@ function parseCsvRow(line) {
 
   cells.push(current.trim());
   return cells;
+}
+
+function normalizeSeedImportCompanyNumber(value) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^CH-/, "")
+    .replace(/\s+/g, "");
+
+  if (!raw) return null;
+  if (/^\d{1,8}$/.test(raw)) return raw.padStart(8, "0");
+  if (/^[A-Z]{2}\d+$/.test(raw)) return raw;
+  if (/^[A-Z0-9]{2,12}$/.test(raw)) return raw;
+  return null;
+}
+
+function normalizeSeedImportText(value) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function normalizeSeedImportWebsite(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const cleaned = raw.replace(/^\/+/, "").trim();
+  if (!cleaned || !/[.]/.test(cleaned)) return null;
+  return `https://${cleaned}`;
+}
+
+function extractSeedImportDomain(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return String(url.hostname || "").trim().toLowerCase().replace(/^www\./, "") || null;
+  } catch {
+    const host = raw
+      .toLowerCase()
+      .replace(/^https?:\/\//i, "")
+      .replace(/^www\./, "")
+      .split(/[/?#]/)[0]
+      .trim();
+    return host || null;
+  }
+}
+
+function isLikelySeedImportWebsite(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  if (/^https?:\/\//i.test(raw)) return true;
+  return /^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(raw);
+}
+
+function normalizeSeedImportHeaderCell(cell) {
+  return String(cell || "")
+    .trim()
+    .toLowerCase()
+    .replace(/["']/g, "")
+    .replace(/\s+/g, "_");
+}
+
+function findSeedImportHeaderIndex(headerCells, predicates) {
+  for (const predicate of predicates) {
+    const idx = headerCells.findIndex(predicate);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function parseMonitorSeedRowsFromCsv(csvContent) {
+  const text = String(csvContent || "").replace(/\r/g, "").trim();
+  if (!text) return [];
+
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const headerCells = parseCsvRow(lines[0]).map((cell) => normalizeSeedImportHeaderCell(cell));
+  const hasHeader = headerCells.some((cell) => {
+    return cell.includes("company")
+      || cell.includes("name")
+      || cell.includes("website")
+      || cell.includes("domain")
+      || cell.includes("number");
+  });
+
+  const numberIdx = hasHeader
+    ? findSeedImportHeaderIndex(headerCells, [
+      (cell) => cell.includes("company") && (cell.includes("number") || cell.includes("registration") || cell.endsWith("_no")),
+      (cell) => cell === "number" || cell === "companynumber",
+    ])
+    : -1;
+
+  const nameIdx = hasHeader
+    ? findSeedImportHeaderIndex(headerCells, [
+      (cell) => cell.includes("company") && cell.includes("name"),
+      (cell) => cell === "name",
+    ])
+    : -1;
+
+  const websiteIdx = hasHeader
+    ? findSeedImportHeaderIndex(headerCells, [
+      (cell) => cell.includes("website"),
+      (cell) => cell.includes("url"),
+      (cell) => cell === "site",
+    ])
+    : -1;
+
+  const domainIdx = hasHeader
+    ? findSeedImportHeaderIndex(headerCells, [
+      (cell) => cell.includes("domain"),
+    ])
+    : -1;
+
+  const startIdx = hasHeader ? 1 : 0;
+  const rows = [];
+
+  for (let i = startIdx; i < lines.length; i += 1) {
+    const cells = parseCsvRow(lines[i]).map((cell) => String(cell || "").trim());
+    if (cells.length === 0) continue;
+
+    const explicitNumber = numberIdx >= 0 ? cells[numberIdx] : null;
+    const explicitName = nameIdx >= 0 ? cells[nameIdx] : null;
+    const explicitWebsite = websiteIdx >= 0 ? cells[websiteIdx] : null;
+    const explicitDomain = domainIdx >= 0 ? cells[domainIdx] : null;
+
+    let companyNumber = normalizeSeedImportCompanyNumber(explicitNumber);
+    let companyName = normalizeSeedImportText(explicitName);
+    let companyWebsite = normalizeSeedImportWebsite(explicitWebsite);
+    let companyDomain = extractSeedImportDomain(explicitDomain || explicitWebsite || "");
+
+    if (!companyNumber) {
+      const maybeNumber = cells.find((cell) => !!normalizeSeedImportCompanyNumber(cell));
+      companyNumber = normalizeSeedImportCompanyNumber(maybeNumber);
+    }
+
+    if (!companyWebsite) {
+      const maybeWebsite = cells.find((cell) => isLikelySeedImportWebsite(cell));
+      companyWebsite = normalizeSeedImportWebsite(maybeWebsite);
+      if (!companyDomain) {
+        companyDomain = extractSeedImportDomain(maybeWebsite || "");
+      }
+    }
+
+    if (!companyName) {
+      const maybeName = cells.find((cell) => {
+        if (!cell) return false;
+        if (normalizeSeedImportCompanyNumber(cell)) return false;
+        if (isLikelySeedImportWebsite(cell)) return false;
+        return true;
+      });
+      companyName = normalizeSeedImportText(maybeName);
+    }
+
+    if (!companyWebsite && companyDomain) {
+      companyWebsite = normalizeSeedImportWebsite(companyDomain);
+    }
+
+    if (!companyNumber && !companyName) continue;
+
+    rows.push({
+      row_number: i + 1,
+      company_number: companyNumber,
+      company_name: companyName,
+      company_website: companyWebsite,
+      company_domain: companyDomain,
+    });
+  }
+
+  return rows;
+}
+
+function shouldAcceptSeedImportConfidence(confidence, allowLowConfidence) {
+  const token = String(confidence || "none").trim().toLowerCase();
+  if (token === "high" || token === "medium") return true;
+  if (allowLowConfidence && token === "low") return true;
+  return false;
+}
+
+async function resolveMonitorSeedRows(rows, options = {}) {
+  const resolved = [];
+  const unresolved = [];
+  const deduped = new Map();
+
+  const searchLimit = Number.parseInt(String(options.search_limit || "20"), 10);
+  const allowLowConfidence = options.allow_low_confidence === true;
+
+  for (const row of rows) {
+    if (row.company_number) {
+      const existing = deduped.get(row.company_number);
+      if (existing) {
+        if (!existing.company_name && row.company_name) existing.company_name = row.company_name;
+        if (!existing.company_website && row.company_website) existing.company_website = row.company_website;
+        if (!existing.company_domain && row.company_domain) existing.company_domain = row.company_domain;
+      } else {
+        deduped.set(row.company_number, {
+          ...row,
+          resolution: "provided",
+          match_confidence: "provided",
+        });
+      }
+      continue;
+    }
+
+    if (!row.company_name) {
+      unresolved.push({ ...row, reason: "missing_company_name" });
+      continue;
+    }
+
+    if (!isCompaniesHouseConfigured()) {
+      unresolved.push({ ...row, reason: "companies_house_not_configured" });
+      continue;
+    }
+
+    const lookup = await searchCompaniesByName(row.company_name, {
+      items_per_page: Number.isFinite(searchLimit) ? Math.max(1, Math.min(searchLimit, 100)) : 20,
+    });
+
+    if (lookup?.error) {
+      unresolved.push({
+        ...row,
+        reason: "lookup_error",
+        detail: lookup.message || "companies_house_search_failed",
+      });
+      continue;
+    }
+
+    const confidence = String(lookup?.match_confidence || "none").trim().toLowerCase();
+    const matchedNumber = normalizeSeedImportCompanyNumber(lookup?.best_match?.company_number);
+    if (!matchedNumber) {
+      unresolved.push({ ...row, reason: "no_match" });
+      continue;
+    }
+
+    if (!shouldAcceptSeedImportConfidence(confidence, allowLowConfidence)) {
+      unresolved.push({
+        ...row,
+        reason: "low_confidence_match",
+        matched_company_number: matchedNumber,
+        matched_company_name: lookup?.best_match?.company_name || null,
+      });
+      continue;
+    }
+
+    const resolvedRow = {
+      ...row,
+      company_number: matchedNumber,
+      company_name: normalizeSeedImportText(lookup?.best_match?.company_name) || row.company_name,
+      resolution: "search",
+      match_confidence: confidence,
+      matched_company_name: normalizeSeedImportText(lookup?.best_match?.company_name),
+    };
+
+    const existing = deduped.get(matchedNumber);
+    if (existing) {
+      if (!existing.company_name && resolvedRow.company_name) existing.company_name = resolvedRow.company_name;
+      if (!existing.company_website && resolvedRow.company_website) existing.company_website = resolvedRow.company_website;
+      if (!existing.company_domain && resolvedRow.company_domain) existing.company_domain = resolvedRow.company_domain;
+    } else {
+      deduped.set(matchedNumber, resolvedRow);
+    }
+  }
+
+  for (const value of deduped.values()) {
+    resolved.push(value);
+  }
+
+  return { resolved, unresolved };
+}
+
+function sortRecentFilingsByDateDesc(filings) {
+  return [...filings].sort((a, b) => {
+    const aTs = Date.parse(String(a?.date || ""));
+    const bTs = Date.parse(String(b?.date || ""));
+    const safeA = Number.isFinite(aTs) ? aTs : 0;
+    const safeB = Number.isFinite(bTs) ? bTs : 0;
+    return safeB - safeA;
+  });
 }
 
 function parseClosedWonRowsFromCsv(csvContent) {
@@ -4752,6 +5034,204 @@ app.post("/api/monitor/import-list", async (req, res) => {
   }
 });
 
+app.post("/api/monitor/import-seed-list", async (req, res) => {
+  const {
+    csv_content,
+    rows,
+    source,
+    dry_run,
+    search_limit,
+    allow_low_confidence,
+    sync_now,
+    sync_delay_ms,
+    queue_analysis,
+  } = req.body || {};
+
+  const inputRows = Array.isArray(rows) ? rows : null;
+  const csvContent = typeof csv_content === "string" ? csv_content : "";
+  const parsedRows = inputRows && inputRows.length > 0
+    ? inputRows.map((row, idx) => ({
+      row_number: idx + 1,
+      company_number: normalizeSeedImportCompanyNumber(row?.company_number || row?.companyNumber || row?.number || ""),
+      company_name: normalizeSeedImportText(row?.company_name || row?.companyName || row?.name || ""),
+      company_website: normalizeSeedImportWebsite(row?.company_website || row?.companyWebsite || row?.website || row?.website_url || row?.websiteUrl || ""),
+      company_domain: extractSeedImportDomain(row?.company_domain || row?.companyDomain || row?.domain || row?.company_website || row?.companyWebsite || row?.website || row?.website_url || ""),
+    }))
+    : parseMonitorSeedRowsFromCsv(csvContent);
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    return res.status(400).json({
+      error: "Provide either rows[] or csv_content with company_name and/or company_number values.",
+    });
+  }
+
+  try {
+    const sourceTag = String(source || "seed_name_website").trim() || "seed_name_website";
+    const isDryRun = dry_run === true;
+    const shouldSyncNow = sync_now !== false;
+    const shouldQueueAnalysis = queue_analysis !== false;
+    const searchLimit = Number.parseInt(String(search_limit || "20"), 10);
+    const allowLowConfidence = allow_low_confidence === true;
+    const syncDelayMs = Number.parseInt(String(sync_delay_ms || "500"), 10);
+
+    const resolution = await resolveMonitorSeedRows(parsedRows, {
+      search_limit: Number.isFinite(searchLimit) ? searchLimit : 20,
+      allow_low_confidence: allowLowConfidence,
+    });
+
+    const resolvedRows = resolution.resolved;
+    const unresolvedRows = resolution.unresolved;
+
+    const upsertRows = resolvedRows.map((row) => ({
+      company_number: row.company_number,
+      company_name: row.company_name || null,
+      company_website: row.company_website || null,
+      company_domain: row.company_domain || null,
+      status: "active",
+      source: sourceTag,
+    }));
+
+    const upsertResult = isDryRun
+      ? {
+        received: upsertRows.length,
+        upserted: 0,
+        skipped_invalid: 0,
+        source: sourceTag,
+        dry_run: true,
+      }
+      : upsertMonitoredCompanies(upsertRows, sourceTag);
+
+    let syncResult = {
+      skipped: true,
+      reason: shouldSyncNow ? "not_run" : "disabled",
+      checked: 0,
+      errors: 0,
+      rows_with_filings: 0,
+      filing_records_written: 0,
+      rows_without_filings: 0,
+    };
+
+    if (!isDryRun && shouldSyncNow) {
+      if (!isCompaniesHouseConfigured()) {
+        syncResult = {
+          ...syncResult,
+          reason: "companies_house_not_configured",
+        };
+      } else {
+        const inactiveStatuses = new Set([
+          "dissolved",
+          "liquidation",
+          "converted-closed",
+          "voluntary-arrangement",
+          "insolvency-proceedings",
+        ]);
+
+        syncResult = {
+          skipped: false,
+          checked: 0,
+          errors: 0,
+          inactive: 0,
+          rows_with_filings: 0,
+          filing_records_written: 0,
+          rows_without_filings: 0,
+        };
+
+        const safeDelay = Number.isFinite(syncDelayMs) ? Math.max(0, syncDelayMs) : 500;
+        for (let i = 0; i < resolvedRows.length; i += 1) {
+          const row = resolvedRows[i];
+          try {
+            const lookup = await lookupCompany(row.company_number);
+            if (lookup?.error) {
+              syncResult.errors += 1;
+              updateMonitorCheck(row.company_number, {
+                notes: `Seed sync lookup error: ${lookup.message || "lookup_failed"}`,
+              });
+            } else {
+              const filings = sortRecentFilingsByDateDesc(Array.isArray(lookup?.recent_filings) ? lookup.recent_filings : []);
+
+              for (const filing of filings) {
+                upsertFiling({
+                  company_number: row.company_number,
+                  filing_date: filing.date || null,
+                  description: filing.description || null,
+                  filing_type: filing.type || null,
+                  barcode: filing.barcode || `seed-${row.company_number}-${filing.date || "unknown"}`,
+                  source: `${sourceTag}:seed_sync`,
+                });
+                syncResult.filing_records_written += 1;
+              }
+
+              const latestFilingDate = filings[0]?.date || null;
+              if (latestFilingDate) syncResult.rows_with_filings += 1;
+              else syncResult.rows_without_filings += 1;
+
+              const status = String(lookup?.status || "active").trim().toLowerCase() || "active";
+              if (inactiveStatuses.has(status)) syncResult.inactive += 1;
+
+              updateMonitorCheck(row.company_number, {
+                company_name: normalizeSeedImportText(lookup?.name) || row.company_name || null,
+                status,
+                last_filing_date: latestFilingDate,
+                no_filings: latestFilingDate ? 0 : 1,
+                stale_filing_checked_at: null,
+                stale_filing_due_at: null,
+                notes: null,
+              });
+            }
+          } catch (err) {
+            syncResult.errors += 1;
+            updateMonitorCheck(row.company_number, {
+              notes: `Seed sync error: ${err?.message || "unknown_error"}`,
+            });
+          }
+
+          syncResult.checked = i + 1;
+          if (safeDelay > 0 && i < resolvedRows.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, safeDelay));
+          }
+        }
+      }
+    }
+
+    let queueResult = {
+      skipped: true,
+      reason: shouldQueueAnalysis ? "not_run" : "disabled",
+      queued: 0,
+    };
+
+    if (!isDryRun && shouldQueueAnalysis) {
+      const queued = enqueueCompaniesForAnalysis(
+        resolvedRows.map((row) => ({
+          company_number: row.company_number,
+          company_name: row.company_name || null,
+        })),
+        `seed_import:${sourceTag}`
+      );
+
+      queueResult = {
+        skipped: false,
+        queued: Number(queued?.queued || 0),
+      };
+    }
+
+    res.json({
+      source: sourceTag,
+      dry_run: isDryRun,
+      parsed_rows: parsedRows.length,
+      resolved_rows: resolvedRows.length,
+      unresolved_rows: unresolvedRows.length,
+      unresolved_sample: unresolvedRows.slice(0, 100),
+      upsert: upsertResult,
+      sync: syncResult,
+      analysis_queue: queueResult,
+      total_monitored: isDryRun ? getMonitoredCompanyCount() : getMonitoredCompanyCount(),
+      companies_house_configured: isCompaniesHouseConfigured(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/monitor/run", async (req, res) => {
   const batchSize = parseInt(req.body?.batch_size) || 50;
 
@@ -5010,6 +5490,12 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
       purpose: "Cross-jurisdiction corporate registry enrichment",
     },
+    prospeo: {
+      configured: hasTemplate(process.env.PROSPEO_URL_TEMPLATE),
+      required: false,
+      env_var: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
+      purpose: "Contact and company intelligence enrichment",
+    },
     similarweb: {
       configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
       required: false,
@@ -5116,6 +5602,8 @@ app.get("/api/integrations/status", (_req, res) => {
       "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
       "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
       "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
+      "PROSPEO_API_KEY=optional_prospeo_key",
+      "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
       "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
       "BUILTWITH_API_KEY=optional_builtwith_key",
