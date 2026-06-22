@@ -83,6 +83,56 @@ before(async () => {
   }
 });
 
+  describe("POST /api/monitor/import-seed-list", () => {
+    it("returns dry-run summary for explicit company numbers with website/domain", async () => {
+      const payload = {
+        dry_run: true,
+        sync_now: false,
+        queue_analysis: false,
+        rows: [
+          {
+            company_name: "Seed Import Alpha Ltd",
+            company_number: "1234567",
+            website: "alpha.example.com",
+          },
+          {
+            company_name: "Seed Import Beta Ltd",
+            company_number: "OC123456",
+            company_website: "https://beta.example.com",
+          },
+        ],
+      };
+
+      const { status, data } = await fetchJSON("/api/monitor/import-seed-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.dry_run, true);
+      assert.equal(data.parsed_rows, 2);
+      assert.equal(data.resolved_rows, 2);
+      assert.equal(data.unresolved_rows, 0);
+      assert.equal(data.upsert?.received, 2);
+      assert.equal(data.upsert?.upserted, 0);
+      assert.equal(data.sync?.skipped, true);
+      assert.equal(data.analysis_queue?.skipped, true);
+    });
+
+    it("rejects requests without rows or csv_content", async () => {
+      const { status, data } = await fetchJSON("/api/monitor/import-seed-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      assert.equal(status, 400);
+      assert.equal(typeof data.error, "string");
+      assert.match(data.error, /Provide either rows\[\] or csv_content/i);
+    });
+  });
+
 after(async () => {
   if (startedServerForTests && serverProcess) {
     serverProcess.kill("SIGTERM");
@@ -658,6 +708,7 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.tech_enrichment, "object");
       assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
       assert.equal(typeof data.integrations.email_generation_llm, "object");
+      assert.equal(typeof data.integrations.prospeo, "object");
       assert.equal(typeof data.integrations.status_api, "object");
       assert.equal(typeof data.integrations.status_instatus, "object");
       assert.equal(typeof data.integrations.status_cachet, "object");
@@ -678,6 +729,7 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
       assert.ok(data.env_template.includes("STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json"));
       assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
+      assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
     });

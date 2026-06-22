@@ -24,6 +24,15 @@ const CONNECTOR_DEFINITIONS = [
     purpose: "cross_jurisdiction_registry",
   },
   {
+    id: "prospeo",
+    keyEnvs: ["PROSPEO_API_KEY"],
+    keysOptional: true,
+    urlTemplateEnv: "PROSPEO_URL_TEMPLATE",
+    authHeaderEnv: "PROSPEO_AUTH_HEADER",
+    authSchemeEnv: "PROSPEO_AUTH_SCHEME",
+    purpose: "contact_and_company_intelligence",
+  },
+  {
     id: "similarweb",
     keyEnvs: ["SIMILARWEB_API_KEY"],
     urlTemplateEnv: "SIMILARWEB_URL_TEMPLATE",

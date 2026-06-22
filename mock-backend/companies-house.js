@@ -23,6 +23,15 @@ const CH_API_KEY = [
 const CH_BASE_URL = "https://api.company-information.service.gov.uk";
 const CH_DOWNLOAD_URL = "https://download.companieshouse.gov.uk";
 
+const COMPANY_NAME_STOPWORDS = new Set([
+  "limited",
+  "ltd",
+  "plc",
+  "llp",
+  "the",
+  "uk",
+]);
+
 const BANK_LENDER_PATTERN = /\b(?:hsbc|barclays|natwest|lloyds|santander|rbs|royal\s+bank\s+of\s+scotland|bank\s+of\s+scotland|standard\s+chartered|citibank|citi\b|j\.?p\.?\s*morgan|morgan\s+stanley|bank\s+of\s+america|bnp\s*paribas|deutsche\s+bank|ing\b|abn\s*amro|credit\s+suisse|ubs\b)\b/i;
 
 export function isCompaniesHouseConfigured() {
@@ -31,6 +40,177 @@ export function isCompaniesHouseConfigured() {
 
 function normalizeCompanyNumber(companyNumber) {
   return String(companyNumber || "").padStart(8, "0");
+}
+
+function normalizeCompanySearchText(value) {
+  const cleaned = String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !COMPANY_NAME_STOPWORDS.has(token));
+
+  return cleaned.join(" ").trim();
+}
+
+function buildTokenSet(value) {
+  return new Set(
+    String(value || "")
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean)
+  );
+}
+
+function scoreCompanySearchItem(query, item) {
+  const companyName = String(item?.title || item?.company_name || "").trim();
+  if (!companyName) return Number.NEGATIVE_INFINITY;
+
+  const normalizedQuery = normalizeCompanySearchText(query);
+  const normalizedName = normalizeCompanySearchText(companyName);
+  if (!normalizedQuery || !normalizedName) return Number.NEGATIVE_INFINITY;
+
+  let score = 0;
+
+  const status = String(item?.company_status || "").trim().toLowerCase();
+  if (status === "active") score += 30;
+  else if (status) score -= 10;
+
+  if (normalizedName === normalizedQuery) {
+    score += 120;
+  } else if (normalizedName.startsWith(normalizedQuery)) {
+    score += 80;
+  } else if (normalizedName.includes(normalizedQuery)) {
+    score += 50;
+  }
+
+  const queryTokens = buildTokenSet(normalizedQuery);
+  const nameTokens = buildTokenSet(normalizedName);
+  if (queryTokens.size > 0 && nameTokens.size > 0) {
+    let overlap = 0;
+    for (const token of queryTokens) {
+      if (nameTokens.has(token)) overlap += 1;
+    }
+    score += Math.round((overlap / queryTokens.size) * 40);
+    if (overlap === 0) score -= 20;
+  }
+
+  const rawQuery = String(query || "").trim().toLowerCase();
+  const rawName = companyName.toLowerCase();
+  if (rawQuery && rawName === rawQuery) score += 40;
+
+  const hasTitleMatch = Array.isArray(item?.matches)
+    && item.matches.some((match) => String(match || "").toLowerCase() === "title");
+  if (hasTitleMatch) score += 10;
+
+  return score;
+}
+
+function classifyCompanySearchConfidence(query, bestItem, bestScore) {
+  if (!bestItem || !Number.isFinite(bestScore)) return "none";
+
+  const normalizedQuery = normalizeCompanySearchText(query);
+  const normalizedName = normalizeCompanySearchText(bestItem?.title || bestItem?.company_name || "");
+  const isActive = String(bestItem?.company_status || "").toLowerCase() === "active";
+
+  if (normalizedQuery && normalizedQuery === normalizedName) {
+    return isActive ? "high" : "medium";
+  }
+
+  if (isActive && bestScore >= 70) return "medium";
+  return "low";
+}
+
+export function pickBestCompanySearchResult(query, items = []) {
+  const candidates = Array.isArray(items) ? items : [];
+
+  let bestItem = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const item of candidates) {
+    const score = scoreCompanySearchItem(query, item);
+    if (score > bestScore) {
+      bestScore = score;
+      bestItem = item;
+    }
+  }
+
+  if (!bestItem || !Number.isFinite(bestScore)) {
+    return {
+      best_match: null,
+      best_score: null,
+      match_confidence: "none",
+    };
+  }
+
+  const companyNumber = String(bestItem?.company_number || "").trim();
+
+  return {
+    best_match: {
+      company_number: companyNumber ? normalizeCompanyNumber(companyNumber) : null,
+      company_name: String(bestItem?.title || bestItem?.company_name || "").trim() || null,
+      company_status: String(bestItem?.company_status || "").trim() || null,
+      address_snippet: String(bestItem?.address_snippet || "").trim() || null,
+    },
+    best_score: bestScore,
+    match_confidence: classifyCompanySearchConfidence(query, bestItem, bestScore),
+  };
+}
+
+export async function searchCompaniesByName(companyName, options = {}) {
+  const query = String(companyName || "").trim();
+  if (!query) {
+    return {
+      error: true,
+      status: 400,
+      message: "company_name is required",
+    };
+  }
+
+  if (!CH_API_KEY) {
+    return {
+      error: true,
+      message: "Companies House API key not set. Configure COMPANIES_HOUSE_API_KEY (or CH_API_KEY) to enable live lookups.",
+    };
+  }
+
+  const requestedPerPage = Number.parseInt(
+    String(options.items_per_page ?? options.itemsPerPage ?? options.limit ?? "20"),
+    10
+  );
+  const itemsPerPage = Number.isFinite(requestedPerPage)
+    ? Math.max(1, Math.min(requestedPerPage, 100))
+    : 20;
+
+  const payload = await chFetch(`/search/companies?q=${encodeURIComponent(query)}&items_per_page=${itemsPerPage}`);
+  if (payload?.error) {
+    return {
+      error: true,
+      status: payload.status,
+      message: payload.message,
+    };
+  }
+
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const picked = pickBestCompanySearchResult(query, items);
+
+  return {
+    query,
+    total_results: Number(payload?.total_results || items.length || 0),
+    items: items.map((item) => ({
+      company_number: item?.company_number ? normalizeCompanyNumber(item.company_number) : null,
+      company_name: String(item?.title || item?.company_name || "").trim() || null,
+      company_status: String(item?.company_status || "").trim() || null,
+      address_snippet: String(item?.address_snippet || "").trim() || null,
+      kind: String(item?.kind || "").trim() || null,
+      matches: Array.isArray(item?.matches) ? item.matches : [],
+    })),
+    best_match: picked.best_match,
+    best_score: picked.best_score,
+    match_confidence: picked.match_confidence,
+    source: "companies_house_api",
+  };
 }
 
 function extractChargeLenderNames(charge) {

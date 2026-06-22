@@ -19,6 +19,10 @@ const allEnvKeys = [
   "OPENCORPORATES_URL_TEMPLATE",
   "OPENCORPORATES_AUTH_HEADER",
   "OPENCORPORATES_AUTH_SCHEME",
+  "PROSPEO_API_KEY",
+  "PROSPEO_URL_TEMPLATE",
+  "PROSPEO_AUTH_HEADER",
+  "PROSPEO_AUTH_SCHEME",
   "SIMILARWEB_API_KEY",
   "SIMILARWEB_URL_TEMPLATE",
   "SIMILARWEB_AUTH_HEADER",
@@ -75,6 +79,11 @@ function configureSingleConnector(connectorId) {
   if (id === "opencorporates") {
     process.env.OPENCORPORATES_API_TOKEN = "test-opencorporates-token";
     process.env.OPENCORPORATES_URL_TEMPLATE = "https://fixtures.example.test/opencorporates/{company_number}";
+    return;
+  }
+  if (id === "prospeo") {
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://fixtures.example.test/prospeo/{company_number}";
     return;
   }
   if (id === "similarweb") {
@@ -231,6 +240,27 @@ describe("external signal connector native fixtures", () => {
 
     const ownership = db.getSetting("ownership_99220009", null);
     assert.equal(ownership.non_uk_significant_corporate_controllers_count >= 1, true);
+  });
+
+  it("maps Prospeo native fixture to hiring, marketing, and tech envelopes", async () => {
+    configureSingleConnector("prospeo");
+    global.fetch = makeFetchWithFixture("prospeo", "prospeo");
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99220014",
+      companyName: "Native Prospeo Co",
+      companyDomain: "native-prospeo.co.uk",
+    });
+
+    assert.equal(result.status, "updated");
+
+    const hiring = db.getSetting("hiring_signals_99220014", null);
+    const marketing = db.getSetting("marketing_intelligence_99220014", null);
+    const tech = db.getSetting("tech_stack_99220014", null);
+
+    assert.equal(hiring.total_open_roles >= 5, true);
+    assert.equal(marketing.monthly_web_traffic, 120000);
+    assert.ok((tech.technologies || []).includes("HubSpot"));
   });
 
   it("maps Similarweb native fixture to marketing traffic and geography", async () => {

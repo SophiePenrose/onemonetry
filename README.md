@@ -180,6 +180,30 @@ Notes:
 - Closed-won company numbers are excluded by default (use `--include-closed-won` to override).
 - The optional report captures per-file parse and dedupe counts.
 
+## Seed List Import (Name + Website -> Monitor + Filings + Analysis)
+
+When your source list has `company_name` and `website` (with optional `company_number`), use the seed importer.
+
+```bash
+# preview resolution without DB writes
+npm run import:monitor-seed-list -- --dry-run --report exports/seed-import-dry-run.json data/existing-list.csv
+
+# apply import, resolve missing company numbers via Companies House search,
+# sync recent accounts filings immediately, and queue analysis
+npm run import:monitor-seed-list -- data/existing-list.csv
+
+# apply import but skip immediate filings sync and analysis queueing
+npm run import:monitor-seed-list -- --no-sync --no-queue-analysis data/existing-list.csv
+```
+
+Behavior:
+
+- Accepts rows with `company_number` directly, and resolves missing numbers via Companies House company search using `company_name`.
+- Stores `company_name`, `company_website`, and `company_domain` in `company_monitor`.
+- Optional immediate sync writes recent Companies House accounts filings into `company_filings` and updates monitor status.
+- Optional analysis queue seed enqueues imported companies for dossier/scoring processing.
+- By default, low-confidence name matches are rejected (use `--allow-low-confidence` to include them).
+
 ### Make CI a required merge gate (recommended)
 
 CI is currently advisory — a red run does not block merging. To turn it into a
