@@ -1,4 +1,4 @@
-import { describe, it, after } from "node:test";
+import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
@@ -10,6 +10,10 @@ const originalEnv = {
   ENDOLE_API_KEY: process.env.ENDOLE_API_KEY,
   ENDOLE_URL_TEMPLATE: process.env.ENDOLE_URL_TEMPLATE,
   OPENCORPORATES_URL_TEMPLATE: process.env.OPENCORPORATES_URL_TEMPLATE,
+  PROSPEO_API_KEY: process.env.PROSPEO_API_KEY,
+  PROSPEO_URL_TEMPLATE: process.env.PROSPEO_URL_TEMPLATE,
+  PROSPEO_AUTH_HEADER: process.env.PROSPEO_AUTH_HEADER,
+  PROSPEO_AUTH_SCHEME: process.env.PROSPEO_AUTH_SCHEME,
   STATUSPAGE_URL_TEMPLATE: process.env.STATUSPAGE_URL_TEMPLATE,
   STATUS_FEED_URL_TEMPLATE: process.env.STATUS_FEED_URL_TEMPLATE,
   STATUS_API_URL_TEMPLATE: process.env.STATUS_API_URL_TEMPLATE,
@@ -45,6 +49,13 @@ after(() => {
 });
 
 describe("external signal connectors", () => {
+  beforeEach(() => {
+    delete process.env.PROSPEO_API_KEY;
+    delete process.env.PROSPEO_URL_TEMPLATE;
+    delete process.env.PROSPEO_AUTH_HEADER;
+    delete process.env.PROSPEO_AUTH_SCHEME;
+  });
+
   it("returns no_connectors_configured when templates are missing", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;
@@ -129,6 +140,7 @@ describe("external signal connectors", () => {
     assert.deepEqual(result.requested_connectors, ["not_a_real_connector"]);
     assert.equal(Array.isArray(result.available_connectors), true);
     assert.equal(result.available_connectors.includes("endole"), true);
+    assert.equal(result.available_connectors.includes("prospeo"), true);
   });
 
   it("syncs configured connector payload into ownership and hiring envelopes", async () => {
