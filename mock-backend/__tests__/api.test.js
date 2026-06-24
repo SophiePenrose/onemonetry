@@ -896,6 +896,15 @@ describe("API endpoints", () => {
       assert.equal(completed.status, 200);
       assert.equal(completed.data.status, "completed");
       assert.equal(completed.data.request_id, requestId);
+      assert.equal(typeof completed.data.response_payload_sha256, "string");
+      assert.equal(completed.data.response_payload_sha256.length, 64);
+
+      const afterComplete = await fetchJSON(`/api/gemini/handoff/${requestId}`);
+      assert.equal(afterComplete.status, 200);
+      assert.equal(typeof afterComplete.data.request_payload_sha256, "string");
+      assert.equal(afterComplete.data.request_payload_sha256.length, 64);
+      assert.equal(typeof afterComplete.data.response_payload_sha256, "string");
+      assert.equal(afterComplete.data.response_payload_sha256.length, 64);
 
       const retry = await fetchJSON(`/api/gemini/handoff/${requestId}/retry`, {
         method: "POST",

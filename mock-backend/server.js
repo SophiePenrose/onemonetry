@@ -5636,7 +5636,9 @@ app.get("/api/gemini/handoff/:requestId", (req, res) => {
     status: record.status,
     accepted_at: record.accepted_at,
     retry_count: record.retry_count,
+    request_payload_sha256: record.request_payload_sha256 || null,
     response_id: record.response_id || record.response?.response_id || null,
+    response_payload_sha256: record.response_payload_sha256 || null,
     completed_at: record.completed_at || record.response?.completed_at || null,
     approval_counts: approvalCounts,
   });
@@ -5673,6 +5675,7 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
       request_id: requestId,
       status: record.status,
       response_id: getStoredGeminiResponseId(record),
+      response_payload_sha256: record.response_payload_sha256 || null,
       completed_at: record.completed_at || record.response?.completed_at || null,
       duplicate: true,
     });
@@ -5695,6 +5698,7 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     request_id: requestId,
     status: updated?.status || "partial",
     response_id: payload.response_id,
+    response_payload_sha256: updated?.response_payload_sha256 || null,
     completed_at: payload.completed_at,
     duplicate: false,
   });
