@@ -137,6 +137,10 @@ import {
 } from "./website-resolver.js";
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 import { validateJsonSchema } from "./json-schema-lite.js";
+import {
+  dispatchGeminiHandoffRequest,
+  getGeminiHandoffTransportRuntimeInfo,
+} from "./gemini-handoff-transport.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -5383,7 +5387,7 @@ app.get("/api/llm/status", (_req, res) => {
   res.json(runtime);
 });
 
-app.post("/api/gemini/handoff", (req, res) => {
+app.post("/api/gemini/handoff", async (req, res) => {
   const payload = req.body && typeof req.body === "object" ? req.body : {};
   const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
 
@@ -5407,12 +5411,82 @@ app.post("/api/gemini/handoff", (req, res) => {
   }
 
   const acceptedAt = record?.accepted_at || new Date().toISOString();
+  const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
+  const dispatchResult = await dispatchGeminiHandoffRequest(payload);
+
+  if (dispatchResult?.success && dispatchResult.response_payload && typeof dispatchResult.response_payload === "object") {
+    const responseValidation = validateJsonSchema(
+      GEMINI_HANDOFF_RESPONSE_SCHEMA,
+      dispatchResult.response_payload
+    );
+    const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
+
+    if (responseValidation.valid && responseRequestId === String(payload.request_id)) {
+      const updated = completeGeminiHandoffRequest(payload.request_id, dispatchResult.response_payload);
+      return res.status(202).json({
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: payload.request_id,
+        status: updated?.status || "partial",
+        accepted_at: acceptedAt,
+        response_id: dispatchResult.response_payload.response_id || null,
+        completed_at: dispatchResult.response_payload.completed_at || null,
+        transport: {
+          attempted: true,
+          success: true,
+          status_code: dispatchResult.status_code,
+        },
+        next_action: "request_completed",
+      });
+    }
+  }
+
+  if (dispatchResult?.attempted && !dispatchResult.success) {
+    const updated = incrementGeminiHandoffRetry(payload.request_id);
+
+    if (!transportRuntime.fail_open) {
+      return res.status(502).json({
+        error: "transport_dispatch_failed",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: payload.request_id,
+        status: updated?.status || "retry_requested",
+        retry_count: updated?.retry_count || 1,
+        transport: {
+          attempted: true,
+          success: false,
+          status_code: dispatchResult.status_code || null,
+          code: dispatchResult.error_code || "transport_error",
+          message: dispatchResult.error_message || "Gemini transport request failed",
+        },
+      });
+    }
+
+    return res.status(202).json({
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: payload.request_id,
+      status: updated?.status || "retry_requested",
+      accepted_at: acceptedAt,
+      retry_count: updated?.retry_count || 1,
+      transport: {
+        attempted: true,
+        success: false,
+        status_code: dispatchResult.status_code || null,
+        code: dispatchResult.error_code || "transport_error",
+      },
+      next_action: "retry_requested",
+    });
+  }
 
   return res.status(202).json({
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
     request_id: payload.request_id,
     status: "accepted",
     accepted_at: acceptedAt,
+    transport: {
+      attempted: !!dispatchResult?.attempted,
+      success: !!dispatchResult?.success,
+      skipped: !!dispatchResult?.skipped,
+      reason: dispatchResult?.reason || null,
+    },
     next_action: "awaiting_gemini_response",
   });
 });
@@ -5543,6 +5617,7 @@ app.get("/api/integrations/status", (_req, res) => {
   const llmRuntimeInfo = getLLMRuntimeInfo();
   const emailLlmRuntime = getEmailLlmRuntimeInfo();
   const websiteResolverRuntime = getWebsiteResolverRuntimeConfig();
+  const geminiHandoffTransportRuntime = getGeminiHandoffTransportRuntimeInfo();
 
   const integrations = {
     companies_house: {
@@ -5718,6 +5793,13 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Website/domain resolution cache used before deterministic enrichment",
       defaults: websiteResolverRuntime,
     },
+    gemini_handoff_transport: {
+      configured: geminiHandoffTransportRuntime.configured,
+      required: false,
+      env_var: "ENABLE_GEMINI_HANDOFF_TRANSPORT, GEMINI_HANDOFF_TRANSPORT_URL, GEMINI_HANDOFF_TRANSPORT_TIMEOUT_MS, GEMINI_HANDOFF_TRANSPORT_AUTH_TOKEN, GEMINI_HANDOFF_TRANSPORT_AUTH_HEADER, GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN",
+      purpose: "Feature-flagged outbound handoff dispatch to Gemini Workspace bridge",
+      runtime: geminiHandoffTransportRuntime,
+    },
   };
 
   const missingRequired = Object.entries(integrations)
@@ -5788,6 +5870,12 @@ app.get("/api/integrations/status", (_req, res) => {
       "WEBSITE_RESOLUTION_MAX_CANDIDATES=4",
       "WEBSITE_RESOLUTION_ENABLE_NAME_GUESSES=true",
       "ANALYSIS_QUEUE_WEBSITE_GUESS=false",
+      "ENABLE_GEMINI_HANDOFF_TRANSPORT=false",
+      "GEMINI_HANDOFF_TRANSPORT_URL=https://example.com/gemini/handoff",
+      "GEMINI_HANDOFF_TRANSPORT_TIMEOUT_MS=15000",
+      "GEMINI_HANDOFF_TRANSPORT_AUTH_TOKEN=optional_transport_token",
+      "GEMINI_HANDOFF_TRANSPORT_AUTH_HEADER=Authorization",
+      "GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=true",
     ],
   });
 });
