@@ -964,6 +964,40 @@ describe("API endpoints", () => {
       assert.equal(secondComplete.data.response_id, responsePayload.response_id);
       assert.equal(secondComplete.data.duplicate, true);
     });
+
+    it("rejects complete callback replay when response_id conflicts with stored response", async () => {
+      const requestId = "req_api_test_conflict_complete_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const firstPayload = buildGeminiHandoffResponsePayload(requestId);
+      const firstComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(firstPayload),
+      });
+      assert.equal(firstComplete.status, 200);
+
+      const conflictingPayload = {
+        ...buildGeminiHandoffResponsePayload(requestId),
+        response_id: "resp_api_test_conflict_999",
+      };
+      const conflictingComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(conflictingPayload),
+      });
+
+      assert.equal(conflictingComplete.status, 409);
+      assert.equal(conflictingComplete.data.error, "response_id_conflict");
+      assert.equal(conflictingComplete.data.request_id, requestId);
+      assert.equal(conflictingComplete.data.existing_response_id, firstPayload.response_id);
+      assert.equal(conflictingComplete.data.incoming_response_id, conflictingPayload.response_id);
+    });
   });
 
   describe("GET /api/reports/schedule", () => {

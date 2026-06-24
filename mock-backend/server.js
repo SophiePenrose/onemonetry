@@ -198,6 +198,14 @@ function isDuplicateGeminiResponse(record, payload) {
   return storedResponseId === incomingResponseId;
 }
 
+function hasGeminiResponseConflict(record, payload) {
+  const storedResponseId = getStoredGeminiResponseId(record);
+  if (!storedResponseId) return false;
+  const incomingResponseId = String(payload?.response_id || "").trim();
+  if (!incomingResponseId) return false;
+  return storedResponseId !== incomingResponseId;
+}
+
 function slugToTitle(value) {
   const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
   if (!normalized) return "Unknown";
@@ -267,7 +275,7 @@ function buildDevGeminiHandoffResponse(payload) {
   return {
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
     request_id: requestId,
-    response_id: `resp_dev_${Date.now()}`,
+    response_id: `resp_dev_${requestId.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
     completed_at: new Date().toISOString(),
     status: "ok",
     sheet_write: {
@@ -5670,6 +5678,16 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     });
   }
 
+  if (hasGeminiResponseConflict(record, payload)) {
+    return res.status(409).json({
+      error: "response_id_conflict",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      existing_response_id: getStoredGeminiResponseId(record),
+      incoming_response_id: String(payload.response_id || "").trim() || null,
+    });
+  }
+
   const updated = completeGeminiHandoffRequest(requestId, payload);
 
   return res.json({
@@ -5705,13 +5723,20 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
 
       if (responseValidation.valid && responseRequestId === requestId) {
         if (isDuplicateGeminiResponse(updated, dispatchResult.response_payload)) {
+          const restored = completeGeminiHandoffRequest(
+            requestId,
+            (record?.response && typeof record.response === "object")
+              ? record.response
+              : dispatchResult.response_payload
+          );
+
           return res.status(202).json({
             contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
             request_id: requestId,
-            status: updated?.status || record?.status || "accepted",
-            retry_count: updated?.retry_count || 1,
-            response_id: getStoredGeminiResponseId(updated),
-            completed_at: updated?.completed_at || updated?.response?.completed_at || null,
+            status: restored?.status || "completed",
+            retry_count: restored?.retry_count || updated?.retry_count || 1,
+            response_id: getStoredGeminiResponseId(restored),
+            completed_at: restored?.completed_at || restored?.response?.completed_at || null,
             transport: {
               attempted: true,
               success: true,
@@ -5719,6 +5744,23 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
             },
             next_action: "request_completed",
             duplicate: true,
+          });
+        }
+
+        if (hasGeminiResponseConflict(updated, dispatchResult.response_payload)) {
+          return res.status(409).json({
+            error: "response_id_conflict",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: requestId,
+            status: updated?.status || "retry_requested",
+            retry_count: updated?.retry_count || 1,
+            existing_response_id: getStoredGeminiResponseId(updated),
+            incoming_response_id: String(dispatchResult.response_payload.response_id || "").trim() || null,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
           });
         }
 

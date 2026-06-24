@@ -258,6 +258,7 @@ Rules:
 2. If row exists, Gemini should update in place, not append.
 3. App should treat repeated `response_id` as already-processed.
 4. Repeating `POST /api/gemini/handoff/:requestId/complete` with the same `response_id` is an idempotent no-op (`duplicate: true`).
+5. Repeating completion with a different `response_id` for the same `request_id` is rejected as `response_id_conflict`.
 
 ## Security and Compliance
 
