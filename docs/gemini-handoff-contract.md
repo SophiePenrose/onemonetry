@@ -292,6 +292,7 @@ Behavior:
 2. Transport dispatch posts the same request payload to the simulator endpoint.
 3. Simulator returns contract-compliant response payload.
 4. App marks the handoff request as `completed` and stores `response_id`/`completed_at`.
+5. `POST /api/gemini/handoff/:requestId/retry` re-dispatches the stored request payload when transport is enabled, then re-completes on success.
 
 This keeps the application-side state transitions, schema validation, and retry handling testable without external dependencies.
 

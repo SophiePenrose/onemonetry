@@ -183,4 +183,50 @@ describe("Gemini handoff dev simulator transport", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("re-dispatches on retry and keeps request completed via simulator", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "onemonetry-gemini-dev-sim-"));
+    const testDatabasePath = path.join(tempDir, "gemini-dev-simulator-retry.db");
+    const testCompaniesPath = path.join(tempDir, "companies.json");
+    fs.copyFileSync(sourceCompaniesPath, testCompaniesPath);
+
+    const requestId = "req_dev_simulator_retry_001";
+    const port = randomPort(24000);
+    const server = await startApiServer({
+      port,
+      testDatabasePath,
+      testCompaniesPath,
+    });
+
+    try {
+      const accepted = await fetchJSON(server.baseUrl, "/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+
+      assert.equal(accepted.status, 202);
+      assert.equal(accepted.data.status, "completed");
+
+      const retry = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/retry`, {
+        method: "POST",
+      });
+
+      assert.equal(retry.status, 202);
+      assert.equal(retry.data.request_id, requestId);
+      assert.equal(retry.data.status, "completed");
+      assert.equal(typeof retry.data.retry_count, "number");
+      assert.equal(retry.data.retry_count >= 1, true);
+      assert.equal(retry.data.transport?.attempted, true);
+      assert.equal(retry.data.transport?.success, true);
+
+      const status = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}`);
+      assert.equal(status.status, 200);
+      assert.equal(status.data.status, "completed");
+      assert.equal(status.data.retry_count >= 1, true);
+    } finally {
+      await server.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
