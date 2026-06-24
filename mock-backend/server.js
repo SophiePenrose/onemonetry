@@ -116,6 +116,12 @@ import {
   getClosedWonRegistryCount,
   listClosedWonCompanies,
   getWebsiteResolution,
+  createOrGetGeminiHandoffRequest,
+  getGeminiHandoffRequest,
+  completeGeminiHandoffRequest,
+  incrementGeminiHandoffRetry,
+  replaceGeminiHandoffApprovals,
+  getGeminiHandoffApprovalCounts,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
 import {
@@ -130,6 +136,7 @@ import {
   setManualWebsiteResolution,
 } from "./website-resolver.js";
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
+import { validateJsonSchema } from "./json-schema-lite.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -153,6 +160,21 @@ const LIGHTWEIGHT_RUNTIME = ["1", "true", "yes", "on"].includes(
 const DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC = ["1", "true", "yes", "on"].includes(
   String(process.env.DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC || "false").trim().toLowerCase()
 );
+const GEMINI_HANDOFF_CONTRACT_VERSION = "gemini-handoff-v1";
+
+function loadLocalJsonSchema(fileName) {
+  const filePath = path.join(__dirname, "schemas", fileName);
+  const raw = fs.readFileSync(filePath, "utf8");
+  return JSON.parse(raw);
+}
+
+const GEMINI_HANDOFF_REQUEST_SCHEMA = loadLocalJsonSchema("gemini-handoff-request.schema.json");
+const GEMINI_HANDOFF_RESPONSE_SCHEMA = loadLocalJsonSchema("gemini-handoff-response.schema.json");
+const GEMINI_APPROVALS_SYNC_SCHEMA = loadLocalJsonSchema("gemini-approvals-sync.schema.json");
+
+function formatSchemaErrors(errors) {
+  return (errors || []).map((entry) => `${entry.path}: ${entry.message}`);
+}
 
 if (IGNORE_RUNTIME_SIGTERM) {
   process.on("SIGTERM", () => {
@@ -5359,6 +5381,142 @@ import { analyseCompany, getLLMRuntimeInfo, isLLMConfigured } from "./llm.js";
 app.get("/api/llm/status", (_req, res) => {
   const runtime = getLLMRuntimeInfo();
   res.json(runtime);
+});
+
+app.post("/api/gemini/handoff", (req, res) => {
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      details: formatSchemaErrors(validation.errors),
+    });
+  }
+
+  const { created, record } = createOrGetGeminiHandoffRequest(payload);
+  if (!created && record) {
+    return res.status(200).json({
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: payload.request_id,
+      status: record.status,
+      accepted_at: record.accepted_at,
+      duplicate: true,
+    });
+  }
+
+  const acceptedAt = record?.accepted_at || new Date().toISOString();
+
+  return res.status(202).json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: payload.request_id,
+    status: "accepted",
+    accepted_at: acceptedAt,
+    next_action: "awaiting_gemini_response",
+  });
+});
+
+app.get("/api/gemini/handoff/:requestId", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const approvalCounts = getGeminiHandoffApprovalCounts(requestId);
+
+  return res.json({
+    contract_version: record.contract_version,
+    request_id: record.request_id,
+    status: record.status,
+    accepted_at: record.accepted_at,
+    retry_count: record.retry_count,
+    response_id: record.response_id || record.response?.response_id || null,
+    completed_at: record.completed_at || record.response?.completed_at || null,
+    approval_counts: approvalCounts,
+  });
+});
+
+app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const validation = validateJsonSchema(GEMINI_HANDOFF_RESPONSE_SCHEMA, payload);
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      details: formatSchemaErrors(validation.errors),
+    });
+  }
+
+  if (payload.request_id !== requestId) {
+    return res.status(400).json({
+      error: "request_id_mismatch",
+      expected_request_id: requestId,
+      actual_request_id: payload.request_id,
+    });
+  }
+
+  const updated = completeGeminiHandoffRequest(requestId, payload);
+
+  return res.json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    status: updated?.status || "partial",
+    response_id: payload.response_id,
+    completed_at: payload.completed_at,
+  });
+});
+
+app.post("/api/gemini/handoff/:requestId/retry", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const updated = incrementGeminiHandoffRetry(requestId);
+
+  return res.status(202).json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    status: updated?.status || "retry_requested",
+    retry_count: updated?.retry_count || 1,
+    requested_at: updated?.last_retry_requested_at || new Date().toISOString(),
+  });
+});
+
+app.post("/api/gemini/sheets/sync-approvals", (req, res) => {
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const validation = validateJsonSchema(GEMINI_APPROVALS_SYNC_SCHEMA, payload);
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      details: formatSchemaErrors(validation.errors),
+    });
+  }
+
+  const record = getGeminiHandoffRequest(payload.request_id);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: payload.request_id });
+  }
+
+  replaceGeminiHandoffApprovals(payload.request_id, payload.approvals);
+
+  const counts = getGeminiHandoffApprovalCounts(payload.request_id);
+  return res.json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: payload.request_id,
+    synced_at: new Date().toISOString(),
+    counts,
+  });
 });
 
 app.get("/api/integrations/status", (_req, res) => {

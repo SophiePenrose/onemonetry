@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gemini-handoff-request.schema.json",
+  "title": "Gemini Handoff Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "generated_at",
+    "workspace",
+    "campaign",
+    "ranked_companies",
+    "generation_policy"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "gemini-handoff-v1"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org", "sheet_id", "sheet_tab", "timezone"],
+      "properties": {
+        "org": { "type": "string", "minLength": 1 },
+        "sheet_id": { "type": "string", "minLength": 1 },
+        "sheet_tab": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 }
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["campaign_id", "campaign_name", "sequence_template", "max_touches", "approval_required"],
+      "properties": {
+        "campaign_id": { "type": "string", "minLength": 1 },
+        "campaign_name": { "type": "string", "minLength": 1 },
+        "sequence_template": { "type": "string", "minLength": 1 },
+        "max_touches": { "type": "integer", "minimum": 1 },
+        "approval_required": { "type": "boolean" }
+      }
+    },
+    "ranked_companies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rank",
+          "company_number",
+          "company_name",
+          "composite_score",
+          "priority_band",
+          "score_breakdown",
+          "stakeholders"
+        ],
+        "properties": {
+          "rank": { "type": "integer", "minimum": 1 },
+          "company_number": { "type": "string", "minLength": 1 },
+          "company_name": { "type": "string", "minLength": 1 },
+          "segment": { "type": "string" },
+          "composite_score": { "type": "number" },
+          "priority_band": { "type": "string", "minLength": 1 },
+          "score_breakdown": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["product_fit", "commercial_value", "pain_strength", "urgency", "competitor_context"],
+            "properties": {
+              "product_fit": { "type": "number" },
+              "commercial_value": { "type": "number" },
+              "pain_strength": { "type": "number" },
+              "urgency": { "type": "number" },
+              "competitor_context": { "type": "number" }
+            }
+          },
+          "insights": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "stakeholders": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["person_id", "full_name", "role", "persona_bucket", "confidence"],
+              "properties": {
+                "person_id": { "type": "string", "minLength": 1 },
+                "full_name": { "type": "string", "minLength": 1 },
+                "role": { "type": "string", "minLength": 1 },
+                "email": { "type": "string" },
+                "email_status": { "type": "string" },
+                "persona_bucket": { "type": "string", "minLength": 1 },
+                "confidence": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "generation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "voice_profile",
+        "forbidden_phrases_enforced",
+        "max_steps_per_sequence",
+        "require_citations",
+        "fail_closed_on_qc"
+      ],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "voice_profile": { "type": "string", "minLength": 1 },
+        "forbidden_phrases_enforced": { "type": "boolean" },
+        "max_steps_per_sequence": { "type": "integer", "minimum": 1 },
+        "require_citations": { "type": "boolean" },
+        "fail_closed_on_qc": { "type": "boolean" }
+      }
+    }
+  }
+}

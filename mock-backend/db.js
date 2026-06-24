@@ -244,6 +244,40 @@ db.exec(`
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_type_value ON suppression_list(type, value_normalized);
   CREATE INDEX IF NOT EXISTS idx_suppression_type ON suppression_list(type);
+
+  CREATE TABLE IF NOT EXISTS gemini_handoff_requests (
+    request_id TEXT PRIMARY KEY,
+    contract_version TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    accepted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_retry_requested_at TEXT,
+    request_payload TEXT NOT NULL,
+    response_payload TEXT,
+    response_id TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_status ON gemini_handoff_requests(status);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_accepted ON gemini_handoff_requests(accepted_at);
+
+  CREATE TABLE IF NOT EXISTS gemini_handoff_approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL,
+    sequence_id TEXT NOT NULL,
+    step_number INTEGER NOT NULL,
+    approval_status TEXT NOT NULL,
+    approved_by TEXT,
+    approved_at TEXT,
+    review_notes TEXT,
+    synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (request_id) REFERENCES gemini_handoff_requests(request_id) ON DELETE CASCADE,
+    UNIQUE(request_id, sequence_id, step_number)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_approvals_request ON gemini_handoff_approvals(request_id);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_approvals_status ON gemini_handoff_approvals(approval_status);
 `);
 
 try {
@@ -1434,6 +1468,207 @@ export function listAnalysisQueueItems(filters = {}) {
 
 export function listFailedAnalysisQueueItems(limit = 500) {
   return listAnalysisQueueItems({ status: "failed", limit });
+}
+
+// --- Gemini Handoff Persistence ---
+
+function parseJsonText(value, fallback = null) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+const stmtInsertGeminiHandoffRequest = db.prepare(`
+  INSERT INTO gemini_handoff_requests (
+    request_id,
+    contract_version,
+    status,
+    accepted_at,
+    request_payload,
+    updated_at
+  ) VALUES (?, ?, 'accepted', datetime('now'), ?, datetime('now'))
+`);
+
+const stmtGetGeminiHandoffRequest = db.prepare(`
+  SELECT *
+  FROM gemini_handoff_requests
+  WHERE request_id = ?
+`);
+
+const stmtCompleteGeminiHandoffRequest = db.prepare(`
+  UPDATE gemini_handoff_requests
+  SET
+    status = ?,
+    response_payload = ?,
+    response_id = ?,
+    completed_at = ?,
+    updated_at = datetime('now')
+  WHERE request_id = ?
+`);
+
+const stmtIncrementGeminiHandoffRetry = db.prepare(`
+  UPDATE gemini_handoff_requests
+  SET
+    retry_count = retry_count + 1,
+    status = 'retry_requested',
+    last_retry_requested_at = datetime('now'),
+    updated_at = datetime('now')
+  WHERE request_id = ?
+`);
+
+const stmtDeleteGeminiApprovalsByRequest = db.prepare(`
+  DELETE FROM gemini_handoff_approvals
+  WHERE request_id = ?
+`);
+
+const stmtUpsertGeminiApproval = db.prepare(`
+  INSERT INTO gemini_handoff_approvals (
+    request_id,
+    sequence_id,
+    step_number,
+    approval_status,
+    approved_by,
+    approved_at,
+    review_notes,
+    synced_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(request_id, sequence_id, step_number) DO UPDATE SET
+    approval_status = excluded.approval_status,
+    approved_by = excluded.approved_by,
+    approved_at = excluded.approved_at,
+    review_notes = excluded.review_notes,
+    synced_at = datetime('now')
+`);
+
+const stmtGetGeminiApprovalCounts = db.prepare(`
+  SELECT approval_status, COUNT(*) AS count
+  FROM gemini_handoff_approvals
+  WHERE request_id = ?
+  GROUP BY approval_status
+`);
+
+function hydrateGeminiHandoffRequest(row) {
+  if (!row) return null;
+  return {
+    request_id: row.request_id,
+    contract_version: row.contract_version,
+    status: row.status,
+    accepted_at: row.accepted_at,
+    retry_count: Number(row.retry_count || 0),
+    last_retry_requested_at: row.last_retry_requested_at,
+    request: parseJsonText(row.request_payload, {}),
+    response: parseJsonText(row.response_payload, null),
+    response_id: row.response_id,
+    completed_at: row.completed_at,
+    updated_at: row.updated_at,
+  };
+}
+
+const txCreateOrGetGeminiHandoffRequest = db.transaction((payload) => {
+  const requestId = String(payload?.request_id || "").trim();
+  if (!requestId) return { created: false, record: null };
+
+  const existing = stmtGetGeminiHandoffRequest.get(requestId);
+  if (existing) {
+    return { created: false, record: hydrateGeminiHandoffRequest(existing) };
+  }
+
+  stmtInsertGeminiHandoffRequest.run(
+    requestId,
+    String(payload.contract_version || ""),
+    JSON.stringify(payload || {})
+  );
+
+  const inserted = stmtGetGeminiHandoffRequest.get(requestId);
+  return { created: true, record: hydrateGeminiHandoffRequest(inserted) };
+});
+
+export function createOrGetGeminiHandoffRequest(payload = {}) {
+  return txCreateOrGetGeminiHandoffRequest(payload);
+}
+
+export function getGeminiHandoffRequest(requestId) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return null;
+  return hydrateGeminiHandoffRequest(stmtGetGeminiHandoffRequest.get(normalized));
+}
+
+export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return null;
+
+  const mappedStatus = String(responsePayload?.status || "").trim().toLowerCase() === "ok"
+    ? "completed"
+    : String(responsePayload?.status || "partial").trim().toLowerCase();
+
+  stmtCompleteGeminiHandoffRequest.run(
+    mappedStatus || "partial",
+    JSON.stringify(responsePayload || {}),
+    String(responsePayload?.response_id || "") || null,
+    String(responsePayload?.completed_at || "") || null,
+    normalized
+  );
+
+  return getGeminiHandoffRequest(normalized);
+}
+
+export function incrementGeminiHandoffRetry(requestId) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return null;
+  stmtIncrementGeminiHandoffRetry.run(normalized);
+  return getGeminiHandoffRequest(normalized);
+}
+
+export function replaceGeminiHandoffApprovals(requestId, approvals = []) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return 0;
+
+  const tx = db.transaction((rows) => {
+    stmtDeleteGeminiApprovalsByRequest.run(normalized);
+    let upserted = 0;
+    for (const row of rows) {
+      const sequenceId = String(row?.sequence_id || "").trim();
+      const stepNumber = Number.parseInt(String(row?.step_number || ""), 10);
+      const approvalStatus = String(row?.approval_status || "").trim().toLowerCase();
+      if (!sequenceId || !Number.isInteger(stepNumber) || stepNumber <= 0 || !approvalStatus) continue;
+
+      stmtUpsertGeminiApproval.run(
+        normalized,
+        sequenceId,
+        stepNumber,
+        approvalStatus,
+        row?.approved_by ? String(row.approved_by) : null,
+        row?.approved_at ? String(row.approved_at) : null,
+        row?.review_notes ? String(row.review_notes) : null
+      );
+      upserted += 1;
+    }
+    return upserted;
+  });
+
+  return tx(Array.isArray(approvals) ? approvals : []);
+}
+
+export function getGeminiHandoffApprovalCounts(requestId) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) {
+    return { total: 0, approved: 0, rejected: 0, pending: 0, sent: 0, paused: 0 };
+  }
+
+  const grouped = stmtGetGeminiApprovalCounts.all(normalized);
+  const counts = { total: 0, approved: 0, rejected: 0, pending: 0, sent: 0, paused: 0 };
+  for (const row of grouped) {
+    const status = String(row.approval_status || "").toLowerCase();
+    const value = Number(row.count || 0);
+    if (Object.prototype.hasOwnProperty.call(counts, status)) {
+      counts[status] = value;
+      counts.total += value;
+    }
+  }
+  return counts;
 }
 
 export function closeDb() {
