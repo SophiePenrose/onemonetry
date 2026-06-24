@@ -273,6 +273,28 @@ Rules:
 - `POST /api/gemini/handoff/:requestId/retry`
 - `POST /api/gemini/sheets/sync-approvals`
 
+## Local Simulator (Dev/Test)
+
+Use this for contract-safe end-to-end testing before wiring live Workspace credentials:
+
+- `POST /api/dev/gemini/handoff-simulator`
+
+Recommended local flags:
+
+- `ENABLE_GEMINI_HANDOFF_TRANSPORT=true`
+- `GEMINI_HANDOFF_TRANSPORT_URL=http://127.0.0.1:8000/api/dev/gemini/handoff-simulator`
+- `ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=true`
+- `GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=false`
+
+Behavior:
+
+1. `POST /api/gemini/handoff` persists the request.
+2. Transport dispatch posts the same request payload to the simulator endpoint.
+3. Simulator returns contract-compliant response payload.
+4. App marks the handoff request as `completed` and stores `response_id`/`completed_at`.
+
+This keeps the application-side state transitions, schema validation, and retry handling testable without external dependencies.
+
 ## Acceptance Criteria
 
 1. App can submit ranked payload and receive structured response.
