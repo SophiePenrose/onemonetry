@@ -175,9 +175,97 @@ function loadLocalJsonSchema(fileName) {
 const GEMINI_HANDOFF_REQUEST_SCHEMA = loadLocalJsonSchema("gemini-handoff-request.schema.json");
 const GEMINI_HANDOFF_RESPONSE_SCHEMA = loadLocalJsonSchema("gemini-handoff-response.schema.json");
 const GEMINI_APPROVALS_SYNC_SCHEMA = loadLocalJsonSchema("gemini-approvals-sync.schema.json");
+const GEMINI_HANDOFF_DEV_SIMULATOR_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(process.env.ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR || (process.env.NODE_ENV === "test" ? "true" : "false"))
+    .trim()
+    .toLowerCase()
+);
 
 function formatSchemaErrors(errors) {
   return (errors || []).map((entry) => `${entry.path}: ${entry.message}`);
+}
+
+function slugToTitle(value) {
+  const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
+  if (!normalized) return "Unknown";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function buildDevGeminiHandoffResponse(payload) {
+  const requestId = String(payload?.request_id || "").trim();
+  const workspace = payload?.workspace || {};
+  const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+
+  const sequenceOutputs = rankedCompanies
+    .map((company, index) => {
+      const stakeholders = Array.isArray(company?.stakeholders) ? company.stakeholders : [];
+      const stakeholder = stakeholders[0] || null;
+      if (!stakeholder) return null;
+
+      const companyNumber = String(company?.company_number || "").trim();
+      const companyName = String(company?.company_name || "").trim() || "Unknown Company";
+      const personId = String(stakeholder?.person_id || "").trim();
+      if (!companyNumber || !personId) return null;
+
+      const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
+      const sequenceId = `seq_${companyNumber}_${personId}`;
+      const subject = `Question about ${roleName} priorities at ${companyName}`;
+      const body = `Hi ${stakeholder?.full_name || "there"},\n\nI prepared this as a local simulator output so we can validate Gemini handoff plumbing end-to-end before live connector auth is enabled.\n\nBest,\nSophie`;
+
+      return {
+        company_number: companyNumber,
+        person_id: personId,
+        sequence_id: sequenceId,
+        qc: {
+          passed: true,
+          score: 0.9,
+          notes: [],
+        },
+        steps: [
+          {
+            step_number: 1,
+            step_type: "proof",
+            day_offset: 0,
+            subject,
+            body,
+            citations: ["simulator.local"],
+          },
+        ],
+        yamm_rows: [
+          {
+            To: String(stakeholder?.email || ""),
+            Subject: subject,
+            Body: body,
+            Company: companyName,
+            CompanyNumber: companyNumber,
+            PriorityRank: Number.parseInt(String(company?.rank || index + 1), 10) || index + 1,
+            SequenceId: sequenceId,
+            StepNumber: 1,
+            ApprovalStatus: "pending",
+          },
+        ],
+      };
+    })
+    .filter(Boolean);
+
+  const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
+  const rowCount = sequenceOutputs.length;
+
+  return {
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    response_id: `resp_dev_${Date.now()}`,
+    completed_at: new Date().toISOString(),
+    status: "ok",
+    sheet_write: {
+      sheet_id: String(workspace?.sheet_id || "dev_sheet").trim() || "dev_sheet",
+      sheet_tab: sheetTab,
+      rows_written: rowCount,
+      range: `${sheetTab}!A2:AZ${Math.max(1, rowCount + 1)}`,
+    },
+    sequence_outputs: sequenceOutputs,
+    errors: [],
+  };
 }
 
 if (IGNORE_RUNTIME_SIGTERM) {
@@ -5387,6 +5475,27 @@ app.get("/api/llm/status", (_req, res) => {
   res.json(runtime);
 });
 
+app.post("/api/dev/gemini/handoff-simulator", (req, res) => {
+  if (!GEMINI_HANDOFF_DEV_SIMULATOR_ENABLED) {
+    return res.status(403).json({
+      error: "simulator_disabled",
+      message: "Enable simulator via ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=true",
+    });
+  }
+
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      details: formatSchemaErrors(validation.errors),
+    });
+  }
+
+  const responsePayload = buildDevGeminiHandoffResponse(payload);
+  return res.status(200).json(responsePayload);
+});
+
 app.post("/api/gemini/handoff", async (req, res) => {
   const payload = req.body && typeof req.body === "object" ? req.body : {};
   const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
@@ -5800,6 +5909,12 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Feature-flagged outbound handoff dispatch to Gemini Workspace bridge",
       runtime: geminiHandoffTransportRuntime,
     },
+    gemini_handoff_dev_simulator: {
+      configured: GEMINI_HANDOFF_DEV_SIMULATOR_ENABLED,
+      required: false,
+      env_var: "ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR",
+      purpose: "Local simulator endpoint for contract-compliant Gemini handoff transport testing",
+    },
   };
 
   const missingRequired = Object.entries(integrations)
@@ -5876,6 +5991,7 @@ app.get("/api/integrations/status", (_req, res) => {
       "GEMINI_HANDOFF_TRANSPORT_AUTH_TOKEN=optional_transport_token",
       "GEMINI_HANDOFF_TRANSPORT_AUTH_HEADER=Authorization",
       "GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=true",
+      "ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=false",
     ],
   });
 });
