@@ -257,6 +257,7 @@ Rules:
 1. Replays with same key must not duplicate rows.
 2. If row exists, Gemini should update in place, not append.
 3. App should treat repeated `response_id` as already-processed.
+4. Repeating `POST /api/gemini/handoff/:requestId/complete` with the same `response_id` is an idempotent no-op (`duplicate: true`).
 
 ## Security and Compliance
 

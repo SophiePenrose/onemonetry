@@ -934,6 +934,36 @@ describe("API endpoints", () => {
       assert.equal(synced.data.counts.approved, 1);
       assert.equal(synced.data.counts.pending, 1);
     });
+
+    it("treats duplicate complete callbacks with same response_id as idempotent", async () => {
+      const requestId = "req_api_test_duplicate_complete_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const responsePayload = buildGeminiHandoffResponsePayload(requestId);
+
+      const firstComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(responsePayload),
+      });
+      assert.equal(firstComplete.status, 200);
+      assert.equal(firstComplete.data.duplicate, false);
+
+      const secondComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(responsePayload),
+      });
+      assert.equal(secondComplete.status, 200);
+      assert.equal(secondComplete.data.request_id, requestId);
+      assert.equal(secondComplete.data.response_id, responsePayload.response_id);
+      assert.equal(secondComplete.data.duplicate, true);
+    });
   });
 
   describe("GET /api/reports/schedule", () => {
