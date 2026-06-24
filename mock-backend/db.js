@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -253,7 +254,9 @@ db.exec(`
     retry_count INTEGER NOT NULL DEFAULT 0,
     last_retry_requested_at TEXT,
     request_payload TEXT NOT NULL,
+    request_payload_sha256 TEXT,
     response_payload TEXT,
+    response_payload_sha256 TEXT,
     response_id TEXT,
     completed_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -333,6 +336,30 @@ function ensureAnalysisQueueSchema() {
 }
 
 ensureAnalysisQueueSchema();
+
+function ensureGeminiHandoffSchema() {
+  const columns = db.prepare("PRAGMA table_info(gemini_handoff_requests)").all();
+  const names = new Set(columns.map((col) => col.name));
+
+  if (!names.has("request_payload_sha256")) {
+    db.exec("ALTER TABLE gemini_handoff_requests ADD COLUMN request_payload_sha256 TEXT");
+  }
+  if (!names.has("response_payload_sha256")) {
+    db.exec("ALTER TABLE gemini_handoff_requests ADD COLUMN response_payload_sha256 TEXT");
+  }
+
+  db.exec(`
+    UPDATE gemini_handoff_requests
+    SET request_payload_sha256 = NULL
+    WHERE request_payload_sha256 = '';
+
+    UPDATE gemini_handoff_requests
+    SET response_payload_sha256 = NULL
+    WHERE response_payload_sha256 = '';
+  `);
+}
+
+ensureGeminiHandoffSchema();
 
 function ensureCompanyMonitorSchema() {
   const columns = db.prepare("PRAGMA table_info(company_monitor)").all();
@@ -1481,6 +1508,10 @@ function parseJsonText(value, fallback = null) {
   }
 }
 
+function sha256Hex(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
 const stmtInsertGeminiHandoffRequest = db.prepare(`
   INSERT INTO gemini_handoff_requests (
     request_id,
@@ -1488,8 +1519,9 @@ const stmtInsertGeminiHandoffRequest = db.prepare(`
     status,
     accepted_at,
     request_payload,
+    request_payload_sha256,
     updated_at
-  ) VALUES (?, ?, 'accepted', datetime('now'), ?, datetime('now'))
+  ) VALUES (?, ?, 'accepted', datetime('now'), ?, ?, datetime('now'))
 `);
 
 const stmtGetGeminiHandoffRequest = db.prepare(`
@@ -1503,6 +1535,7 @@ const stmtCompleteGeminiHandoffRequest = db.prepare(`
   SET
     status = ?,
     response_payload = ?,
+    response_payload_sha256 = ?,
     response_id = ?,
     completed_at = ?,
     updated_at = datetime('now')
@@ -1560,7 +1593,9 @@ function hydrateGeminiHandoffRequest(row) {
     retry_count: Number(row.retry_count || 0),
     last_retry_requested_at: row.last_retry_requested_at,
     request: parseJsonText(row.request_payload, {}),
+    request_payload_sha256: row.request_payload_sha256 || null,
     response: parseJsonText(row.response_payload, null),
+    response_payload_sha256: row.response_payload_sha256 || null,
     response_id: row.response_id,
     completed_at: row.completed_at,
     updated_at: row.updated_at,
@@ -1576,10 +1611,12 @@ const txCreateOrGetGeminiHandoffRequest = db.transaction((payload) => {
     return { created: false, record: hydrateGeminiHandoffRequest(existing) };
   }
 
+  const requestJson = JSON.stringify(payload || {});
   stmtInsertGeminiHandoffRequest.run(
     requestId,
     String(payload.contract_version || ""),
-    JSON.stringify(payload || {})
+    requestJson,
+    sha256Hex(requestJson)
   );
 
   const inserted = stmtGetGeminiHandoffRequest.get(requestId);
@@ -1604,9 +1641,12 @@ export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
     ? "completed"
     : String(responsePayload?.status || "partial").trim().toLowerCase();
 
+  const responseJson = JSON.stringify(responsePayload || {});
+
   stmtCompleteGeminiHandoffRequest.run(
     mappedStatus || "partial",
-    JSON.stringify(responsePayload || {}),
+    responseJson,
+    sha256Hex(responseJson),
     String(responsePayload?.response_id || "") || null,
     String(responsePayload?.completed_at || "") || null,
     normalized
