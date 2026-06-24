@@ -152,6 +152,113 @@ async function fetchJSON(path, options) {
   return { status: res.status, data };
 }
 
+function buildGeminiHandoffRequestPayload(overrides = {}) {
+  return {
+    contract_version: "gemini-handoff-v1",
+    request_id: "req_api_test_001",
+    generated_at: new Date().toISOString(),
+    workspace: {
+      org: "Revolut Business",
+      sheet_id: "sheet_test_1",
+      sheet_tab: "queue_week_2026_w26",
+      timezone: "Europe/London",
+    },
+    campaign: {
+      campaign_id: "cmp_test_1",
+      campaign_name: "API Test Campaign",
+      sequence_template: "v7",
+      max_touches: 6,
+      approval_required: true,
+    },
+    ranked_companies: [
+      {
+        rank: 1,
+        company_number: "01234567",
+        company_name: "Example Co Ltd",
+        composite_score: 0.83,
+        priority_band: "P1",
+        score_breakdown: {
+          product_fit: 0.36,
+          commercial_value: 0.18,
+          pain_strength: 0.14,
+          urgency: 0.1,
+          competitor_context: 0.05,
+        },
+        stakeholders: [
+          {
+            person_id: "st_001",
+            full_name: "Jane Doe",
+            role: "Finance Director",
+            persona_bucket: "finance_director",
+            confidence: "medium",
+          },
+        ],
+      },
+    ],
+    generation_policy: {
+      provider: "gemini",
+      voice_profile: "sophie_v7",
+      forbidden_phrases_enforced: true,
+      max_steps_per_sequence: 6,
+      require_citations: true,
+      fail_closed_on_qc: true,
+    },
+    ...overrides,
+  };
+}
+
+function buildGeminiHandoffResponsePayload(requestId) {
+  return {
+    contract_version: "gemini-handoff-v1",
+    request_id: requestId,
+    response_id: "resp_api_test_001",
+    completed_at: new Date().toISOString(),
+    status: "ok",
+    sheet_write: {
+      sheet_id: "sheet_test_1",
+      sheet_tab: "queue_week_2026_w26",
+      rows_written: 1,
+      range: "queue_week_2026_w26!A2:AZ2",
+    },
+    sequence_outputs: [
+      {
+        company_number: "01234567",
+        person_id: "st_001",
+        sequence_id: "seq_01234567_st_001",
+        qc: {
+          passed: true,
+          score: 0.91,
+          notes: [],
+        },
+        steps: [
+          {
+            step_number: 1,
+            step_type: "proof",
+            day_offset: 0,
+            subject: "Question about Example Co",
+            body: "Example body",
+            citations: ["prospeo.open_roles"],
+          },
+        ],
+        yamm_rows: [
+          {
+            To: "",
+            Subject: "Question about Example Co",
+            Body: "Example body",
+            Company: "Example Co Ltd",
+            CompanyNumber: "01234567",
+            PriorityRank: 1,
+            SequenceId: "seq_01234567_st_001",
+            StepNumber: 1,
+            ApprovalStatus: "pending",
+          },
+        ],
+      },
+    ],
+    errors: [],
+  };
+}
+
 describe("API endpoints", () => {
   describe("GET /api/motions", () => {
     it("returns all 8 product motions", async () => {
@@ -732,6 +839,100 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
+    });
+  });
+
+  describe("Gemini handoff API stubs", () => {
+    it("accepts a valid handoff payload and returns status", async () => {
+      const payload = buildGeminiHandoffRequestPayload({
+        request_id: "req_api_test_accepted_001",
+      });
+
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      assert.equal(accepted.status, 202);
+      assert.equal(accepted.data.status, "accepted");
+      assert.equal(accepted.data.contract_version, "gemini-handoff-v1");
+      assert.equal(accepted.data.request_id, payload.request_id);
+
+      const status = await fetchJSON(`/api/gemini/handoff/${payload.request_id}`);
+      assert.equal(status.status, 200);
+      assert.equal(status.data.status, "accepted");
+      assert.equal(status.data.request_id, payload.request_id);
+      assert.equal(typeof status.data.retry_count, "number");
+    });
+
+    it("rejects invalid handoff payloads via schema validation", async () => {
+      const invalid = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contract_version: "gemini-handoff-v1" }),
+      });
+
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.data.error, "invalid_payload");
+      assert.ok(Array.isArray(invalid.data.details));
+      assert.equal(invalid.data.details.length > 0, true);
+    });
+
+    it("accepts complete response payload, supports retry, and syncs approvals", async () => {
+      const requestId = "req_api_test_flow_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+      assert.equal(completed.data.status, "completed");
+      assert.equal(completed.data.request_id, requestId);
+
+      const retry = await fetchJSON(`/api/gemini/handoff/${requestId}/retry`, {
+        method: "POST",
+      });
+      assert.equal(retry.status, 202);
+      assert.equal(retry.data.status, "retry_requested");
+      assert.equal(typeof retry.data.retry_count, "number");
+      assert.equal(retry.data.retry_count >= 1, true);
+
+      const synced = await fetchJSON("/api/gemini/sheets/sync-approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [
+            {
+              sequence_id: "seq_01234567_st_001",
+              step_number: 1,
+              approval_status: "approved",
+              approved_by: "Sophie",
+              approved_at: new Date().toISOString(),
+            },
+            {
+              sequence_id: "seq_01234567_st_001",
+              step_number: 2,
+              approval_status: "pending",
+            },
+          ],
+        }),
+      });
+
+      assert.equal(synced.status, 200);
+      assert.equal(synced.data.request_id, requestId);
+      assert.equal(synced.data.counts.total, 2);
+      assert.equal(synced.data.counts.approved, 1);
+      assert.equal(synced.data.counts.pending, 1);
     });
   });
 
