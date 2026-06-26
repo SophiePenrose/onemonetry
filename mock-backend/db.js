@@ -1562,6 +1562,16 @@ const stmtCompleteGeminiHandoffRequest = db.prepare(`
     completed_at = ?,
     updated_at = datetime('now')
   WHERE request_id = ?
+    AND (
+      ? IS NULL
+      OR ? = ''
+      OR NOT EXISTS (
+        SELECT 1
+        FROM gemini_handoff_requests existing
+        WHERE existing.response_id = ?
+          AND existing.request_id != ?
+      )
+    )
 `);
 
 const stmtIncrementGeminiHandoffRetry = db.prepare(`
@@ -1688,15 +1698,24 @@ export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
     : String(responsePayload?.status || "partial").trim().toLowerCase();
 
   const responseJson = JSON.stringify(responsePayload || {});
+  const responseId = String(responsePayload?.response_id || "") || null;
 
-  stmtCompleteGeminiHandoffRequest.run(
+  const result = stmtCompleteGeminiHandoffRequest.run(
     mappedStatus || "partial",
     responseJson,
     sha256Hex(responseJson),
-    String(responsePayload?.response_id || "") || null,
+    responseId,
     String(responsePayload?.completed_at || "") || null,
+    normalized,
+    responseId,
+    responseId,
+    responseId,
     normalized
   );
+
+  if (Number(result.changes || 0) < 1) {
+    return null;
+  }
 
   return getGeminiHandoffRequest(normalized);
 }

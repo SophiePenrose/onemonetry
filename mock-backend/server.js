@@ -5610,6 +5610,35 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
     if (responseValidation.valid && responseRequestId === String(payload.request_id)) {
       const updated = completeGeminiHandoffRequest(payload.request_id, dispatchResult.response_payload);
+      if (!updated) {
+        const crossRequestReuse = getGeminiCrossRequestResponseReuse(record, dispatchResult.response_payload);
+        if (crossRequestReuse) {
+          addGeminiHandoffEvent(payload.request_id, "handoff_response_reused", "transport", crossRequestReuse);
+          return res.status(409).json({
+            error: "response_id_reused",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: payload.request_id,
+            ...crossRequestReuse,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
+          });
+        }
+
+        return res.status(409).json({
+          error: "handoff_completion_state_conflict",
+          contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+          request_id: payload.request_id,
+          transport: {
+            attempted: true,
+            success: true,
+            status_code: dispatchResult.status_code,
+          },
+        });
+      }
+
       addGeminiHandoffEvent(payload.request_id, "handoff_completed", "transport", {
         response_id: dispatchResult.response_payload.response_id || null,
         status: updated?.status || "partial",
@@ -5811,6 +5840,25 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   }
 
   const updated = completeGeminiHandoffRequest(requestId, payload);
+  if (!updated) {
+    const crossRequestReuse = getGeminiCrossRequestResponseReuse(record, payload);
+    if (crossRequestReuse) {
+      addGeminiHandoffEvent(requestId, "completion_response_reused", "callback", crossRequestReuse);
+      return res.status(409).json({
+        error: "response_id_reused",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: requestId,
+        ...crossRequestReuse,
+      });
+    }
+
+    return res.status(409).json({
+      error: "completion_state_conflict",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+    });
+  }
+
   addGeminiHandoffEvent(requestId, "completion_applied", "callback", {
     response_id: payload.response_id || null,
     status: updated?.status || "partial",
@@ -5902,6 +5950,38 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
               ? record.response
               : dispatchResult.response_payload
           );
+          if (!restored) {
+            const crossRequestReuse = getGeminiCrossRequestResponseReuse(updated, dispatchResult.response_payload);
+            if (crossRequestReuse) {
+              addGeminiHandoffEvent(requestId, "retry_response_reused", "transport", crossRequestReuse);
+              return res.status(409).json({
+                error: "response_id_reused",
+                contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+                request_id: requestId,
+                status: updated?.status || "retry_requested",
+                retry_count: updated?.retry_count || 1,
+                ...crossRequestReuse,
+                transport: {
+                  attempted: true,
+                  success: true,
+                  status_code: dispatchResult.status_code,
+                },
+              });
+            }
+
+            return res.status(409).json({
+              error: "retry_completion_state_conflict",
+              contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+              request_id: requestId,
+              status: updated?.status || "retry_requested",
+              retry_count: updated?.retry_count || 1,
+              transport: {
+                attempted: true,
+                success: true,
+                status_code: dispatchResult.status_code,
+              },
+            });
+          }
 
           addGeminiHandoffEvent(requestId, "retry_duplicate_response", "transport", {
             response_id: getStoredGeminiResponseId(restored),
@@ -5946,6 +6026,39 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
         }
 
         const completed = completeGeminiHandoffRequest(requestId, dispatchResult.response_payload);
+        if (!completed) {
+          const crossRequestReuse = getGeminiCrossRequestResponseReuse(updated, dispatchResult.response_payload);
+          if (crossRequestReuse) {
+            addGeminiHandoffEvent(requestId, "retry_response_reused", "transport", crossRequestReuse);
+            return res.status(409).json({
+              error: "response_id_reused",
+              contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+              request_id: requestId,
+              status: updated?.status || "retry_requested",
+              retry_count: updated?.retry_count || 1,
+              ...crossRequestReuse,
+              transport: {
+                attempted: true,
+                success: true,
+                status_code: dispatchResult.status_code,
+              },
+            });
+          }
+
+          return res.status(409).json({
+            error: "retry_completion_state_conflict",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: requestId,
+            status: updated?.status || "retry_requested",
+            retry_count: updated?.retry_count || 1,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
+          });
+        }
+
         addGeminiHandoffEvent(requestId, "retry_completed", "transport", {
           response_id: dispatchResult.response_payload.response_id || null,
           retry_count: completed?.retry_count || updated?.retry_count || 1,
