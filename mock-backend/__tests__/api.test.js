@@ -1007,6 +1007,34 @@ describe("API endpoints", () => {
       assert.equal(conflictingComplete.data.existing_response_id, firstPayload.response_id);
       assert.equal(conflictingComplete.data.incoming_response_id, conflictingPayload.response_id);
     });
+
+    it("returns handoff event history for audit tracing", async () => {
+      const requestId = "req_api_test_events_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      const events = await fetchJSON(`/api/gemini/handoff/${requestId}/events?limit=50`);
+      assert.equal(events.status, 200);
+      assert.equal(events.data.request_id, requestId);
+      assert.equal(typeof events.data.count, "number");
+      assert.equal(Array.isArray(events.data.events), true);
+      assert.equal(events.data.events.length >= 2, true);
+
+      const eventTypes = events.data.events.map((entry) => entry.event_type);
+      assert.equal(eventTypes.includes("handoff_accepted"), true);
+      assert.equal(eventTypes.includes("completion_applied"), true);
+    });
   });
 
   describe("GET /api/reports/schedule", () => {

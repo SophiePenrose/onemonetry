@@ -281,6 +281,19 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_approvals_request ON gemini_handoff_approvals(request_id);
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_approvals_status ON gemini_handoff_approvals(approval_status);
+
+  CREATE TABLE IF NOT EXISTS gemini_handoff_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    event_stage TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (request_id) REFERENCES gemini_handoff_requests(request_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_events_request ON gemini_handoff_events(request_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_events_type ON gemini_handoff_events(event_type);
 `);
 
 try {
@@ -1583,6 +1596,24 @@ const stmtGetGeminiApprovalCounts = db.prepare(`
   GROUP BY approval_status
 `);
 
+const stmtInsertGeminiHandoffEvent = db.prepare(`
+  INSERT INTO gemini_handoff_events (
+    request_id,
+    event_type,
+    event_stage,
+    detail,
+    created_at
+  ) VALUES (?, ?, ?, ?, datetime('now'))
+`);
+
+const stmtListGeminiHandoffEvents = db.prepare(`
+  SELECT id, request_id, event_type, event_stage, detail, created_at
+  FROM gemini_handoff_events
+  WHERE request_id = ?
+  ORDER BY id DESC
+  LIMIT ?
+`);
+
 function hydrateGeminiHandoffRequest(row) {
   if (!row) return null;
   return {
@@ -1709,6 +1740,52 @@ export function getGeminiHandoffApprovalCounts(requestId) {
     }
   }
   return counts;
+}
+
+export function addGeminiHandoffEvent(requestId, eventType, eventStage = null, detail = null) {
+  const normalizedRequestId = String(requestId || "").trim();
+  const normalizedType = String(eventType || "").trim();
+  if (!normalizedRequestId || !normalizedType) return null;
+
+  const stage = String(eventStage || "").trim() || null;
+  const safeDetail = detail && typeof detail === "object"
+    ? JSON.stringify(detail)
+    : (detail === null || detail === undefined ? null : String(detail));
+
+  const result = stmtInsertGeminiHandoffEvent.run(
+    normalizedRequestId,
+    normalizedType,
+    stage,
+    safeDetail
+  );
+
+  return Number(result.lastInsertRowid || 0) || null;
+}
+
+export function listGeminiHandoffEvents(requestId, limit = 100) {
+  const normalizedRequestId = String(requestId || "").trim();
+  if (!normalizedRequestId) return [];
+  const safeLimit = Math.max(1, Math.min(500, Number.parseInt(String(limit || 100), 10) || 100));
+
+  return stmtListGeminiHandoffEvents.all(normalizedRequestId, safeLimit).map((row) => {
+    let parsedDetail = null;
+    if (typeof row.detail === "string" && row.detail.trim()) {
+      try {
+        parsedDetail = JSON.parse(row.detail);
+      } catch {
+        parsedDetail = row.detail;
+      }
+    }
+
+    return {
+      id: Number(row.id || 0),
+      request_id: row.request_id,
+      event_type: row.event_type,
+      event_stage: row.event_stage || null,
+      detail: parsedDetail,
+      created_at: row.created_at,
+    };
+  });
 }
 
 export function closeDb() {
