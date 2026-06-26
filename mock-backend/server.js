@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createHash } from "crypto";
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -206,6 +207,35 @@ function hasGeminiResponseConflict(record, payload) {
   const incomingResponseId = String(payload?.response_id || "").trim();
   if (!incomingResponseId) return false;
   return storedResponseId !== incomingResponseId;
+}
+
+function sha256Hex(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function normalizeGeminiResponsePayloadForReplayComparison(payload) {
+  if (!payload || typeof payload !== "object") return payload;
+  try {
+    const cloned = JSON.parse(JSON.stringify(payload));
+    if (cloned && typeof cloned === "object") {
+      delete cloned.completed_at;
+    }
+    return cloned;
+  } catch {
+    return payload;
+  }
+}
+
+function getGeminiReplayComparisonHash(payload) {
+  return sha256Hex(JSON.stringify(normalizeGeminiResponsePayloadForReplayComparison(payload) || {}));
+}
+
+function hasGeminiDuplicatePayloadMismatch(record, payload) {
+  if (!isDuplicateGeminiResponse(record, payload)) return false;
+  const storedHash = getGeminiReplayComparisonHash(record?.response || {});
+  if (!storedHash) return false;
+  const incomingHash = getGeminiReplayComparisonHash(payload || {});
+  return storedHash !== incomingHash;
 }
 
 function slugToTitle(value) {
@@ -5704,6 +5734,24 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   }
 
   if (isDuplicateGeminiResponse(record, payload)) {
+    if (hasGeminiDuplicatePayloadMismatch(record, payload)) {
+      const existingHash = getGeminiReplayComparisonHash(record?.response || {});
+      const incomingHash = getGeminiReplayComparisonHash(payload || {});
+      addGeminiHandoffEvent(requestId, "completion_payload_mismatch", "callback", {
+        response_id: getStoredGeminiResponseId(record),
+        existing_response_payload_sha256: existingHash,
+        incoming_response_payload_sha256: incomingHash,
+      });
+      return res.status(409).json({
+        error: "response_payload_mismatch",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: requestId,
+        response_id: getStoredGeminiResponseId(record),
+        existing_response_payload_sha256: existingHash,
+        incoming_response_payload_sha256: incomingHash,
+      });
+    }
+
     addGeminiHandoffEvent(requestId, "completion_duplicate", "callback", {
       response_id: getStoredGeminiResponseId(record),
     });
@@ -5774,6 +5822,31 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
       const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
 
       if (responseValidation.valid && responseRequestId === requestId) {
+        if (hasGeminiDuplicatePayloadMismatch(updated, dispatchResult.response_payload)) {
+          const existingHash = getGeminiReplayComparisonHash(updated?.response || {});
+          const incomingHash = getGeminiReplayComparisonHash(dispatchResult.response_payload || {});
+          addGeminiHandoffEvent(requestId, "retry_duplicate_payload_mismatch", "transport", {
+            response_id: getStoredGeminiResponseId(updated),
+            existing_response_payload_sha256: existingHash,
+            incoming_response_payload_sha256: incomingHash,
+          });
+          return res.status(409).json({
+            error: "response_payload_mismatch",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: requestId,
+            status: updated?.status || "retry_requested",
+            retry_count: updated?.retry_count || 1,
+            response_id: getStoredGeminiResponseId(updated),
+            existing_response_payload_sha256: existingHash,
+            incoming_response_payload_sha256: incomingHash,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
+          });
+        }
+
         if (isDuplicateGeminiResponse(updated, dispatchResult.response_payload)) {
           const restored = completeGeminiHandoffRequest(
             requestId,
