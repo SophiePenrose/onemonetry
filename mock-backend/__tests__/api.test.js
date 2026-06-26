@@ -1131,6 +1131,47 @@ describe("API endpoints", () => {
       const eventTypes = events.data.events.map((entry) => entry.event_type);
       assert.equal(eventTypes.includes("handoff_accepted"), true);
       assert.equal(eventTypes.includes("completion_applied"), true);
+
+      const paged = await fetchJSON(`/api/gemini/handoff/${requestId}/events?limit=1`);
+      assert.equal(paged.status, 200);
+      assert.equal(paged.data.count, 1);
+      assert.equal(typeof paged.data.next_before_id, "number");
+
+      const older = await fetchJSON(
+        `/api/gemini/handoff/${requestId}/events?limit=10&before_id=${paged.data.next_before_id}`
+      );
+      assert.equal(older.status, 200);
+      assert.equal(Array.isArray(older.data.events), true);
+      assert.equal(older.data.events.length >= 1, true);
+      assert.equal(older.data.events.every((entry) => entry.id < paged.data.next_before_id), true);
+
+      const completionOnly = await fetchJSON(
+        `/api/gemini/handoff/${requestId}/events?limit=10&event_type=completion_applied`
+      );
+      assert.equal(completionOnly.status, 200);
+      assert.equal(completionOnly.data.count >= 1, true);
+      assert.equal(
+        completionOnly.data.events.every((entry) => entry.event_type === "completion_applied"),
+        true
+      );
+    });
+
+    it("validates handoff event history query parameters", async () => {
+      const requestId = "req_api_test_events_validation_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const invalidLimit = await fetchJSON(`/api/gemini/handoff/${requestId}/events?limit=0`);
+      assert.equal(invalidLimit.status, 400);
+      assert.equal(invalidLimit.data.error, "invalid_limit");
+
+      const invalidBefore = await fetchJSON(`/api/gemini/handoff/${requestId}/events?before_id=abc`);
+      assert.equal(invalidBefore.status, 400);
+      assert.equal(invalidBefore.data.error, "invalid_before_id");
     });
   });
 

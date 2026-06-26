@@ -275,7 +275,7 @@ Rules:
 - `POST /api/gemini/handoff`
 - `GET /api/gemini/handoff` (supports `status`, `limit`, `offset` query params)
 - `GET /api/gemini/handoff/:requestId`
-- `GET /api/gemini/handoff/:requestId/events`
+- `GET /api/gemini/handoff/:requestId/events` (supports `limit`, `before_id`, `event_type`, `event_stage` query params)
 - `POST /api/gemini/handoff/:requestId/retry`
 - `POST /api/gemini/sheets/sync-approvals`
 
