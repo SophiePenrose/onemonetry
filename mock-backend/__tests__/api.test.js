@@ -974,6 +974,52 @@ describe("API endpoints", () => {
       assert.equal(secondComplete.data.duplicate, true);
     });
 
+    it("rejects duplicate response_id replay when payload differs", async () => {
+      const requestId = "req_api_test_duplicate_payload_mismatch_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const firstPayload = buildGeminiHandoffResponsePayload(requestId);
+      const firstComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(firstPayload),
+      });
+      assert.equal(firstComplete.status, 200);
+
+      const mismatchedPayload = {
+        ...firstPayload,
+        status: "partial",
+        errors: [
+          {
+            code: "simulated_mismatch",
+            message: "Payload differs for duplicate response id",
+            retryable: false,
+          },
+        ],
+      };
+      const mismatchComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mismatchedPayload),
+      });
+
+      assert.equal(mismatchComplete.status, 409);
+      assert.equal(mismatchComplete.data.error, "response_payload_mismatch");
+      assert.equal(mismatchComplete.data.request_id, requestId);
+      assert.equal(mismatchComplete.data.response_id, firstPayload.response_id);
+      assert.equal(typeof mismatchComplete.data.existing_response_payload_sha256, "string");
+      assert.equal(typeof mismatchComplete.data.incoming_response_payload_sha256, "string");
+      assert.notEqual(
+        mismatchComplete.data.existing_response_payload_sha256,
+        mismatchComplete.data.incoming_response_payload_sha256
+      );
+    });
+
     it("rejects complete callback replay when response_id conflicts with stored response", async () => {
       const requestId = "req_api_test_conflict_complete_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {
