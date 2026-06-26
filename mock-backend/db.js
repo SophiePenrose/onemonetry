@@ -1664,6 +1664,79 @@ export function getGeminiHandoffRequest(requestId) {
   return hydrateGeminiHandoffRequest(stmtGetGeminiHandoffRequest.get(normalized));
 }
 
+export function listGeminiHandoffRequests(filters = {}) {
+  const normalizedStatus = String(filters?.status || "").trim().toLowerCase() || null;
+  const limit = Math.max(1, Math.min(200, Number.parseInt(String(filters?.limit || 50), 10) || 50));
+  const offset = Math.max(0, Math.min(10000, Number.parseInt(String(filters?.offset || 0), 10) || 0));
+
+  let sql = `
+    SELECT
+      r.request_id,
+      r.contract_version,
+      r.status,
+      r.accepted_at,
+      r.retry_count,
+      r.last_retry_requested_at,
+      r.request_payload_sha256,
+      r.response_payload_sha256,
+      r.response_id,
+      r.completed_at,
+      r.updated_at,
+      (
+        SELECT COUNT(*)
+        FROM gemini_handoff_events e
+        WHERE e.request_id = r.request_id
+      ) AS event_count,
+      (
+        SELECT COUNT(*)
+        FROM gemini_handoff_approvals a
+        WHERE a.request_id = r.request_id
+      ) AS approval_count
+    FROM gemini_handoff_requests r
+  `;
+  const params = [];
+
+  if (normalizedStatus) {
+    sql += " WHERE r.status = ?";
+    params.push(normalizedStatus);
+  }
+
+  sql += " ORDER BY r.accepted_at DESC, r.request_id DESC LIMIT ? OFFSET ?";
+  params.push(limit, offset);
+
+  return db.prepare(sql).all(...params).map((row) => ({
+    request_id: row.request_id,
+    contract_version: row.contract_version,
+    status: row.status,
+    accepted_at: row.accepted_at,
+    retry_count: Number(row.retry_count || 0),
+    last_retry_requested_at: row.last_retry_requested_at || null,
+    request_payload_sha256: row.request_payload_sha256 || null,
+    response_payload_sha256: row.response_payload_sha256 || null,
+    response_id: row.response_id || null,
+    completed_at: row.completed_at || null,
+    updated_at: row.updated_at,
+    event_count: Number(row.event_count || 0),
+    approval_count: Number(row.approval_count || 0),
+  }));
+}
+
+export function countGeminiHandoffRequests(filters = {}) {
+  const normalizedStatus = String(filters?.status || "").trim().toLowerCase() || null;
+
+  if (normalizedStatus) {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM gemini_handoff_requests
+      WHERE status = ?
+    `).get(normalizedStatus);
+    return Number(row?.count || 0);
+  }
+
+  const row = db.prepare("SELECT COUNT(*) AS count FROM gemini_handoff_requests").get();
+  return Number(row?.count || 0);
+}
+
 export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
   const normalized = String(requestId || "").trim();
   if (!normalized) return null;

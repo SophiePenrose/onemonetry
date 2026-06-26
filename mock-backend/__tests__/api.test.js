@@ -866,6 +866,57 @@ describe("API endpoints", () => {
       assert.equal(typeof status.data.retry_count, "number");
     });
 
+    it("lists handoff requests with pagination and status filtering", async () => {
+      const acceptedOnlyRequestId = "req_api_test_handoff_list_accepted_001";
+      const completedRequestId = "req_api_test_handoff_list_completed_001";
+
+      const acceptedOnly = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: acceptedOnlyRequestId })),
+      });
+      assert.equal(acceptedOnly.status, 202);
+
+      const acceptedCompleted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: completedRequestId })),
+      });
+      assert.equal(acceptedCompleted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${completedRequestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(completedRequestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      const listAll = await fetchJSON("/api/gemini/handoff?limit=100&offset=0");
+      assert.equal(listAll.status, 200);
+      assert.equal(listAll.data.contract_version, "gemini-handoff-v1");
+      assert.equal(typeof listAll.data.total, "number");
+      assert.equal(Array.isArray(listAll.data.items), true);
+      assert.equal(listAll.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+      assert.equal(listAll.data.items.some((entry) => entry.request_id === completedRequestId), true);
+
+      const completedOnly = await fetchJSON("/api/gemini/handoff?status=completed&limit=100&offset=0");
+      assert.equal(completedOnly.status, 200);
+      assert.equal(completedOnly.data.filters.status, "completed");
+      assert.equal(completedOnly.data.items.every((entry) => entry.status === "completed"), true);
+      assert.equal(completedOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
+      assert.equal(completedOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+    });
+
+    it("validates handoff list pagination parameters", async () => {
+      const invalidLimit = await fetchJSON("/api/gemini/handoff?limit=0");
+      assert.equal(invalidLimit.status, 400);
+      assert.equal(invalidLimit.data.error, "invalid_limit");
+
+      const invalidOffset = await fetchJSON("/api/gemini/handoff?offset=-1");
+      assert.equal(invalidOffset.status, 400);
+      assert.equal(invalidOffset.data.error, "invalid_offset");
+    });
+
     it("rejects invalid handoff payloads via schema validation", async () => {
       const invalid = await fetchJSON("/api/gemini/handoff", {
         method: "POST",

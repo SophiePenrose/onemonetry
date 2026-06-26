@@ -204,6 +204,27 @@ Behavior:
 - Optional analysis queue seed enqueues imported companies for dossier/scoring processing.
 - By default, low-confidence name matches are rejected (use `--allow-low-confidence` to include them).
 
+## Endole Live Import (No Manual CSV Cleanup)
+
+If you want to avoid manual CSV/XLSX cleanup, use the Playwright-assisted live importer.
+
+```bash
+# one-time install for the helper
+npm install -D playwright
+
+# open browser, sign in manually, scrape visible table rows, write seed CSV
+npm run import:endole-live -- --url "https://app.endole.co.uk/..."
+
+# same flow, then immediately run seed import
+npm run import:endole-live -- --url "https://app.endole.co.uk/..." --apply --apply-args --dry-run
+```
+
+Notes:
+
+- The script opens a browser and waits for you to sign in manually; credentials are never passed through CLI args.
+- It extracts visible table rows into a seed CSV format, then can call `import-monitor-seed-list` automatically when `--apply` is used.
+- Scraping behavior can change if Endole changes page markup; use `--wait-selector` if the table renders late.
+
 ### Make CI a required merge gate (recommended)
 
 CI is currently advisory — a red run does not block merging. To turn it into a
