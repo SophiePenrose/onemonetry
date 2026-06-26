@@ -22,3 +22,6 @@ exports/
 
 # Local scratch artifacts (cookie jars, scratch notebooks/exports) — never commit
 *.cookies
+
+# Vite transient timestamped config module artifacts
+frontend/vite.config.js.timestamp-*.mjs

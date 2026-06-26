@@ -273,6 +273,7 @@ Rules:
 
 - `POST /api/gemini/handoff`
 - `GET /api/gemini/handoff/:requestId`
+- `GET /api/gemini/handoff/:requestId/events`
 - `POST /api/gemini/handoff/:requestId/retry`
 - `POST /api/gemini/sheets/sync-approvals`
 

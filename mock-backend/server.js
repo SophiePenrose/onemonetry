@@ -122,6 +122,8 @@ import {
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
   getGeminiHandoffApprovalCounts,
+  addGeminiHandoffEvent,
+  listGeminiHandoffEvents,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
 import {
@@ -5531,6 +5533,9 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
   const { created, record } = createOrGetGeminiHandoffRequest(payload);
   if (!created && record) {
+    addGeminiHandoffEvent(payload.request_id, "handoff_duplicate", "ingress", {
+      status: record.status,
+    });
     return res.status(200).json({
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
       request_id: payload.request_id,
@@ -5541,6 +5546,9 @@ app.post("/api/gemini/handoff", async (req, res) => {
   }
 
   const acceptedAt = record?.accepted_at || new Date().toISOString();
+  addGeminiHandoffEvent(payload.request_id, "handoff_accepted", "ingress", {
+    accepted_at: acceptedAt,
+  });
   const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
   const dispatchResult = await dispatchGeminiHandoffRequest(payload);
 
@@ -5553,6 +5561,10 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
     if (responseValidation.valid && responseRequestId === String(payload.request_id)) {
       const updated = completeGeminiHandoffRequest(payload.request_id, dispatchResult.response_payload);
+      addGeminiHandoffEvent(payload.request_id, "handoff_completed", "transport", {
+        response_id: dispatchResult.response_payload.response_id || null,
+        status: updated?.status || "partial",
+      });
       return res.status(202).json({
         contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
         request_id: payload.request_id,
@@ -5572,6 +5584,10 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
   if (dispatchResult?.attempted && !dispatchResult.success) {
     const updated = incrementGeminiHandoffRetry(payload.request_id);
+    addGeminiHandoffEvent(payload.request_id, "handoff_retry_requested", "transport", {
+      reason: dispatchResult.error_code || "transport_error",
+      retry_count: updated?.retry_count || 1,
+    });
 
     if (!transportRuntime.fail_open) {
       return res.status(502).json({
@@ -5644,6 +5660,24 @@ app.get("/api/gemini/handoff/:requestId", (req, res) => {
   });
 });
 
+app.get("/api/gemini/handoff/:requestId/events", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const limit = Number.parseInt(String(req.query?.limit || "100"), 10);
+  const events = listGeminiHandoffEvents(requestId, limit);
+
+  return res.json({
+    contract_version: record.contract_version,
+    request_id: requestId,
+    count: events.length,
+    events,
+  });
+});
+
 app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   const requestId = String(req.params?.requestId || "").trim();
   const record = getGeminiHandoffRequest(requestId);
@@ -5670,6 +5704,9 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   }
 
   if (isDuplicateGeminiResponse(record, payload)) {
+    addGeminiHandoffEvent(requestId, "completion_duplicate", "callback", {
+      response_id: getStoredGeminiResponseId(record),
+    });
     return res.status(200).json({
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
       request_id: requestId,
@@ -5682,6 +5719,10 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   }
 
   if (hasGeminiResponseConflict(record, payload)) {
+    addGeminiHandoffEvent(requestId, "completion_conflict", "callback", {
+      existing_response_id: getStoredGeminiResponseId(record),
+      incoming_response_id: String(payload.response_id || "").trim() || null,
+    });
     return res.status(409).json({
       error: "response_id_conflict",
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -5692,6 +5733,10 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
   }
 
   const updated = completeGeminiHandoffRequest(requestId, payload);
+  addGeminiHandoffEvent(requestId, "completion_applied", "callback", {
+    response_id: payload.response_id || null,
+    status: updated?.status || "partial",
+  });
 
   return res.json({
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -5712,6 +5757,9 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
   }
 
   const updated = incrementGeminiHandoffRetry(requestId);
+  addGeminiHandoffEvent(requestId, "retry_requested", "manual", {
+    retry_count: updated?.retry_count || 1,
+  });
   const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
   const requestPayload = record?.request && typeof record.request === "object" ? record.request : null;
 
@@ -5734,6 +5782,10 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
               : dispatchResult.response_payload
           );
 
+          addGeminiHandoffEvent(requestId, "retry_duplicate_response", "transport", {
+            response_id: getStoredGeminiResponseId(restored),
+            retry_count: restored?.retry_count || updated?.retry_count || 1,
+          });
           return res.status(202).json({
             contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
             request_id: requestId,
@@ -5752,6 +5804,10 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
         }
 
         if (hasGeminiResponseConflict(updated, dispatchResult.response_payload)) {
+          addGeminiHandoffEvent(requestId, "retry_response_conflict", "transport", {
+            existing_response_id: getStoredGeminiResponseId(updated),
+            incoming_response_id: String(dispatchResult.response_payload.response_id || "").trim() || null,
+          });
           return res.status(409).json({
             error: "response_id_conflict",
             contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -5769,6 +5825,10 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
         }
 
         const completed = completeGeminiHandoffRequest(requestId, dispatchResult.response_payload);
+        addGeminiHandoffEvent(requestId, "retry_completed", "transport", {
+          response_id: dispatchResult.response_payload.response_id || null,
+          retry_count: completed?.retry_count || updated?.retry_count || 1,
+        });
         return res.status(202).json({
           contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
           request_id: requestId,
@@ -5788,6 +5848,10 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
     }
 
     if (dispatchResult?.attempted && !dispatchResult.success) {
+      addGeminiHandoffEvent(requestId, "retry_dispatch_failed", "transport", {
+        reason: dispatchResult.error_code || "transport_error",
+        retry_count: updated?.retry_count || 1,
+      });
       if (!transportRuntime.fail_open) {
         return res.status(502).json({
           error: "transport_dispatch_failed",
