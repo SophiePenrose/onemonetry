@@ -19,7 +19,13 @@ function printUsage() {
     "  --url <value>                 Endole page URL to scrape (required)",
     "  --out <path>                  Output CSV path (default: exports/endole-live-<timestamp>.csv)",
     "  --headless                    Run browser headless (default: false)",
+    "  --storage-state-in <path>     Optional Playwright storage state JSON to reuse login session",
+    "  --storage-state-out <path>    Optional path to save updated storage state JSON",
     "  --wait-selector <css>         Optional selector to wait for before scraping",
+    "  --next-selector <css>         Optional pagination next-button selector for multi-page scrape",
+    "  --max-pages <n>               Max pages to scrape when next-selector is used (default: 1)",
+    "  --scroll-steps <n>            Auto-scroll steps before extracting each page (default: 0)",
+    "  --scroll-delay-ms <n>         Delay between auto-scroll steps (default: 350)",
     "  --max-rows <n>                Keep only first n extracted rows",
     "  --apply                       Run scripts/import-monitor-seed-list.mjs with generated CSV",
     "  --apply-args <value>          Extra args passed to import-monitor-seed-list script (repeatable)",
@@ -28,6 +34,7 @@ function printUsage() {
     "Examples:",
     "  node scripts/import-endole-live.mjs --url \"https://app.endole.co.uk/company-lists/...\"",
     "  node scripts/import-endole-live.mjs --url \"https://app.endole.co.uk/company-lists/...\" --apply --apply-args --dry-run",
+    "  node scripts/import-endole-live.mjs --url \"https://app.endole.co.uk/company-lists/...\" --next-selector \"button[aria-label='Next']\" --max-pages 10",
   ].join("\n"));
 }
 
@@ -36,7 +43,13 @@ function parseArgs(argv) {
     url: null,
     out: null,
     headless: false,
+    storageStateIn: null,
+    storageStateOut: null,
     waitSelector: null,
+    nextSelector: null,
+    maxPages: 1,
+    scrollSteps: 0,
+    scrollDelayMs: 350,
     maxRows: null,
     apply: false,
     applyArgs: [],
@@ -64,8 +77,41 @@ function parseArgs(argv) {
       options.headless = true;
       continue;
     }
+    if (arg === "--storage-state-in" && argv[i + 1]) {
+      options.storageStateIn = String(argv[i + 1] || "").trim() || null;
+      i += 1;
+      continue;
+    }
+    if (arg === "--storage-state-out" && argv[i + 1]) {
+      options.storageStateOut = String(argv[i + 1] || "").trim() || null;
+      i += 1;
+      continue;
+    }
     if (arg === "--wait-selector" && argv[i + 1]) {
       options.waitSelector = String(argv[i + 1] || "").trim() || null;
+      i += 1;
+      continue;
+    }
+    if (arg === "--next-selector" && argv[i + 1]) {
+      options.nextSelector = String(argv[i + 1] || "").trim() || null;
+      i += 1;
+      continue;
+    }
+    if (arg === "--max-pages" && argv[i + 1]) {
+      const parsed = Number.parseInt(String(argv[i + 1] || ""), 10);
+      options.maxPages = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+      i += 1;
+      continue;
+    }
+    if (arg === "--scroll-steps" && argv[i + 1]) {
+      const parsed = Number.parseInt(String(argv[i + 1] || ""), 10);
+      options.scrollSteps = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+      i += 1;
+      continue;
+    }
+    if (arg === "--scroll-delay-ms" && argv[i + 1]) {
+      const parsed = Number.parseInt(String(argv[i + 1] || ""), 10);
+      options.scrollDelayMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : 350;
       i += 1;
       continue;
     }
@@ -89,6 +135,10 @@ function parseArgs(argv) {
   }
 
   return options;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolvePath(inputPath) {
@@ -209,6 +259,20 @@ function dedupeRows(rows) {
   return deduped;
 }
 
+async function autoScrollPage(page, steps, delayMs) {
+  const safeSteps = Math.max(0, Number.parseInt(String(steps || 0), 10) || 0);
+  if (safeSteps < 1) return;
+
+  for (let i = 0; i < safeSteps; i += 1) {
+    await page.evaluate(() => {
+      const target = document.scrollingElement || document.body || document.documentElement;
+      const delta = Math.max(500, Math.floor(window.innerHeight * 0.8));
+      target.scrollBy({ top: delta, left: 0, behavior: "instant" });
+    });
+    await sleep(Math.max(0, Number.parseInt(String(delayMs || 0), 10) || 0));
+  }
+}
+
 async function scrapeRows(page) {
   return page.evaluate(() => {
     function toText(value) {
@@ -306,12 +370,20 @@ async function run() {
 
   const defaultOut = path.join("exports", `endole-live-${toIsoTimestampCompact()}.csv`);
   const outPath = resolvePath(options.out || defaultOut);
+  const storageStateInPath = options.storageStateIn ? resolvePath(options.storageStateIn) : null;
+  const storageStateOutPath = options.storageStateOut ? resolvePath(options.storageStateOut) : null;
 
   const { chromium } = await loadPlaywright();
   const browser = await chromium.launch({ headless: !!options.headless });
 
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const contextOptions = { viewport: { width: 1440, height: 1000 } };
+    if (storageStateInPath && fs.existsSync(storageStateInPath)) {
+      contextOptions.storageState = storageStateInPath;
+      console.log(`Loaded storage state from ${storageStateInPath}`);
+    }
+
+    const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
 
     console.log(`Opening ${options.url}`);
@@ -327,8 +399,43 @@ async function run() {
       await waitForEnter("Press Enter here when the table is visible and fully loaded... ");
     }
 
-    const rawRows = await scrapeRows(page);
-    const mappedRows = mapScrapedRows(rawRows, options.url);
+    const aggregatedRows = [];
+    const pageLimit = options.nextSelector ? Math.max(1, options.maxPages) : 1;
+
+    for (let pageIndex = 1; pageIndex <= pageLimit; pageIndex += 1) {
+      if (options.scrollSteps > 0) {
+        await autoScrollPage(page, options.scrollSteps, options.scrollDelayMs);
+      }
+
+      const rawRows = await scrapeRows(page);
+      const mappedRows = mapScrapedRows(rawRows, page.url());
+      aggregatedRows.push(...mappedRows);
+      console.log(`Scraped page ${pageIndex}: ${mappedRows.length} rows`);
+
+      if (!options.nextSelector || pageIndex >= pageLimit) {
+        break;
+      }
+
+      const nextButton = page.locator(options.nextSelector).first();
+      const nextCount = await nextButton.count();
+      if (nextCount < 1) {
+        console.log(`No next button found for selector: ${options.nextSelector}`);
+        break;
+      }
+
+      if (!(await nextButton.isVisible()) || !(await nextButton.isEnabled())) {
+        console.log("Next button is not visible/enabled; stopping pagination.");
+        break;
+      }
+
+      await nextButton.click();
+      await sleep(700);
+      if (options.waitSelector) {
+        await page.waitForSelector(options.waitSelector, { timeout: 90000 });
+      }
+    }
+
+    const mappedRows = dedupeRows(aggregatedRows);
     const rows = options.maxRows ? mappedRows.slice(0, options.maxRows) : mappedRows;
 
     if (!rows.length) {
@@ -339,6 +446,12 @@ async function run() {
     ensureParentDir(outPath);
     fs.writeFileSync(outPath, toSeedCsv(rows), "utf8");
     console.log(`Wrote ${rows.length} rows to ${outPath}`);
+
+    if (storageStateOutPath) {
+      ensureParentDir(storageStateOutPath);
+      await context.storageState({ path: storageStateOutPath });
+      console.log(`Saved storage state to ${storageStateOutPath}`);
+    }
 
     if (!options.apply) {
       const relativeOut = path.relative(repoRoot, outPath) || outPath;

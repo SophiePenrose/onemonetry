@@ -217,6 +217,15 @@ npm run import:endole-live -- --url "https://app.endole.co.uk/..."
 
 # same flow, then immediately run seed import
 npm run import:endole-live -- --url "https://app.endole.co.uk/..." --apply --apply-args --dry-run
+
+# reuse a saved browser session and scrape multiple pages automatically
+npm run import:endole-live -- \
+   --url "https://app.endole.co.uk/..." \
+   --storage-state-in exports/endole-session.json \
+   --storage-state-out exports/endole-session.json \
+   --next-selector "button[aria-label='Next']" \
+   --max-pages 10 \
+   --scroll-steps 5
 ```
 
 Notes:
@@ -224,6 +233,8 @@ Notes:
 - The script opens a browser and waits for you to sign in manually; credentials are never passed through CLI args.
 - It extracts visible table rows into a seed CSV format, then can call `import-monitor-seed-list` automatically when `--apply` is used.
 - Scraping behavior can change if Endole changes page markup; use `--wait-selector` if the table renders late.
+- Use `--storage-state-out` once to save session cookies/local storage, then `--storage-state-in` for faster future runs.
+- Use `--next-selector` + `--max-pages` for paginated table harvesting, and `--scroll-steps` for lazy-loaded rows.
 
 ### Make CI a required merge gate (recommended)
 
