@@ -208,10 +208,11 @@ function buildGeminiHandoffRequestPayload(overrides = {}) {
 }
 
 function buildGeminiHandoffResponsePayload(requestId) {
+  const safeRequestId = String(requestId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
   return {
     contract_version: "gemini-handoff-v1",
     request_id: requestId,
-    response_id: "resp_api_test_001",
+    response_id: `resp_api_test_${safeRequestId}`,
     completed_at: new Date().toISOString(),
     status: "ok",
     sheet_write: {
@@ -1052,6 +1053,50 @@ describe("API endpoints", () => {
       assert.equal(conflictingComplete.data.request_id, requestId);
       assert.equal(conflictingComplete.data.existing_response_id, firstPayload.response_id);
       assert.equal(conflictingComplete.data.incoming_response_id, conflictingPayload.response_id);
+    });
+
+    it("rejects completion when response_id is already used by another request", async () => {
+      const originalRequestId = "req_api_test_response_reuse_source_001";
+      const secondRequestId = "req_api_test_response_reuse_target_001";
+
+      const acceptedOriginal = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: originalRequestId })),
+      });
+      assert.equal(acceptedOriginal.status, 202);
+
+      const acceptedSecond = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: secondRequestId })),
+      });
+      assert.equal(acceptedSecond.status, 202);
+
+      const originalPayload = buildGeminiHandoffResponsePayload(originalRequestId);
+      const originalComplete = await fetchJSON(`/api/gemini/handoff/${originalRequestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(originalPayload),
+      });
+      assert.equal(originalComplete.status, 200);
+
+      const reusedPayload = {
+        ...buildGeminiHandoffResponsePayload(secondRequestId),
+        response_id: originalPayload.response_id,
+      };
+      const reusedComplete = await fetchJSON(`/api/gemini/handoff/${secondRequestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reusedPayload),
+      });
+
+      assert.equal(reusedComplete.status, 409);
+      assert.equal(reusedComplete.data.error, "response_id_reused");
+      assert.equal(reusedComplete.data.request_id, secondRequestId);
+      assert.equal(reusedComplete.data.response_id, originalPayload.response_id);
+      assert.equal(reusedComplete.data.existing_request_id, originalRequestId);
+      assert.equal(reusedComplete.data.incoming_request_id, secondRequestId);
     });
 
     it("returns handoff event history for audit tracing", async () => {

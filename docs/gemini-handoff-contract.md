@@ -261,6 +261,7 @@ Rules:
 5. Repeating completion with a different `response_id` for the same `request_id` is rejected as `response_id_conflict`.
 6. Status responses expose `request_payload_sha256` and `response_payload_sha256` for audit-safe replay tracing without returning raw stored payload text.
 7. Repeating completion with the same `response_id` but different payload content is rejected as `response_payload_mismatch`.
+8. Reusing a `response_id` that already belongs to a different `request_id` is rejected as `response_id_reused`.
 
 ## Security and Compliance
 

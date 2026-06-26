@@ -119,6 +119,7 @@ import {
   getWebsiteResolution,
   createOrGetGeminiHandoffRequest,
   getGeminiHandoffRequest,
+  getGeminiHandoffRequestByResponseId,
   completeGeminiHandoffRequest,
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
@@ -207,6 +208,24 @@ function hasGeminiResponseConflict(record, payload) {
   const incomingResponseId = String(payload?.response_id || "").trim();
   if (!incomingResponseId) return false;
   return storedResponseId !== incomingResponseId;
+}
+
+function getGeminiCrossRequestResponseReuse(record, payload) {
+  const incomingResponseId = String(payload?.response_id || "").trim();
+  if (!incomingResponseId) return null;
+
+  const existing = getGeminiHandoffRequestByResponseId(incomingResponseId);
+  if (!existing) return null;
+
+  const currentRequestId = String(record?.request_id || payload?.request_id || "").trim();
+  if (!currentRequestId) return null;
+  if (String(existing.request_id || "").trim() === currentRequestId) return null;
+
+  return {
+    response_id: incomingResponseId,
+    existing_request_id: String(existing.request_id || "").trim() || null,
+    incoming_request_id: currentRequestId,
+  };
 }
 
 function sha256Hex(value) {
@@ -5733,6 +5752,17 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     });
   }
 
+  const crossRequestReuse = getGeminiCrossRequestResponseReuse(record, payload);
+  if (crossRequestReuse) {
+    addGeminiHandoffEvent(requestId, "completion_response_reused", "callback", crossRequestReuse);
+    return res.status(409).json({
+      error: "response_id_reused",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      ...crossRequestReuse,
+    });
+  }
+
   if (isDuplicateGeminiResponse(record, payload)) {
     if (hasGeminiDuplicatePayloadMismatch(record, payload)) {
       const existingHash = getGeminiReplayComparisonHash(record?.response || {});
@@ -5822,6 +5852,24 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
       const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
 
       if (responseValidation.valid && responseRequestId === requestId) {
+        const crossRequestReuse = getGeminiCrossRequestResponseReuse(updated, dispatchResult.response_payload);
+        if (crossRequestReuse) {
+          addGeminiHandoffEvent(requestId, "retry_response_reused", "transport", crossRequestReuse);
+          return res.status(409).json({
+            error: "response_id_reused",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: requestId,
+            status: updated?.status || "retry_requested",
+            retry_count: updated?.retry_count || 1,
+            ...crossRequestReuse,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
+          });
+        }
+
         if (hasGeminiDuplicatePayloadMismatch(updated, dispatchResult.response_payload)) {
           const existingHash = getGeminiReplayComparisonHash(updated?.response || {});
           const incomingHash = getGeminiReplayComparisonHash(dispatchResult.response_payload || {});

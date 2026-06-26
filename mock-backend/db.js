@@ -1543,6 +1543,15 @@ const stmtGetGeminiHandoffRequest = db.prepare(`
   WHERE request_id = ?
 `);
 
+const stmtGetGeminiHandoffRequestByResponseId = db.prepare(`
+  SELECT *
+  FROM gemini_handoff_requests
+  WHERE response_id = ?
+    AND response_id IS NOT NULL
+    AND response_id != ''
+  LIMIT 1
+`);
+
 const stmtCompleteGeminiHandoffRequest = db.prepare(`
   UPDATE gemini_handoff_requests
   SET
@@ -1662,6 +1671,12 @@ export function getGeminiHandoffRequest(requestId) {
   const normalized = String(requestId || "").trim();
   if (!normalized) return null;
   return hydrateGeminiHandoffRequest(stmtGetGeminiHandoffRequest.get(normalized));
+}
+
+export function getGeminiHandoffRequestByResponseId(responseId) {
+  const normalized = String(responseId || "").trim();
+  if (!normalized) return null;
+  return hydrateGeminiHandoffRequest(stmtGetGeminiHandoffRequestByResponseId.get(normalized));
 }
 
 export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
