@@ -119,6 +119,8 @@ import {
   getWebsiteResolution,
   createOrGetGeminiHandoffRequest,
   getGeminiHandoffRequest,
+  listGeminiHandoffRequests,
+  countGeminiHandoffRequests,
   completeGeminiHandoffRequest,
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
@@ -5664,6 +5666,47 @@ app.post("/api/gemini/handoff", async (req, res) => {
       reason: dispatchResult?.reason || null,
     },
     next_action: "awaiting_gemini_response",
+  });
+});
+
+app.get("/api/gemini/handoff", (req, res) => {
+  const statusFilter = String(req.query?.status || "").trim().toLowerCase() || null;
+  const rawLimit = Number.parseInt(String(req.query?.limit || "50"), 10);
+  const rawOffset = Number.parseInt(String(req.query?.offset || "0"), 10);
+  const limit = Number.isFinite(rawLimit) ? rawLimit : NaN;
+  const offset = Number.isFinite(rawOffset) ? rawOffset : NaN;
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    return res.status(400).json({
+      error: "invalid_limit",
+      message: "limit must be an integer between 1 and 200",
+    });
+  }
+
+  if (!Number.isInteger(offset) || offset < 0 || offset > 10000) {
+    return res.status(400).json({
+      error: "invalid_offset",
+      message: "offset must be an integer between 0 and 10000",
+    });
+  }
+
+  const items = listGeminiHandoffRequests({
+    status: statusFilter,
+    limit,
+    offset,
+  });
+  const total = countGeminiHandoffRequests({ status: statusFilter });
+
+  return res.json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    filters: {
+      status: statusFilter,
+      limit,
+      offset,
+    },
+    total,
+    count: items.length,
+    items,
   });
 });
 

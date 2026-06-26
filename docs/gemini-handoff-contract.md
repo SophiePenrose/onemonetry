@@ -273,6 +273,7 @@ Rules:
 ## Suggested API Endpoints
 
 - `POST /api/gemini/handoff`
+- `GET /api/gemini/handoff` (supports `status`, `limit`, `offset` query params)
 - `GET /api/gemini/handoff/:requestId`
 - `GET /api/gemini/handoff/:requestId/events`
 - `POST /api/gemini/handoff/:requestId/retry`
