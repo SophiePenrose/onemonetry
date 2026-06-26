@@ -5740,13 +5740,49 @@ app.get("/api/gemini/handoff/:requestId/events", (req, res) => {
     return res.status(404).json({ error: "not_found", request_id: requestId });
   }
 
-  const limit = Number.parseInt(String(req.query?.limit || "100"), 10);
-  const events = listGeminiHandoffEvents(requestId, limit);
+  const rawLimit = Number.parseInt(String(req.query?.limit || "100"), 10);
+  const rawBeforeId = String(req.query?.before_id || "").trim();
+  const rawEventType = String(req.query?.event_type || "").trim();
+  const rawEventStage = String(req.query?.event_stage || "").trim();
+
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 500) {
+    return res.status(400).json({
+      error: "invalid_limit",
+      message: "limit must be an integer between 1 and 500",
+    });
+  }
+
+  let beforeId = null;
+  if (rawBeforeId) {
+    const parsedBeforeId = Number.parseInt(rawBeforeId, 10);
+    if (!Number.isInteger(parsedBeforeId) || parsedBeforeId <= 0) {
+      return res.status(400).json({
+        error: "invalid_before_id",
+        message: "before_id must be a positive integer",
+      });
+    }
+    beforeId = parsedBeforeId;
+  }
+
+  const events = listGeminiHandoffEvents(requestId, {
+    limit: rawLimit,
+    beforeId,
+    eventType: rawEventType || null,
+    eventStage: rawEventStage || null,
+  });
+  const nextBeforeId = events.length > 0 ? events[events.length - 1].id : null;
 
   return res.json({
     contract_version: record.contract_version,
     request_id: requestId,
+    filters: {
+      limit: rawLimit,
+      before_id: beforeId,
+      event_type: rawEventType || null,
+      event_stage: rawEventStage || null,
+    },
     count: events.length,
+    next_before_id: nextBeforeId,
     events,
   });
 });

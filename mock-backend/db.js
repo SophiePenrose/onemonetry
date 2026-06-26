@@ -1606,14 +1606,6 @@ const stmtInsertGeminiHandoffEvent = db.prepare(`
   ) VALUES (?, ?, ?, ?, datetime('now'))
 `);
 
-const stmtListGeminiHandoffEvents = db.prepare(`
-  SELECT id, request_id, event_type, event_stage, detail, created_at
-  FROM gemini_handoff_events
-  WHERE request_id = ?
-  ORDER BY id DESC
-  LIMIT ?
-`);
-
 function hydrateGeminiHandoffRequest(row) {
   if (!row) return null;
   return {
@@ -1835,12 +1827,42 @@ export function addGeminiHandoffEvent(requestId, eventType, eventStage = null, d
   return Number(result.lastInsertRowid || 0) || null;
 }
 
-export function listGeminiHandoffEvents(requestId, limit = 100) {
+export function listGeminiHandoffEvents(requestId, options = 100) {
   const normalizedRequestId = String(requestId || "").trim();
   if (!normalizedRequestId) return [];
-  const safeLimit = Math.max(1, Math.min(500, Number.parseInt(String(limit || 100), 10) || 100));
+  const optionsObject = (options && typeof options === "object") ? options : { limit: options };
+  const safeLimit = Math.max(1, Math.min(500, Number.parseInt(String(optionsObject.limit || 100), 10) || 100));
+  const beforeId = Number.parseInt(String(optionsObject.beforeId || ""), 10);
+  const hasBeforeId = Number.isInteger(beforeId) && beforeId > 0;
+  const eventType = String(optionsObject.eventType || "").trim() || null;
+  const eventStage = String(optionsObject.eventStage || "").trim() || null;
 
-  return stmtListGeminiHandoffEvents.all(normalizedRequestId, safeLimit).map((row) => {
+  let sql = `
+    SELECT id, request_id, event_type, event_stage, detail, created_at
+    FROM gemini_handoff_events
+    WHERE request_id = ?
+  `;
+  const params = [normalizedRequestId];
+
+  if (hasBeforeId) {
+    sql += " AND id < ?";
+    params.push(beforeId);
+  }
+
+  if (eventType) {
+    sql += " AND event_type = ?";
+    params.push(eventType);
+  }
+
+  if (eventStage) {
+    sql += " AND event_stage = ?";
+    params.push(eventStage);
+  }
+
+  sql += " ORDER BY id DESC LIMIT ?";
+  params.push(safeLimit);
+
+  return db.prepare(sql).all(...params).map((row) => {
     let parsedDetail = null;
     if (typeof row.detail === "string" && row.detail.trim()) {
       try {
