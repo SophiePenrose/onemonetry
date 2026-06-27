@@ -170,6 +170,20 @@ const DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC = ["1", "true", "yes", "on"].includes(
   String(process.env.DEFAULT_RUN_EXTERNAL_SIGNAL_SYNC || "false").trim().toLowerCase()
 );
 const GEMINI_HANDOFF_CONTRACT_VERSION = "gemini-handoff-v1";
+const GEMINI_HANDOFF_RETRYABLE_STATUSES = new Set([
+  "accepted",
+  "retry_requested",
+  "completed",
+  "partial",
+  "error",
+]);
+const parsedGeminiHandoffMaxRetryCount = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_MAX_RETRY_COUNT || "5"),
+  10
+);
+const GEMINI_HANDOFF_MAX_RETRY_COUNT = Number.isFinite(parsedGeminiHandoffMaxRetryCount)
+  ? Math.max(1, Math.min(parsedGeminiHandoffMaxRetryCount, 50))
+  : 5;
 
 function loadLocalJsonSchema(fileName) {
   const filePath = path.join(__dirname, "schemas", fileName);
@@ -5883,6 +5897,37 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
     return res.status(404).json({ error: "not_found", request_id: requestId });
   }
 
+  const currentStatus = String(record?.status || "").trim().toLowerCase();
+  if (!GEMINI_HANDOFF_RETRYABLE_STATUSES.has(currentStatus)) {
+    addGeminiHandoffEvent(requestId, "retry_invalid_transition", "manual", {
+      from_status: currentStatus || null,
+      to_status: "retry_requested",
+    });
+    return res.status(409).json({
+      error: "invalid_state_transition",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      from_status: currentStatus || null,
+      to_status: "retry_requested",
+      allowed_from_statuses: Array.from(GEMINI_HANDOFF_RETRYABLE_STATUSES),
+    });
+  }
+
+  if (Number(record?.retry_count || 0) >= GEMINI_HANDOFF_MAX_RETRY_COUNT) {
+    addGeminiHandoffEvent(requestId, "retry_limit_reached", "manual", {
+      retry_count: Number(record?.retry_count || 0),
+      max_retry_count: GEMINI_HANDOFF_MAX_RETRY_COUNT,
+    });
+    return res.status(409).json({
+      error: "retry_limit_reached",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      status: record?.status || null,
+      current_retry_count: Number(record?.retry_count || 0),
+      max_retry_count: GEMINI_HANDOFF_MAX_RETRY_COUNT,
+    });
+  }
+
   const updated = incrementGeminiHandoffRetry(requestId);
   addGeminiHandoffEvent(requestId, "retry_requested", "manual", {
     retry_count: updated?.retry_count || 1,
@@ -6369,6 +6414,7 @@ app.get("/api/integrations/status", (_req, res) => {
       "GEMINI_HANDOFF_TRANSPORT_AUTH_TOKEN=optional_transport_token",
       "GEMINI_HANDOFF_TRANSPORT_AUTH_HEADER=Authorization",
       "GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=true",
+      "GEMINI_HANDOFF_MAX_RETRY_COUNT=5",
       "ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=false",
     ],
   });
