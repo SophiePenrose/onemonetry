@@ -898,6 +898,7 @@ describe("API endpoints", () => {
       assert.equal(listAll.data.contract_version, "gemini-handoff-v1");
       assert.equal(typeof listAll.data.total, "number");
       assert.equal(Array.isArray(listAll.data.items), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(listAll.data, "status_counts"), false);
       assert.equal(listAll.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
       assert.equal(listAll.data.items.some((entry) => entry.request_id === completedRequestId), true);
 
@@ -916,6 +917,14 @@ describe("API endpoints", () => {
       assert.equal(typeof completedWithSummary?.yamm_summary, "object");
       assert.equal(completedWithSummary?.yamm_summary?.totals?.rows >= 1, true);
       assert.equal(acceptedWithSummary?.yamm_summary, null);
+
+      const withStatusCounts = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_status_counts=true");
+      assert.equal(withStatusCounts.status, 200);
+      assert.equal(withStatusCounts.data.filters.include_status_counts, true);
+      assert.equal(typeof withStatusCounts.data.status_counts, "object");
+      assert.equal((withStatusCounts.data.status_counts.accepted || 0) >= 1, true);
+      assert.equal((withStatusCounts.data.status_counts.completed || 0) >= 1, true);
+      assert.equal(typeof withStatusCounts.data.status_counts.unknown, "number");
 
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
@@ -948,6 +957,10 @@ describe("API endpoints", () => {
       const invalidSummaryFlag = await fetchJSON("/api/gemini/handoff?include_yamm_summary=maybe");
       assert.equal(invalidSummaryFlag.status, 400);
       assert.equal(invalidSummaryFlag.data.error, "invalid_include_yamm_summary");
+
+      const invalidStatusCountsFlag = await fetchJSON("/api/gemini/handoff?include_status_counts=maybe");
+      assert.equal(invalidStatusCountsFlag.status, 400);
+      assert.equal(invalidStatusCountsFlag.data.error, "invalid_include_status_counts");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);

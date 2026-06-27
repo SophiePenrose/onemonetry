@@ -1768,6 +1768,34 @@ export function countGeminiHandoffRequests(filters = {}) {
   return Number(row?.count || 0);
 }
 
+export function getGeminiHandoffStatusCounts() {
+  const rows = db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM gemini_handoff_requests
+    GROUP BY status
+  `).all();
+
+  const counts = {
+    accepted: 0,
+    completed: 0,
+    retry_requested: 0,
+    failed: 0,
+    unknown: 0,
+  };
+
+  for (const row of rows) {
+    const status = String(row?.status || "").trim().toLowerCase();
+    const count = Number(row?.count || 0);
+    if (status && Object.prototype.hasOwnProperty.call(counts, status)) {
+      counts[status] = count;
+    } else {
+      counts.unknown += count;
+    }
+  }
+
+  return counts;
+}
+
 export function getGeminiHandoffOperationalSummary(options = {}) {
   const recentHoursRaw = Number.parseInt(String(options?.recentHours || 24), 10);
   const recentHours = Number.isInteger(recentHoursRaw)
