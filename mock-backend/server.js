@@ -122,6 +122,7 @@ import {
   listGeminiHandoffRequests,
   countGeminiHandoffRequests,
   getGeminiHandoffStatusCounts,
+  getGeminiHandoffRetryCounts,
   getGeminiHandoffOperationalSummary,
   completeGeminiHandoffRequest,
   incrementGeminiHandoffRetry,
@@ -5866,6 +5867,14 @@ app.get("/api/gemini/handoff", (req, res) => {
     });
   }
   const includeStatusCounts = ["1", "true", "yes", "on"].includes(rawIncludeStatusCounts);
+  const rawIncludeRetryCounts = String(req.query?.include_retry_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRetryCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_retry_counts",
+      message: "include_retry_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRetryCounts = ["1", "true", "yes", "on"].includes(rawIncludeRetryCounts);
   const rawLimit = Number.parseInt(String(req.query?.limit || "50"), 10);
   const rawOffset = Number.parseInt(String(req.query?.offset || "0"), 10);
   const limit = Number.isFinite(rawLimit) ? rawLimit : NaN;
@@ -5909,6 +5918,9 @@ app.get("/api/gemini/handoff", (req, res) => {
     : items;
   const total = countGeminiHandoffRequests({ status: statusFilter });
   const statusCounts = includeStatusCounts ? getGeminiHandoffStatusCounts() : undefined;
+  const retryCounts = includeRetryCounts
+    ? getGeminiHandoffRetryCounts({ retryLimit: GEMINI_HANDOFF_MAX_RETRY_COUNT })
+    : undefined;
 
   return res.json({
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -5919,11 +5931,13 @@ app.get("/api/gemini/handoff", (req, res) => {
       offset,
       include_yamm_summary: includeYammSummary,
       include_status_counts: includeStatusCounts,
+      include_retry_counts: includeRetryCounts,
     },
     total,
     count: responseItems.length,
     items: responseItems,
     ...(includeStatusCounts ? { status_counts: statusCounts } : {}),
+    ...(includeRetryCounts ? { retry_counts: retryCounts } : {}),
   });
 });
 

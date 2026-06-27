@@ -277,7 +277,7 @@ Rules:
 ## Suggested API Endpoints
 
 - `POST /api/gemini/handoff`
-- `GET /api/gemini/handoff` (supports `status`, `sort`, `limit`, `offset`, `include_yamm_summary`, `include_status_counts` query params)
+- `GET /api/gemini/handoff` (supports `status`, `sort`, `limit`, `offset`, `include_yamm_summary`, `include_status_counts`, `include_retry_counts` query params)
 - `GET /api/gemini/handoff/summary` (supports `recent_hours` query param)
 - `GET /api/gemini/handoff/:requestId`
 - `GET /api/gemini/handoff/:requestId/yamm-rows` (optional `approval_status` query param, `format=json|csv`, `send_eligible=true|false`)
