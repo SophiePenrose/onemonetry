@@ -6082,6 +6082,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     minApprovalCount = parsedMinApprovalCount;
   }
+  const rawApprovalCount = String(req.query?.approval_count || "").trim();
+  let approvalCount = null;
+  if (rawApprovalCount) {
+    const parsedApprovalCount = Number.parseInt(rawApprovalCount, 10);
+    if (!Number.isInteger(parsedApprovalCount) || parsedApprovalCount < 0 || parsedApprovalCount > 10000) {
+      return res.status(400).json({
+        error: "invalid_approval_count",
+        message: "approval_count must be an integer between 0 and 10000",
+      });
+    }
+    approvalCount = parsedApprovalCount;
+  }
   const rawMaxApprovalCount = String(req.query?.max_approval_count || "").trim();
   let maxApprovalCount = null;
   if (rawMaxApprovalCount) {
@@ -6175,6 +6187,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     maxEventCount,
     eventCount,
     minApprovalCount,
+    approvalCount,
     maxApprovalCount,
     sort,
     limit,
@@ -6219,6 +6232,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     maxEventCount,
     eventCount,
     minApprovalCount,
+    approvalCount,
     maxApprovalCount,
   });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
@@ -6253,6 +6267,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       max_event_count: maxEventCount,
       event_count: eventCount,
       min_approval_count: minApprovalCount,
+      approval_count: approvalCount,
       max_approval_count: maxApprovalCount,
       sort,
       limit,

@@ -1748,6 +1748,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
     ? rawMinApprovalCount
     : null;
+  const rawApprovalCount = Number.parseInt(String(filters?.approvalCount ?? ""), 10);
+  const approvalCount = Number.isInteger(rawApprovalCount) && rawApprovalCount >= 0
+    ? rawApprovalCount
+    : null;
   const rawMaxApprovalCount = Number.parseInt(String(filters?.maxApprovalCount ?? ""), 10);
   const maxApprovalCount = Number.isInteger(rawMaxApprovalCount) && rawMaxApprovalCount >= 0
     ? rawMaxApprovalCount
@@ -1904,6 +1908,10 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(minApprovalCount);
   }
 
+  if (approvalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id) = ?");
+    params.push(approvalCount);
+  }
   if (maxApprovalCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id) <= ?");
     params.push(maxApprovalCount);
@@ -2027,6 +2035,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const rawMinApprovalCount = Number.parseInt(String(filters?.minApprovalCount ?? ""), 10);
   const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
     ? rawMinApprovalCount
+    : null;
+  const rawApprovalCount = Number.parseInt(String(filters?.approvalCount ?? ""), 10);
+  const approvalCount = Number.isInteger(rawApprovalCount) && rawApprovalCount >= 0
+    ? rawApprovalCount
     : null;
   const rawMaxApprovalCount = Number.parseInt(String(filters?.maxApprovalCount ?? ""), 10);
   const maxApprovalCount = Number.isInteger(rawMaxApprovalCount) && rawMaxApprovalCount >= 0
@@ -2153,6 +2165,10 @@ export function countGeminiHandoffRequests(filters = {}) {
     params.push(minApprovalCount);
   }
 
+  if (approvalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id) = ?");
+    params.push(approvalCount);
+  }
   if (maxApprovalCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id) <= ?");
     params.push(maxApprovalCount);

@@ -1108,6 +1108,11 @@ describe("API endpoints", () => {
       assert.equal(minApprovalCountList.data.items.length >= 1, true);
       assert.equal(minApprovalCountList.data.items.every((entry) => Number(entry.approval_count || 0) >= 1), true);
 
+      const approvalCountList = await fetchJSON("/api/gemini/handoff?approval_count=1&limit=100&offset=0");
+      assert.equal(approvalCountList.status, 200);
+      assert.equal(approvalCountList.data.filters.approval_count, 1);
+      assert.equal(approvalCountList.data.items.length >= 1, true);
+      assert.equal(approvalCountList.data.items.every((entry) => Number(entry.approval_count || 0) === 1), true);
       const maxApprovalCountList = await fetchJSON("/api/gemini/handoff?max_approval_count=1&limit=100&offset=0");
       assert.equal(maxApprovalCountList.status, 200);
       assert.equal(maxApprovalCountList.data.filters.max_approval_count, 1);
@@ -1276,6 +1281,9 @@ describe("API endpoints", () => {
       assert.equal(invalidMinApprovalCount.status, 400);
       assert.equal(invalidMinApprovalCount.data.error, "invalid_min_approval_count");
 
+      const invalidApprovalCount = await fetchJSON("/api/gemini/handoff?approval_count=abc");
+      assert.equal(invalidApprovalCount.status, 400);
+      assert.equal(invalidApprovalCount.data.error, "invalid_approval_count");
       const invalidMaxApprovalCount = await fetchJSON("/api/gemini/handoff?max_approval_count=abc");
       assert.equal(invalidMaxApprovalCount.status, 400);
       assert.equal(invalidMaxApprovalCount.data.error, "invalid_max_approval_count");
