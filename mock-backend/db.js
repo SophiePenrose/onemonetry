@@ -1704,6 +1704,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const normalizedHasLastRetryRequested = String(filters?.hasLastRetryRequested ?? "").trim().toLowerCase();
+  const hasLastRetryRequested = normalizedHasLastRetryRequested === "true"
+    ? true
+    : normalizedHasLastRetryRequested === "false"
+      ? false
+      : null;
   const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
@@ -1792,6 +1798,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("r.completed_at IS NOT NULL AND r.completed_at <> ''");
   } else if (hasCompleted === false) {
     whereClauses.push("(r.completed_at IS NULL OR r.completed_at = '')");
+  }
+
+  if (hasLastRetryRequested === true) {
+    whereClauses.push("r.last_retry_requested_at IS NOT NULL AND r.last_retry_requested_at <> ''");
+  } else if (hasLastRetryRequested === false) {
+    whereClauses.push("(r.last_retry_requested_at IS NULL OR r.last_retry_requested_at = '')");
   }
 
   if (beforeAcceptedAt) {
@@ -1924,6 +1936,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const normalizedHasLastRetryRequested = String(filters?.hasLastRetryRequested ?? "").trim().toLowerCase();
+  const hasLastRetryRequested = normalizedHasLastRetryRequested === "true"
+    ? true
+    : normalizedHasLastRetryRequested === "false"
+      ? false
+      : null;
   const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
@@ -1981,6 +1999,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("completed_at IS NOT NULL AND completed_at <> ''");
   } else if (hasCompleted === false) {
     whereClauses.push("(completed_at IS NULL OR completed_at = '')");
+  }
+
+  if (hasLastRetryRequested === true) {
+    whereClauses.push("last_retry_requested_at IS NOT NULL AND last_retry_requested_at <> ''");
+  } else if (hasLastRetryRequested === false) {
+    whereClauses.push("(last_retry_requested_at IS NULL OR last_retry_requested_at = '')");
   }
 
   if (beforeAcceptedAt) {
