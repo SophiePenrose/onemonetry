@@ -990,9 +990,100 @@ describe("API endpoints", () => {
 
       assert.equal(synced.status, 200);
       assert.equal(synced.data.request_id, requestId);
+      assert.equal(synced.data.approvals_revision, 1);
       assert.equal(synced.data.counts.total, 2);
       assert.equal(synced.data.counts.approved, 1);
       assert.equal(synced.data.counts.pending, 1);
+    });
+
+    it("rejects approval sync updates with stale expected revision", async () => {
+      const requestId = "req_api_test_approvals_conflict_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const firstSync = await fetchJSON(`/api/gemini/sheets/sync-approvals?expected_revision=0`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [
+            {
+              sequence_id: "seq_conflict_001",
+              step_number: 1,
+              approval_status: "pending",
+            },
+          ],
+        }),
+      });
+      assert.equal(firstSync.status, 200);
+      assert.equal(firstSync.data.approvals_revision, 1);
+
+      const staleSync = await fetchJSON(`/api/gemini/sheets/sync-approvals?expected_revision=0`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [
+            {
+              sequence_id: "seq_conflict_001",
+              step_number: 1,
+              approval_status: "approved",
+            },
+          ],
+        }),
+      });
+      assert.equal(staleSync.status, 409);
+      assert.equal(staleSync.data.error, "approval_sync_conflict");
+      assert.equal(staleSync.data.request_id, requestId);
+      assert.equal(staleSync.data.expected_revision, 0);
+      assert.equal(staleSync.data.current_revision, 1);
+
+      const currentSync = await fetchJSON(`/api/gemini/sheets/sync-approvals?expected_revision=1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [
+            {
+              sequence_id: "seq_conflict_001",
+              step_number: 1,
+              approval_status: "approved",
+            },
+          ],
+        }),
+      });
+      assert.equal(currentSync.status, 200);
+      assert.equal(currentSync.data.approvals_revision, 2);
+      assert.equal(currentSync.data.counts.approved, 1);
+    });
+
+    it("validates expected_revision on approvals sync", async () => {
+      const requestId = "req_api_test_approvals_revision_validation_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const invalid = await fetchJSON(`/api/gemini/sheets/sync-approvals?expected_revision=abc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [],
+        }),
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.data.error, "invalid_expected_revision");
     });
 
     it("enforces Gemini retry max-attempt guardrail", async () => {

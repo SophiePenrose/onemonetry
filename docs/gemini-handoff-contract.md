@@ -244,6 +244,7 @@ Error codes:
 - `sheet_write_failed`
 - `sheet_permission_denied`
 - `rate_limited`
+- `approval_sync_conflict`
 - `retry_limit_reached`
 - `unknown_error`
 
@@ -263,6 +264,7 @@ Rules:
 6. Status responses expose `request_payload_sha256` and `response_payload_sha256` for audit-safe replay tracing without returning raw stored payload text.
 7. Repeating completion with the same `response_id` but different payload content is rejected as `response_payload_mismatch`.
 8. Retries are bounded by `GEMINI_HANDOFF_MAX_RETRY_COUNT` (default `5`); additional retries are rejected as `retry_limit_reached`.
+9. Approval sync can use `expected_revision` for optimistic concurrency; stale revisions are rejected as `approval_sync_conflict`.
 
 ## Security and Compliance
 
@@ -279,7 +281,7 @@ Rules:
 - `GET /api/gemini/handoff/:requestId`
 - `GET /api/gemini/handoff/:requestId/events` (supports `limit`, `before_id`, `event_type`, `event_stage` query params)
 - `POST /api/gemini/handoff/:requestId/retry`
-- `POST /api/gemini/sheets/sync-approvals`
+- `POST /api/gemini/sheets/sync-approvals` (optional `expected_revision` query param)
 
 ## Local Simulator (Dev/Test)
 

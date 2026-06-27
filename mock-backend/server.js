@@ -5738,6 +5738,7 @@ app.get("/api/gemini/handoff/:requestId", (req, res) => {
     request_id: record.request_id,
     status: record.status,
     accepted_at: record.accepted_at,
+    approvals_revision: Number(record.approvals_revision || 0),
     retry_count: record.retry_count,
     request_payload_sha256: record.request_payload_sha256 || null,
     response_id: record.response_id || record.response?.response_id || null,
@@ -6114,13 +6115,50 @@ app.post("/api/gemini/sheets/sync-approvals", (req, res) => {
     return res.status(404).json({ error: "not_found", request_id: payload.request_id });
   }
 
-  replaceGeminiHandoffApprovals(payload.request_id, payload.approvals);
+  const expectedRevisionRaw = String(req.query?.expected_revision || "").trim();
+  let expectedRevision = null;
+  if (expectedRevisionRaw) {
+    const parsedExpectedRevision = Number.parseInt(expectedRevisionRaw, 10);
+    if (!Number.isInteger(parsedExpectedRevision) || parsedExpectedRevision < 0) {
+      return res.status(400).json({
+        error: "invalid_expected_revision",
+        message: "expected_revision must be a non-negative integer",
+      });
+    }
+    expectedRevision = parsedExpectedRevision;
+  }
+
+  const replaced = replaceGeminiHandoffApprovals(
+    payload.request_id,
+    payload.approvals,
+    { expectedRevision }
+  );
+
+  if (replaced?.conflict) {
+    addGeminiHandoffEvent(payload.request_id, "approvals_sync_conflict", "callback", {
+      expected_revision: expectedRevision,
+      current_revision: Number(replaced.current_revision || 0),
+    });
+    return res.status(409).json({
+      error: "approval_sync_conflict",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: payload.request_id,
+      expected_revision: expectedRevision,
+      current_revision: Number(replaced.current_revision || 0),
+    });
+  }
+
+  addGeminiHandoffEvent(payload.request_id, "approvals_synced", "callback", {
+    approval_count: Number(replaced?.upserted || 0),
+    approvals_revision: Number(replaced?.approvals_revision || Number(record?.approvals_revision || 0)),
+  });
 
   const counts = getGeminiHandoffApprovalCounts(payload.request_id);
   return res.json({
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
     request_id: payload.request_id,
     synced_at: new Date().toISOString(),
+    approvals_revision: Number(replaced?.approvals_revision || Number(record?.approvals_revision || 0)),
     counts,
   });
 });
