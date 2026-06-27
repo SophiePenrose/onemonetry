@@ -1746,6 +1746,72 @@ export function countGeminiHandoffRequests(filters = {}) {
   return Number(row?.count || 0);
 }
 
+export function getGeminiHandoffOperationalSummary(options = {}) {
+  const recentHoursRaw = Number.parseInt(String(options?.recentHours || 24), 10);
+  const recentHours = Number.isInteger(recentHoursRaw)
+    ? Math.max(1, Math.min(recentHoursRaw, 168))
+    : 24;
+  const retryLimitRaw = Number.parseInt(String(options?.retryLimit || 5), 10);
+  const retryLimit = Number.isInteger(retryLimitRaw)
+    ? Math.max(1, Math.min(retryLimitRaw, 100))
+    : 5;
+
+  const totalRow = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM gemini_handoff_requests
+  `).get();
+
+  const statusRows = db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM gemini_handoff_requests
+    GROUP BY status
+  `).all();
+
+  const retryRow = db.prepare(`
+    SELECT
+      COUNT(*) AS requests_with_retries,
+      COALESCE(SUM(retry_count), 0) AS total_retry_attempts,
+      SUM(CASE WHEN retry_count >= ? THEN 1 ELSE 0 END) AS at_or_above_retry_limit
+    FROM gemini_handoff_requests
+  `).get(retryLimit);
+
+  const recentEventRows = db.prepare(`
+    SELECT event_type, COUNT(*) AS count
+    FROM gemini_handoff_events
+    WHERE created_at >= datetime('now', ?)
+    GROUP BY event_type
+  `).all(`-${recentHours} hours`);
+
+  const statusCounts = {};
+  for (const row of statusRows) {
+    const key = String(row.status || "").trim().toLowerCase() || "unknown";
+    statusCounts[key] = Number(row.count || 0);
+  }
+
+  const recentEventCounts = {};
+  for (const row of recentEventRows) {
+    const key = String(row.event_type || "").trim();
+    if (!key) continue;
+    recentEventCounts[key] = Number(row.count || 0);
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    totals: {
+      total_requests: Number(totalRow?.count || 0),
+      status_counts: statusCounts,
+    },
+    retry: {
+      max_retry_count: retryLimit,
+      requests_with_retries: Number(retryRow?.requests_with_retries || 0),
+      total_retry_attempts: Number(retryRow?.total_retry_attempts || 0),
+      at_or_above_retry_limit: Number(retryRow?.at_or_above_retry_limit || 0),
+    },
+    recent_window_hours: recentHours,
+    recent_event_counts: recentEventCounts,
+  };
+}
+
 export function completeGeminiHandoffRequest(requestId, responsePayload = {}) {
   const normalized = String(requestId || "").trim();
   if (!normalized) return null;

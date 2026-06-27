@@ -917,6 +917,41 @@ describe("API endpoints", () => {
       assert.equal(invalidOffset.data.error, "invalid_offset");
     });
 
+    it("returns Gemini handoff operational summary", async () => {
+      const requestId = "req_api_test_summary_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      const summary = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24");
+      assert.equal(summary.status, 200);
+      assert.equal(summary.data.contract_version, "gemini-handoff-v1");
+      assert.equal(typeof summary.data.generated_at, "string");
+      assert.equal(summary.data.recent_window_hours, 24);
+      assert.equal(typeof summary.data.totals.total_requests, "number");
+      assert.equal(typeof summary.data.totals.status_counts, "object");
+      assert.equal(typeof summary.data.retry.max_retry_count, "number");
+      assert.equal(typeof summary.data.retry.total_retry_attempts, "number");
+      assert.equal(summary.data.totals.total_requests >= 1, true);
+      assert.equal((summary.data.totals.status_counts.completed || 0) >= 1, true);
+    });
+
+    it("validates Gemini handoff summary query parameters", async () => {
+      const invalid = await fetchJSON("/api/gemini/handoff/summary?recent_hours=0");
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.data.error, "invalid_recent_hours");
+    });
+
     it("rejects invalid handoff payloads via schema validation", async () => {
       const invalid = await fetchJSON("/api/gemini/handoff", {
         method: "POST",

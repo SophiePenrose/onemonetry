@@ -121,6 +121,7 @@ import {
   getGeminiHandoffRequest,
   listGeminiHandoffRequests,
   countGeminiHandoffRequests,
+  getGeminiHandoffOperationalSummary,
   completeGeminiHandoffRequest,
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
@@ -5721,6 +5722,27 @@ app.get("/api/gemini/handoff", (req, res) => {
     total,
     count: items.length,
     items,
+  });
+});
+
+app.get("/api/gemini/handoff/summary", (req, res) => {
+  const recentHoursRaw = String(req.query?.recent_hours || "24").trim();
+  const recentHours = Number.parseInt(recentHoursRaw, 10);
+  if (!Number.isInteger(recentHours) || recentHours < 1 || recentHours > 168) {
+    return res.status(400).json({
+      error: "invalid_recent_hours",
+      message: "recent_hours must be an integer between 1 and 168",
+    });
+  }
+
+  const summary = getGeminiHandoffOperationalSummary({
+    recentHours,
+    retryLimit: GEMINI_HANDOFF_MAX_RETRY_COUNT,
+  });
+
+  return res.json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    ...summary,
   });
 });
 
