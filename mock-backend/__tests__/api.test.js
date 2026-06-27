@@ -1378,6 +1378,84 @@ describe("API endpoints", () => {
       assert.equal(invalidFormat.data.error, "invalid_format");
     });
 
+    it("supports send_eligible filtering for rows ready to send", async () => {
+      const requestId = "req_api_test_yamm_send_eligible_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const payload = buildGeminiHandoffResponsePayload(requestId);
+      payload.sequence_outputs[0].yamm_rows = [
+        {
+          To: "",
+          Subject: "Missing recipient",
+          Body: "No recipient should fail send eligibility",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 1,
+          ApprovalStatus: "approved",
+        },
+        {
+          To: "owner@example.co.uk",
+          Subject: "Approved and sendable",
+          Body: "This one is send eligible",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 2,
+          ApprovalStatus: "approved",
+          DoNotSend: "false",
+        },
+        {
+          To: "blocked@example.co.uk",
+          Subject: "Blocked by DoNotSend",
+          Body: "Should be filtered out",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 3,
+          ApprovalStatus: "approved",
+          DoNotSend: "true",
+        },
+      ];
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(completed.status, 200);
+
+      const sendEligible = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?send_eligible=true`);
+      assert.equal(sendEligible.status, 200);
+      assert.equal(sendEligible.data.count, 1);
+      assert.equal(sendEligible.data.filters.send_eligible, true);
+      assert.equal(sendEligible.data.rows[0]?.To, "owner@example.co.uk");
+
+      const sendEligibleCsv = await fetch(`${BASE}/api/gemini/handoff/${requestId}/yamm-rows?format=csv&send_eligible=true`);
+      assert.equal(sendEligibleCsv.status, 200);
+      const sendEligibleCsvBody = await sendEligibleCsv.text();
+      assert.equal(sendEligibleCsvBody.includes("owner@example.co.uk"), true);
+      assert.equal(sendEligibleCsvBody.includes("blocked@example.co.uk"), false);
+
+      const contradictoryFilters = await fetchJSON(
+        `/api/gemini/handoff/${requestId}/yamm-rows?approval_status=pending&send_eligible=true`
+      );
+      assert.equal(contradictoryFilters.status, 200);
+      assert.equal(contradictoryFilters.data.count, 0);
+
+      const invalidSendEligible = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?send_eligible=maybe`);
+      assert.equal(invalidSendEligible.status, 400);
+      assert.equal(invalidSendEligible.data.error, "invalid_send_eligible");
+    });
+
     it("validates handoff event history query parameters", async () => {
       const requestId = "req_api_test_events_validation_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {
