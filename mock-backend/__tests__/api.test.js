@@ -907,6 +907,15 @@ describe("API endpoints", () => {
       assert.equal(completedOnly.data.items.every((entry) => entry.status === "completed"), true);
       assert.equal(completedOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
       assert.equal(completedOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
+      const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
+      assert.equal(withSummary.status, 200);
+      assert.equal(withSummary.data.filters.include_yamm_summary, true);
+      const completedWithSummary = withSummary.data.items.find((entry) => entry.request_id === completedRequestId);
+      const acceptedWithSummary = withSummary.data.items.find((entry) => entry.request_id === acceptedOnlyRequestId);
+      assert.equal(typeof completedWithSummary?.yamm_summary, "object");
+      assert.equal(completedWithSummary?.yamm_summary?.totals?.rows >= 1, true);
+      assert.equal(acceptedWithSummary?.yamm_summary, null);
     });
 
     it("validates handoff list pagination parameters", async () => {
@@ -917,6 +926,10 @@ describe("API endpoints", () => {
       const invalidOffset = await fetchJSON("/api/gemini/handoff?offset=-1");
       assert.equal(invalidOffset.status, 400);
       assert.equal(invalidOffset.data.error, "invalid_offset");
+
+      const invalidSummaryFlag = await fetchJSON("/api/gemini/handoff?include_yamm_summary=maybe");
+      assert.equal(invalidSummaryFlag.status, 400);
+      assert.equal(invalidSummaryFlag.data.error, "invalid_include_yamm_summary");
     });
 
     it("returns Gemini handoff operational summary", async () => {

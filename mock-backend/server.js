@@ -451,6 +451,49 @@ function isGeminiYammRowSendEligible(row = {}) {
   return approvalStatus === "approved" && hasRecipient && !doNotSend;
 }
 
+function summarizeGeminiYammRows(rows = []) {
+  const byApprovalStatus = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    sent: 0,
+    paused: 0,
+    unknown: 0,
+  };
+  let missingRecipient = 0;
+  let doNotSendCount = 0;
+  let sendEligibleCount = 0;
+
+  for (const row of rows) {
+    const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+    if (GEMINI_APPROVAL_STATUSES.has(approvalStatus)) {
+      byApprovalStatus[approvalStatus] += 1;
+    } else {
+      byApprovalStatus.unknown += 1;
+    }
+
+    if (String(row?.To || "").trim().length < 1) {
+      missingRecipient += 1;
+    }
+    if (isTruthyGeminiYammFlag(row?.DoNotSend)) {
+      doNotSendCount += 1;
+    }
+    if (isGeminiYammRowSendEligible(row)) {
+      sendEligibleCount += 1;
+    }
+  }
+
+  return {
+    totals: {
+      rows: rows.length,
+      send_eligible: sendEligibleCount,
+      missing_recipient: missingRecipient,
+      do_not_send: doNotSendCount,
+    },
+    by_approval_status: byApprovalStatus,
+  };
+}
+
 if (IGNORE_RUNTIME_SIGTERM) {
   process.on("SIGTERM", () => {
     console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
@@ -5799,6 +5842,14 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
 app.get("/api/gemini/handoff", (req, res) => {
   const statusFilter = String(req.query?.status || "").trim().toLowerCase() || null;
+  const rawIncludeYammSummary = String(req.query?.include_yamm_summary || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeYammSummary)) {
+    return res.status(400).json({
+      error: "invalid_include_yamm_summary",
+      message: "include_yamm_summary must be a boolean flag (true/false)",
+    });
+  }
+  const includeYammSummary = ["1", "true", "yes", "on"].includes(rawIncludeYammSummary);
   const rawLimit = Number.parseInt(String(req.query?.limit || "50"), 10);
   const rawOffset = Number.parseInt(String(req.query?.offset || "0"), 10);
   const limit = Number.isFinite(rawLimit) ? rawLimit : NaN;
@@ -5823,6 +5874,22 @@ app.get("/api/gemini/handoff", (req, res) => {
     limit,
     offset,
   });
+  const responseItems = includeYammSummary
+    ? items.map((item) => {
+      const record = getGeminiHandoffRequest(item.request_id);
+      if (!record?.response || typeof record.response !== "object") {
+        return {
+          ...item,
+          yamm_summary: null,
+        };
+      }
+      const rows = extractGeminiYammRows(record.response);
+      return {
+        ...item,
+        yamm_summary: summarizeGeminiYammRows(rows),
+      };
+    })
+    : items;
   const total = countGeminiHandoffRequests({ status: statusFilter });
 
   return res.json({
@@ -5831,10 +5898,11 @@ app.get("/api/gemini/handoff", (req, res) => {
       status: statusFilter,
       limit,
       offset,
+      include_yamm_summary: includeYammSummary,
     },
     total,
-    count: items.length,
-    items,
+    count: responseItems.length,
+    items: responseItems,
   });
 });
 
@@ -5968,48 +6036,13 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows/summary", (req, res) => {
   }
 
   const rows = extractGeminiYammRows(record.response);
-  const byApprovalStatus = {
-    pending: 0,
-    approved: 0,
-    rejected: 0,
-    sent: 0,
-    paused: 0,
-    unknown: 0,
-  };
-  let missingRecipient = 0;
-  let doNotSendCount = 0;
-  let sendEligibleCount = 0;
-
-  for (const row of rows) {
-    const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
-    if (GEMINI_APPROVAL_STATUSES.has(approvalStatus)) {
-      byApprovalStatus[approvalStatus] += 1;
-    } else {
-      byApprovalStatus.unknown += 1;
-    }
-
-    if (String(row?.To || "").trim().length < 1) {
-      missingRecipient += 1;
-    }
-    if (isTruthyGeminiYammFlag(row?.DoNotSend)) {
-      doNotSendCount += 1;
-    }
-    if (isGeminiYammRowSendEligible(row)) {
-      sendEligibleCount += 1;
-    }
-  }
+  const summary = summarizeGeminiYammRows(rows);
 
   return res.json({
     contract_version: record.contract_version,
     request_id: requestId,
     response_id: record.response_id || record.response?.response_id || null,
-    totals: {
-      rows: rows.length,
-      send_eligible: sendEligibleCount,
-      missing_recipient: missingRecipient,
-      do_not_send: doNotSendCount,
-    },
-    by_approval_status: byApprovalStatus,
+    ...summary,
   });
 });
 
