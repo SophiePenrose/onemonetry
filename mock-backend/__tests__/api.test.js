@@ -1148,6 +1148,12 @@ describe("API endpoints", () => {
       assert.equal(noCompletedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
       assert.equal(noCompletedAtList.data.items.some((entry) => entry.request_id === completedRequestId), false);
 
+      const minEventCountList = await fetchJSON("/api/gemini/handoff?min_event_count=1&limit=100&offset=0");
+      assert.equal(minEventCountList.status, 200);
+      assert.equal(minEventCountList.data.filters.min_event_count, 1);
+      assert.equal(minEventCountList.data.items.length >= 1, true);
+      assert.equal(minEventCountList.data.items.every((entry) => Number(entry.event_count || 0) >= 1), true);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1263,6 +1269,10 @@ describe("API endpoints", () => {
       const invalidHasCompletedAt = await fetchJSON("/api/gemini/handoff?has_completed_at=maybe");
       assert.equal(invalidHasCompletedAt.status, 400);
       assert.equal(invalidHasCompletedAt.data.error, "invalid_has_completed_at");
+
+      const invalidMinEventCount = await fetchJSON("/api/gemini/handoff?min_event_count=abc");
+      assert.equal(invalidMinEventCount.status, 400);
+      assert.equal(invalidMinEventCount.data.error, "invalid_min_event_count");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
