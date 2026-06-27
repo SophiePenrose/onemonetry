@@ -2250,6 +2250,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ? Math.max(1, Math.min(retryLimitRaw, 100))
     : 5;
   const includeRecentStatusCounts = options?.includeRecentStatusCounts === true;
+  const includeRecentRetryCounts = options?.includeRecentRetryCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2279,6 +2280,25 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       GROUP BY status
     `).all(`-${recentHours} hours`)
     : [];
+
+  const recentRetryRow = includeRecentRetryCounts
+    ? db.prepare(`
+      SELECT
+        SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) AS requests_with_retries,
+        SUM(CASE WHEN retry_count >= ? THEN 1 ELSE 0 END) AS at_or_above_retry_limit
+      FROM gemini_handoff_requests
+      WHERE updated_at >= datetime('now', ?)
+    `).get(retryLimit, `-${recentHours} hours`)
+    : null;
+
+  const recentRetryEventRow = includeRecentRetryCounts
+    ? db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_type = 'retry_requested'
+    `).get(`-${recentHours} hours`)
+    : null;
 
   const statusCounts = {};
   for (const row of statusRows) {
@@ -2314,6 +2334,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     recent_window_hours: recentHours,
     recent_event_counts: recentEventCounts,
     ...(includeRecentStatusCounts ? { recent_status_counts: recentStatusCounts } : {}),
+    ...(includeRecentRetryCounts
+      ? {
+        recent_retry_counts: {
+          retry_limit: retryLimit,
+          requests_with_retries: Number(recentRetryRow?.requests_with_retries || 0),
+          at_or_above_retry_limit: Number(recentRetryRow?.at_or_above_retry_limit || 0),
+          retry_requested_events: Number(recentRetryEventRow?.count || 0),
+        },
+      }
+      : {}),
   };
 }
 

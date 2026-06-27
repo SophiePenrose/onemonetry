@@ -1349,6 +1349,14 @@ describe("API endpoints", () => {
       assert.equal(summaryWithRecentStatus.status, 200);
       assert.equal(typeof summaryWithRecentStatus.data.recent_status_counts, "object");
       assert.equal((summaryWithRecentStatus.data.recent_status_counts.completed || 0) >= 1, true);
+
+      const summaryWithRecentRetryCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_retry_counts=true");
+      assert.equal(summaryWithRecentRetryCounts.status, 200);
+      assert.equal(typeof summaryWithRecentRetryCounts.data.recent_retry_counts, "object");
+      assert.equal(typeof summaryWithRecentRetryCounts.data.recent_retry_counts.retry_limit, "number");
+      assert.equal(typeof summaryWithRecentRetryCounts.data.recent_retry_counts.requests_with_retries, "number");
+      assert.equal(typeof summaryWithRecentRetryCounts.data.recent_retry_counts.at_or_above_retry_limit, "number");
+      assert.equal(typeof summaryWithRecentRetryCounts.data.recent_retry_counts.retry_requested_events, "number");
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1359,6 +1367,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentStatusCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_status_counts=maybe");
       assert.equal(invalidIncludeRecentStatusCounts.status, 400);
       assert.equal(invalidIncludeRecentStatusCounts.data.error, "invalid_include_recent_status_counts");
+
+      const invalidIncludeRecentRetryCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_retry_counts=maybe");
+      assert.equal(invalidIncludeRecentRetryCounts.status, 400);
+      assert.equal(invalidIncludeRecentRetryCounts.data.error, "invalid_include_recent_retry_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {

@@ -6302,11 +6302,20 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentStatusCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentStatusCounts);
+  const rawIncludeRecentRetryCounts = String(req.query?.include_recent_retry_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentRetryCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_retry_counts",
+      message: "include_recent_retry_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentRetryCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentRetryCounts);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
     retryLimit: GEMINI_HANDOFF_MAX_RETRY_COUNT,
     includeRecentStatusCounts,
+    includeRecentRetryCounts,
   });
 
   return res.json({
