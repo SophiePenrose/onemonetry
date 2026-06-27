@@ -2251,6 +2251,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     : 5;
   const includeRecentStatusCounts = options?.includeRecentStatusCounts === true;
   const includeRecentRetryCounts = options?.includeRecentRetryCounts === true;
+  const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2300,6 +2301,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).get(`-${recentHours} hours`)
     : null;
 
+  const recentApprovalRows = includeRecentApprovalCounts
+    ? db.prepare(`
+      SELECT approval_status, COUNT(*) AS count
+      FROM gemini_handoff_approvals
+      WHERE synced_at >= datetime('now', ?)
+      GROUP BY approval_status
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2318,6 +2328,14 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
     recentStatusCounts[key] = Number(row.count || 0);
   }
+
+  const recentApprovalStatusCounts = {};
+  for (const row of recentApprovalRows) {
+    const key = String(row.approval_status || "").trim().toLowerCase() || "unknown";
+    recentApprovalStatusCounts[key] = Number(row.count || 0);
+  }
+  const recentApprovalTotal = Object.values(recentApprovalStatusCounts)
+    .reduce((sum, value) => sum + Number(value || 0), 0);
 
   return {
     generated_at: new Date().toISOString(),
@@ -2341,6 +2359,14 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           requests_with_retries: Number(recentRetryRow?.requests_with_retries || 0),
           at_or_above_retry_limit: Number(recentRetryRow?.at_or_above_retry_limit || 0),
           retry_requested_events: Number(recentRetryEventRow?.count || 0),
+        },
+      }
+      : {}),
+    ...(includeRecentApprovalCounts
+      ? {
+        recent_approval_counts: {
+          total: recentApprovalTotal,
+          by_status: recentApprovalStatusCounts,
         },
       }
       : {}),
