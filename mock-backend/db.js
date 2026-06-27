@@ -1716,6 +1716,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const maxRetryCount = Number.isInteger(rawMaxRetryCount) && rawMaxRetryCount >= 0
     ? rawMaxRetryCount
     : null;
+  const rawRetryCount = Number.parseInt(String(filters?.retryCount ?? ""), 10);
+  const retryCount = Number.isInteger(rawRetryCount) && rawRetryCount >= 0
+    ? rawRetryCount
+    : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1816,6 +1820,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(maxRetryCount);
   }
 
+  if (retryCount !== null) {
+    whereClauses.push("r.retry_count = ?");
+    params.push(retryCount);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -1903,6 +1912,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const maxRetryCount = Number.isInteger(rawMaxRetryCount) && rawMaxRetryCount >= 0
     ? rawMaxRetryCount
     : null;
+  const rawRetryCount = Number.parseInt(String(filters?.retryCount ?? ""), 10);
+  const retryCount = Number.isInteger(rawRetryCount) && rawRetryCount >= 0
+    ? rawRetryCount
+    : null;
 
   const whereClauses = [];
   const params = [];
@@ -1970,6 +1983,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (maxRetryCount !== null) {
     whereClauses.push("retry_count <= ?");
     params.push(maxRetryCount);
+  }
+
+  if (retryCount !== null) {
+    whereClauses.push("retry_count = ?");
+    params.push(retryCount);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
