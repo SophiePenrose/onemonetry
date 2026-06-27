@@ -265,6 +265,11 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_status ON gemini_handoff_requests(status);
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_accepted ON gemini_handoff_requests(accepted_at);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_updated ON gemini_handoff_requests(updated_at);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_completed ON gemini_handoff_requests(completed_at);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_last_retry_requested ON gemini_handoff_requests(last_retry_requested_at);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_retry_count ON gemini_handoff_requests(retry_count);
+  CREATE INDEX IF NOT EXISTS idx_gemini_handoff_queue_health ON gemini_handoff_requests(status, retry_count, accepted_at);
 
   CREATE TABLE IF NOT EXISTS gemini_handoff_approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
