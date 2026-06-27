@@ -1692,6 +1692,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasApprovals === "false"
       ? false
       : null;
+  const normalizedHasEvents = String(filters?.hasEvents ?? "").trim().toLowerCase();
+  const hasEvents = normalizedHasEvents === "true"
+    ? true
+    : normalizedHasEvents === "false"
+      ? false
+      : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1748,6 +1754,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id)");
   } else if (hasApprovals === false) {
     whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id)");
+  }
+
+  if (hasEvents === true) {
+    whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = r.request_id)");
+  } else if (hasEvents === false) {
+    whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = r.request_id)");
   }
 
   if (whereClauses.length > 0) {
@@ -1813,6 +1825,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasApprovals === "false"
       ? false
       : null;
+  const normalizedHasEvents = String(filters?.hasEvents ?? "").trim().toLowerCase();
+  const hasEvents = normalizedHasEvents === "true"
+    ? true
+    : normalizedHasEvents === "false"
+      ? false
+      : null;
 
   const whereClauses = [];
   const params = [];
@@ -1838,6 +1856,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id)");
   } else if (hasApprovals === false) {
     whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id)");
+  }
+
+  if (hasEvents === true) {
+    whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id)");
+  } else if (hasEvents === false) {
+    whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id)");
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";

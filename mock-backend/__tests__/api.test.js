@@ -977,6 +977,19 @@ describe("API endpoints", () => {
       assert.equal(withoutApprovalsOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
       assert.equal(withoutApprovalsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const withEventsOnly = await fetchJSON("/api/gemini/handoff?has_events=true&limit=100&offset=0");
+      assert.equal(withEventsOnly.status, 200);
+      assert.equal(withEventsOnly.data.filters.has_events, true);
+      assert.equal(withEventsOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
+      assert.equal(withEventsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
+      const withoutEventsOnly = await fetchJSON("/api/gemini/handoff?has_events=false&limit=100&offset=0");
+      assert.equal(withoutEventsOnly.status, 200);
+      assert.equal(withoutEventsOnly.data.filters.has_events, false);
+      assert.equal(withoutEventsOnly.data.items.length, 0);
+      assert.equal(withoutEventsOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
+      assert.equal(withoutEventsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
       const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
       assert.equal(withSummary.status, 200);
       assert.equal(withSummary.data.filters.include_yamm_summary, true);
@@ -1064,6 +1077,10 @@ describe("API endpoints", () => {
       const invalidHasApprovals = await fetchJSON("/api/gemini/handoff?has_approvals=maybe");
       assert.equal(invalidHasApprovals.status, 400);
       assert.equal(invalidHasApprovals.data.error, "invalid_has_approvals");
+
+      const invalidHasEvents = await fetchJSON("/api/gemini/handoff?has_events=maybe");
+      assert.equal(invalidHasEvents.status, 400);
+      assert.equal(invalidHasEvents.data.error, "invalid_has_events");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
