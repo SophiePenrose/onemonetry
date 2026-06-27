@@ -1698,6 +1698,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasEvents === "false"
       ? false
       : null;
+  const normalizedHasCompleted = String(filters?.hasCompleted ?? "").trim().toLowerCase();
+  const hasCompleted = normalizedHasCompleted === "true"
+    ? true
+    : normalizedHasCompleted === "false"
+      ? false
+      : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1760,6 +1766,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = r.request_id)");
   } else if (hasEvents === false) {
     whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = r.request_id)");
+  }
+
+  if (hasCompleted === true) {
+    whereClauses.push("r.completed_at IS NOT NULL AND r.completed_at <> ''");
+  } else if (hasCompleted === false) {
+    whereClauses.push("(r.completed_at IS NULL OR r.completed_at = '')");
   }
 
   if (whereClauses.length > 0) {
@@ -1831,6 +1843,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasEvents === "false"
       ? false
       : null;
+  const normalizedHasCompleted = String(filters?.hasCompleted ?? "").trim().toLowerCase();
+  const hasCompleted = normalizedHasCompleted === "true"
+    ? true
+    : normalizedHasCompleted === "false"
+      ? false
+      : null;
 
   const whereClauses = [];
   const params = [];
@@ -1862,6 +1880,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id)");
   } else if (hasEvents === false) {
     whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id)");
+  }
+
+  if (hasCompleted === true) {
+    whereClauses.push("completed_at IS NOT NULL AND completed_at <> ''");
+  } else if (hasCompleted === false) {
+    whereClauses.push("(completed_at IS NULL OR completed_at = '')");
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";

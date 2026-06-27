@@ -5884,6 +5884,16 @@ app.get("/api/gemini/handoff", (req, res) => {
   const hasEvents = rawHasEvents
     ? ["1", "true", "yes", "on"].includes(rawHasEvents)
     : null;
+  const rawHasCompleted = String(req.query?.has_completed || "").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawHasCompleted)) {
+    return res.status(400).json({
+      error: "invalid_has_completed",
+      message: "has_completed must be a boolean flag (true/false)",
+    });
+  }
+  const hasCompleted = rawHasCompleted
+    ? ["1", "true", "yes", "on"].includes(rawHasCompleted)
+    : null;
   const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
     return res.status(400).json({
@@ -5948,6 +5958,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasRetries,
     hasApprovals,
     hasEvents,
+    hasCompleted,
     sort,
     limit,
     offset,
@@ -5974,6 +5985,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasRetries,
     hasApprovals,
     hasEvents,
+    hasCompleted,
   });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
   const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
@@ -5990,6 +6002,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       has_retries: hasRetries,
       has_approvals: hasApprovals,
       has_events: hasEvents,
+      has_completed: hasCompleted,
       sort,
       limit,
       offset,

@@ -990,6 +990,18 @@ describe("API endpoints", () => {
       assert.equal(withoutEventsOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
       assert.equal(withoutEventsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
 
+      const withCompletedOnly = await fetchJSON("/api/gemini/handoff?has_completed=true&limit=100&offset=0");
+      assert.equal(withCompletedOnly.status, 200);
+      assert.equal(withCompletedOnly.data.filters.has_completed, true);
+      assert.equal(withCompletedOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
+      assert.equal(withCompletedOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
+      const withoutCompletedOnly = await fetchJSON("/api/gemini/handoff?has_completed=false&limit=100&offset=0");
+      assert.equal(withoutCompletedOnly.status, 200);
+      assert.equal(withoutCompletedOnly.data.filters.has_completed, false);
+      assert.equal(withoutCompletedOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
+      assert.equal(withoutCompletedOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
       const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
       assert.equal(withSummary.status, 200);
       assert.equal(withSummary.data.filters.include_yamm_summary, true);
@@ -1081,6 +1093,10 @@ describe("API endpoints", () => {
       const invalidHasEvents = await fetchJSON("/api/gemini/handoff?has_events=maybe");
       assert.equal(invalidHasEvents.status, 400);
       assert.equal(invalidHasEvents.data.error, "invalid_has_events");
+
+      const invalidHasCompleted = await fetchJSON("/api/gemini/handoff?has_completed=maybe");
+      assert.equal(invalidHasCompleted.status, 400);
+      assert.equal(invalidHasCompleted.data.error, "invalid_has_completed");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
