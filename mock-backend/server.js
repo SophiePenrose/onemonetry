@@ -5894,6 +5894,16 @@ app.get("/api/gemini/handoff", (req, res) => {
   const hasCompleted = rawHasCompleted
     ? ["1", "true", "yes", "on"].includes(rawHasCompleted)
     : null;
+  const rawHasCompletedAt = String(req.query?.has_completed_at || "").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawHasCompletedAt)) {
+    return res.status(400).json({
+      error: "invalid_has_completed_at",
+      message: "has_completed_at must be a boolean flag (true/false)",
+    });
+  }
+  const hasCompletedAt = rawHasCompletedAt
+    ? ["1", "true", "yes", "on"].includes(rawHasCompletedAt)
+    : null;
   const rawHasLastRetryRequested = String(req.query?.has_last_retry_requested || "").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawHasLastRetryRequested)) {
     return res.status(400).json({
@@ -6101,6 +6111,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasApprovals,
     hasEvents,
     hasCompleted,
+    hasCompletedAt,
     hasLastRetryRequested,
     beforeAcceptedAt,
     afterAcceptedAt,
@@ -6140,6 +6151,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasApprovals,
     hasEvents,
     hasCompleted,
+    hasCompletedAt,
     hasLastRetryRequested,
     beforeAcceptedAt,
     afterAcceptedAt,
@@ -6169,6 +6181,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       has_approvals: hasApprovals,
       has_events: hasEvents,
       has_completed: hasCompleted,
+      has_completed_at: hasCompletedAt,
       has_last_retry_requested: hasLastRetryRequested,
       before_accepted_at: beforeAcceptedAt,
       after_accepted_at: afterAcceptedAt,
