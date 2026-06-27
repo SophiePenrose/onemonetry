@@ -438,6 +438,12 @@ function buildGeminiYammRowsCsv(rows = []) {
   return `${lines.join("\n")}\n`;
 }
 
+function isTruthyGeminiYammFlag(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
 if (IGNORE_RUNTIME_SIGTERM) {
   process.on("SIGTERM", () => {
     console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
@@ -5893,6 +5899,15 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     });
   }
 
+  const rawSendEligible = String(req.query?.send_eligible || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawSendEligible)) {
+    return res.status(400).json({
+      error: "invalid_send_eligible",
+      message: "send_eligible must be a boolean flag (true/false)",
+    });
+  }
+  const sendEligible = ["1", "true", "yes", "on"].includes(rawSendEligible);
+
   if (!record.response || typeof record.response !== "object") {
     return res.status(409).json({
       error: "handoff_not_completed",
@@ -5902,9 +5917,17 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
   }
 
   const allRows = extractGeminiYammRows(record.response);
-  const rows = rawApprovalStatus
+  const approvalFilteredRows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
+  const rows = sendEligible
+    ? approvalFilteredRows.filter((row) => {
+      const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+      const hasRecipient = String(row?.To || "").trim().length > 0;
+      const doNotSend = isTruthyGeminiYammFlag(row?.DoNotSend);
+      return approvalStatus === "approved" && hasRecipient && !doNotSend;
+    })
+    : approvalFilteredRows;
 
   if (rawFormat === "csv") {
     const csv = buildGeminiYammRowsCsv(rows);
@@ -5921,6 +5944,7 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     count: rows.length,
     filters: {
       approval_status: rawApprovalStatus || null,
+      send_eligible: sendEligible,
     },
     rows,
   });
