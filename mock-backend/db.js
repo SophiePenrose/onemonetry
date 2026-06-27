@@ -251,6 +251,7 @@ db.exec(`
     contract_version TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'accepted',
     accepted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    approvals_revision INTEGER NOT NULL DEFAULT 0,
     retry_count INTEGER NOT NULL DEFAULT 0,
     last_retry_requested_at TEXT,
     request_payload TEXT NOT NULL,
@@ -360,6 +361,9 @@ function ensureGeminiHandoffSchema() {
   if (!names.has("response_payload_sha256")) {
     db.exec("ALTER TABLE gemini_handoff_requests ADD COLUMN response_payload_sha256 TEXT");
   }
+  if (!names.has("approvals_revision")) {
+    db.exec("ALTER TABLE gemini_handoff_requests ADD COLUMN approvals_revision INTEGER NOT NULL DEFAULT 0");
+  }
 
   db.exec(`
     UPDATE gemini_handoff_requests
@@ -369,6 +373,9 @@ function ensureGeminiHandoffSchema() {
     UPDATE gemini_handoff_requests
     SET response_payload_sha256 = NULL
     WHERE response_payload_sha256 = '';
+
+    UPDATE gemini_handoff_requests
+    SET approvals_revision = COALESCE(approvals_revision, 0);
   `);
 }
 
@@ -1570,6 +1577,14 @@ const stmtDeleteGeminiApprovalsByRequest = db.prepare(`
   WHERE request_id = ?
 `);
 
+const stmtIncrementGeminiApprovalRevision = db.prepare(`
+  UPDATE gemini_handoff_requests
+  SET approvals_revision = approvals_revision + 1,
+      updated_at = datetime('now')
+  WHERE request_id = ?
+    AND approvals_revision = ?
+`);
+
 const stmtUpsertGeminiApproval = db.prepare(`
   INSERT INTO gemini_handoff_approvals (
     request_id,
@@ -1613,6 +1628,7 @@ function hydrateGeminiHandoffRequest(row) {
     contract_version: row.contract_version,
     status: row.status,
     accepted_at: row.accepted_at,
+    approvals_revision: Number(row.approvals_revision || 0),
     retry_count: Number(row.retry_count || 0),
     last_retry_requested_at: row.last_retry_requested_at,
     request: parseJsonText(row.request_payload, {}),
@@ -1701,6 +1717,7 @@ export function listGeminiHandoffRequests(filters = {}) {
     contract_version: row.contract_version,
     status: row.status,
     accepted_at: row.accepted_at,
+    approvals_revision: Number(row.approvals_revision || 0),
     retry_count: Number(row.retry_count || 0),
     last_retry_requested_at: row.last_retry_requested_at || null,
     request_payload_sha256: row.request_payload_sha256 || null,
@@ -1758,11 +1775,35 @@ export function incrementGeminiHandoffRetry(requestId) {
   return getGeminiHandoffRequest(normalized);
 }
 
-export function replaceGeminiHandoffApprovals(requestId, approvals = []) {
+export function replaceGeminiHandoffApprovals(requestId, approvals = [], options = {}) {
   const normalized = String(requestId || "").trim();
-  if (!normalized) return 0;
+  if (!normalized) {
+    return {
+      updated: false,
+      conflict: false,
+      upserted: 0,
+      approvals_revision: 0,
+      current_revision: 0,
+    };
+  }
+
+  const expectedRevisionRaw = options?.expectedRevision;
+  const hasExpectedRevision = Number.isInteger(expectedRevisionRaw) && expectedRevisionRaw >= 0;
 
   const tx = db.transaction((rows) => {
+    const current = stmtGetGeminiHandoffRequest.get(normalized);
+    const currentRevision = Number(current?.approvals_revision || 0);
+
+    if (hasExpectedRevision && expectedRevisionRaw !== currentRevision) {
+      return {
+        updated: false,
+        conflict: true,
+        upserted: 0,
+        approvals_revision: currentRevision,
+        current_revision: currentRevision,
+      };
+    }
+
     stmtDeleteGeminiApprovalsByRequest.run(normalized);
     let upserted = 0;
     for (const row of rows) {
@@ -1782,7 +1823,27 @@ export function replaceGeminiHandoffApprovals(requestId, approvals = []) {
       );
       upserted += 1;
     }
-    return upserted;
+
+    const revisionResult = stmtIncrementGeminiApprovalRevision.run(normalized, currentRevision);
+    if (Number(revisionResult.changes || 0) < 1) {
+      const refreshed = stmtGetGeminiHandoffRequest.get(normalized);
+      const refreshedRevision = Number(refreshed?.approvals_revision || currentRevision);
+      return {
+        updated: false,
+        conflict: true,
+        upserted: 0,
+        approvals_revision: refreshedRevision,
+        current_revision: refreshedRevision,
+      };
+    }
+
+    return {
+      updated: true,
+      conflict: false,
+      upserted,
+      approvals_revision: currentRevision + 1,
+      current_revision: currentRevision + 1,
+    };
   });
 
   return tx(Array.isArray(approvals) ? approvals : []);
