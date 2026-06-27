@@ -5894,6 +5894,18 @@ app.get("/api/gemini/handoff", (req, res) => {
   const hasCompleted = rawHasCompleted
     ? ["1", "true", "yes", "on"].includes(rawHasCompleted)
     : null;
+  const rawBeforeAcceptedAt = String(req.query?.before_accepted_at || "").trim();
+  let beforeAcceptedAt = null;
+  if (rawBeforeAcceptedAt) {
+    const parsedBeforeAcceptedAt = Date.parse(rawBeforeAcceptedAt);
+    if (!Number.isFinite(parsedBeforeAcceptedAt)) {
+      return res.status(400).json({
+        error: "invalid_before_accepted_at",
+        message: "before_accepted_at must be a valid datetime",
+      });
+    }
+    beforeAcceptedAt = new Date(parsedBeforeAcceptedAt).toISOString();
+  }
   const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
     return res.status(400).json({
@@ -5959,6 +5971,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasApprovals,
     hasEvents,
     hasCompleted,
+    beforeAcceptedAt,
     sort,
     limit,
     offset,
@@ -5986,6 +5999,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     hasApprovals,
     hasEvents,
     hasCompleted,
+    beforeAcceptedAt,
   });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
   const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
@@ -6003,6 +6017,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       has_approvals: hasApprovals,
       has_events: hasEvents,
       has_completed: hasCompleted,
+      before_accepted_at: beforeAcceptedAt,
       sort,
       limit,
       offset,

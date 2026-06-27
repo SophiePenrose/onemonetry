@@ -1034,6 +1034,24 @@ describe("API endpoints", () => {
       assert.equal(typeof withQueueMetrics.data.status_counts, "object");
       assert.equal(typeof withQueueMetrics.data.retry_counts, "object");
 
+      const newestRequestId = "req_api_test_handoff_list_before_cutoff_001";
+      const newestAccepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: newestRequestId })),
+      });
+      assert.equal(newestAccepted.status, 202);
+
+      const newestStatus = await fetchJSON(`/api/gemini/handoff/${newestRequestId}`);
+      assert.equal(newestStatus.status, 200);
+      const cutoff = newestStatus.data.accepted_at;
+
+      const beforeCutoff = await fetchJSON(`/api/gemini/handoff?before_accepted_at=${encodeURIComponent(cutoff)}&limit=100&offset=0`);
+      assert.equal(beforeCutoff.status, 200);
+      assert.equal(beforeCutoff.data.filters.before_accepted_at, new Date(cutoff).toISOString());
+      assert.equal(beforeCutoff.data.items.some((entry) => entry.request_id === newestRequestId), false);
+      assert.equal(beforeCutoff.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1097,6 +1115,10 @@ describe("API endpoints", () => {
       const invalidHasCompleted = await fetchJSON("/api/gemini/handoff?has_completed=maybe");
       assert.equal(invalidHasCompleted.status, 400);
       assert.equal(invalidHasCompleted.data.error, "invalid_has_completed");
+
+      const invalidBeforeAcceptedAt = await fetchJSON("/api/gemini/handoff?before_accepted_at=not-a-date");
+      assert.equal(invalidBeforeAcceptedAt.status, 400);
+      assert.equal(invalidBeforeAcceptedAt.data.error, "invalid_before_accepted_at");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);

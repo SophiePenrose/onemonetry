@@ -1704,6 +1704,7 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1772,6 +1773,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("r.completed_at IS NOT NULL AND r.completed_at <> ''");
   } else if (hasCompleted === false) {
     whereClauses.push("(r.completed_at IS NULL OR r.completed_at = '')");
+  }
+
+  if (beforeAcceptedAt) {
+    whereClauses.push("datetime(r.accepted_at) < datetime(?)");
+    params.push(beforeAcceptedAt);
   }
 
   if (whereClauses.length > 0) {
@@ -1849,6 +1855,7 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
 
   const whereClauses = [];
   const params = [];
@@ -1886,6 +1893,11 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("completed_at IS NOT NULL AND completed_at <> ''");
   } else if (hasCompleted === false) {
     whereClauses.push("(completed_at IS NULL OR completed_at = '')");
+  }
+
+  if (beforeAcceptedAt) {
+    whereClauses.push("datetime(accepted_at) < datetime(?)");
+    params.push(beforeAcceptedAt);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
