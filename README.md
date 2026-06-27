@@ -225,6 +225,10 @@ npm run import:endole-live -- \
    --storage-state-out exports/endole-session.json \
    --next-selector "button[aria-label='Next']" \
    --max-pages 10 \
+   --selector-profile endole_grid \
+   --max-empty-pages 2 \
+   --diagnostics-out exports/endole-live-diagnostics.json \
+   --run-summary-out exports/endole-live-run-summary.json \
    --scroll-steps 5
 ```
 
@@ -235,6 +239,10 @@ Notes:
 - Scraping behavior can change if Endole changes page markup; use `--wait-selector` if the table renders late.
 - Use `--storage-state-out` once to save session cookies/local storage, then `--storage-state-in` for faster future runs.
 - Use `--next-selector` + `--max-pages` for paginated table harvesting, and `--scroll-steps` for lazy-loaded rows.
+- Use `--selector-profile` (`auto`, `endole_table`, `endole_grid`, `generic_table`) or `--row-selector` when markup changes.
+- Use `--max-empty-pages` to stop safely if pagination continues but extraction returns empty pages.
+- Use `--diagnostics-out` to save per-page extractor selection, row counts, and stop reason JSON for debugging.
+- The script always writes a run summary JSON next to the CSV output (`*-run-summary.json`); override with `--run-summary-out`.
 
 ### Make CI a required merge gate (recommended)
 
