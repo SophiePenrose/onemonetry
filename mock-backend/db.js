@@ -1541,7 +1541,7 @@ const stmtInsertGeminiHandoffRequest = db.prepare(`
     request_payload,
     request_payload_sha256,
     updated_at
-  ) VALUES (?, ?, 'accepted', datetime('now'), ?, ?, datetime('now'))
+  ) VALUES (?, ?, 'accepted', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 `);
 
 const stmtGetGeminiHandoffRequest = db.prepare(`
@@ -1776,7 +1776,7 @@ export function listGeminiHandoffRequests(filters = {}) {
   }
 
   if (beforeAcceptedAt) {
-    whereClauses.push("datetime(r.accepted_at) < datetime(?)");
+    whereClauses.push("julianday(r.accepted_at) < julianday(?)");
     params.push(beforeAcceptedAt);
   }
 
@@ -1896,7 +1896,7 @@ export function countGeminiHandoffRequests(filters = {}) {
   }
 
   if (beforeAcceptedAt) {
-    whereClauses.push("datetime(accepted_at) < datetime(?)");
+    whereClauses.push("julianday(accepted_at) < julianday(?)");
     params.push(beforeAcceptedAt);
   }
 
