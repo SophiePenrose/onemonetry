@@ -910,6 +910,18 @@ describe("API endpoints", () => {
       assert.equal(completedOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
       assert.equal(completedOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
 
+      const withResponseOnly = await fetchJSON("/api/gemini/handoff?has_response=true&limit=100&offset=0");
+      assert.equal(withResponseOnly.status, 200);
+      assert.equal(withResponseOnly.data.filters.has_response, true);
+      assert.equal(withResponseOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
+      assert.equal(withResponseOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
+      const withoutResponseOnly = await fetchJSON("/api/gemini/handoff?has_response=false&limit=100&offset=0");
+      assert.equal(withoutResponseOnly.status, 200);
+      assert.equal(withoutResponseOnly.data.filters.has_response, false);
+      assert.equal(withoutResponseOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
+      assert.equal(withoutResponseOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
       const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
       assert.equal(withSummary.status, 200);
       assert.equal(withSummary.data.filters.include_yamm_summary, true);
@@ -985,6 +997,10 @@ describe("API endpoints", () => {
       const invalidQueueMetricsFlag = await fetchJSON("/api/gemini/handoff?include_queue_metrics=maybe");
       assert.equal(invalidQueueMetricsFlag.status, 400);
       assert.equal(invalidQueueMetricsFlag.data.error, "invalid_include_queue_metrics");
+
+      const invalidHasResponse = await fetchJSON("/api/gemini/handoff?has_response=maybe");
+      assert.equal(invalidHasResponse.status, 400);
+      assert.equal(invalidHasResponse.data.error, "invalid_has_response");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
