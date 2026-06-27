@@ -1052,6 +1052,12 @@ describe("API endpoints", () => {
       assert.equal(beforeCutoff.data.items.some((entry) => entry.request_id === newestRequestId), false);
       assert.equal(beforeCutoff.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const afterCutoff = new Date(Date.parse(cutoff) - 1000).toISOString();
+      const afterCutoffList = await fetchJSON(`/api/gemini/handoff?after_accepted_at=${encodeURIComponent(afterCutoff)}&limit=100&offset=0`);
+      assert.equal(afterCutoffList.status, 200);
+      assert.equal(afterCutoffList.data.filters.after_accepted_at, afterCutoff);
+      assert.equal(afterCutoffList.data.items.some((entry) => entry.request_id === newestRequestId), true);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1119,6 +1125,10 @@ describe("API endpoints", () => {
       const invalidBeforeAcceptedAt = await fetchJSON("/api/gemini/handoff?before_accepted_at=not-a-date");
       assert.equal(invalidBeforeAcceptedAt.status, 400);
       assert.equal(invalidBeforeAcceptedAt.data.error, "invalid_before_accepted_at");
+
+      const invalidAfterAcceptedAt = await fetchJSON("/api/gemini/handoff?after_accepted_at=not-a-date");
+      assert.equal(invalidAfterAcceptedAt.status, 400);
+      assert.equal(invalidAfterAcceptedAt.data.error, "invalid_after_accepted_at");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
