@@ -169,6 +169,23 @@ Primary envelope targets:
 
 - hiring_signals, marketing_intelligence, tech_stack
 
+### PhantomBuster
+
+Configuration note:
+
+- PHANTOMBUSTER_URL_TEMPLATE is required
+- PHANTOMBUSTER_API_KEY is optional (used when provided)
+
+Expected source structures accepted:
+
+- jobs[] / open_roles / vacancies / results
+- technologies[] / tech_stack[] / detected_technologies[]
+- monthly_web_traffic / monthly_visits / traffic.monthly_visits
+
+Primary envelope targets:
+
+- hiring_signals, marketing_intelligence, tech_stack
+
 ### Similarweb
 
 Expected source structures accepted:

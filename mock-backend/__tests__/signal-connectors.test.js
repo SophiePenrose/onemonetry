@@ -14,6 +14,10 @@ const originalEnv = {
   PROSPEO_URL_TEMPLATE: process.env.PROSPEO_URL_TEMPLATE,
   PROSPEO_AUTH_HEADER: process.env.PROSPEO_AUTH_HEADER,
   PROSPEO_AUTH_SCHEME: process.env.PROSPEO_AUTH_SCHEME,
+  PHANTOMBUSTER_API_KEY: process.env.PHANTOMBUSTER_API_KEY,
+  PHANTOMBUSTER_URL_TEMPLATE: process.env.PHANTOMBUSTER_URL_TEMPLATE,
+  PHANTOMBUSTER_AUTH_HEADER: process.env.PHANTOMBUSTER_AUTH_HEADER,
+  PHANTOMBUSTER_AUTH_SCHEME: process.env.PHANTOMBUSTER_AUTH_SCHEME,
   STATUSPAGE_URL_TEMPLATE: process.env.STATUSPAGE_URL_TEMPLATE,
   STATUS_FEED_URL_TEMPLATE: process.env.STATUS_FEED_URL_TEMPLATE,
   STATUS_API_URL_TEMPLATE: process.env.STATUS_API_URL_TEMPLATE,
@@ -54,6 +58,10 @@ describe("external signal connectors", () => {
     delete process.env.PROSPEO_URL_TEMPLATE;
     delete process.env.PROSPEO_AUTH_HEADER;
     delete process.env.PROSPEO_AUTH_SCHEME;
+    delete process.env.PHANTOMBUSTER_API_KEY;
+    delete process.env.PHANTOMBUSTER_URL_TEMPLATE;
+    delete process.env.PHANTOMBUSTER_AUTH_HEADER;
+    delete process.env.PHANTOMBUSTER_AUTH_SCHEME;
   });
 
   it("returns no_connectors_configured when templates are missing", async () => {
@@ -141,6 +149,68 @@ describe("external signal connectors", () => {
     assert.equal(Array.isArray(result.available_connectors), true);
     assert.equal(result.available_connectors.includes("endole"), true);
     assert.equal(result.available_connectors.includes("prospeo"), true);
+    assert.equal(result.available_connectors.includes("phantombuster"), true);
+  });
+
+  it("syncs configured PhantomBuster connector payload into hiring, marketing, and tech envelopes", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PHANTOMBUSTER_API_KEY = "test-phantombuster-key";
+    process.env.PHANTOMBUSTER_URL_TEMPLATE = "https://signals.example.test/phantombuster/{company_number}";
+    process.env.PHANTOMBUSTER_AUTH_SCHEME = "none";
+    process.env.PHANTOMBUSTER_AUTH_HEADER = "x-phantombuster-key";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://signals.example.test/phantombuster/99111117");
+      assert.equal(String(options?.headers?.["x-phantombuster-key"] || ""), "test-phantombuster-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            open_roles: 3,
+            jobs: [
+              { title: "Treasury Operations Manager" },
+              { title: "Payment Product Manager" },
+            ],
+            monthly_web_traffic: 420000,
+            technologies: ["Stripe", "Shopify", "Segment"],
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111117",
+      companyName: "Example PhantomBuster Co",
+      companyDomain: "example.co.uk",
+      connectors: ["phantombuster"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    assert.equal(result.attempted, 1);
+    assert.equal(result.succeeded, 1);
+    assert.deepEqual(result.requested_connectors, ["phantombuster"]);
+
+    const connector = (result.connectors || []).find((entry) => entry.id === "phantombuster");
+    assert.ok(connector);
+
+    const hiring = db.getSetting("hiring_signals_99111117", null);
+    const marketing = db.getSetting("marketing_intelligence_99111117", null);
+    const tech = db.getSetting("tech_stack_99111117", null);
+
+    assert.equal(hiring.total_open_roles >= 2, true);
+    assert.equal(marketing.monthly_web_traffic >= 420000, true);
+    assert.equal(tech.signal_count >= 3, true);
   });
 
   it("syncs configured connector payload into ownership and hiring envelopes", async () => {
