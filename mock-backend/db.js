@@ -1680,6 +1680,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasResponse === "false"
       ? false
       : null;
+  const normalizedHasRetries = String(filters?.hasRetries ?? "").trim().toLowerCase();
+  const hasRetries = normalizedHasRetries === "true"
+    ? true
+    : normalizedHasRetries === "false"
+      ? false
+      : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1724,6 +1730,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("r.response_id IS NOT NULL AND r.response_id <> ''");
   } else if (hasResponse === false) {
     whereClauses.push("(r.response_id IS NULL OR r.response_id = '')");
+  }
+
+  if (hasRetries === true) {
+    whereClauses.push("r.retry_count > 0");
+  } else if (hasRetries === false) {
+    whereClauses.push("r.retry_count <= 0");
   }
 
   if (whereClauses.length > 0) {
@@ -1777,6 +1789,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasResponse === "false"
       ? false
       : null;
+  const normalizedHasRetries = String(filters?.hasRetries ?? "").trim().toLowerCase();
+  const hasRetries = normalizedHasRetries === "true"
+    ? true
+    : normalizedHasRetries === "false"
+      ? false
+      : null;
 
   const whereClauses = [];
   const params = [];
@@ -1790,6 +1808,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("response_id IS NOT NULL AND response_id <> ''");
   } else if (hasResponse === false) {
     whereClauses.push("(response_id IS NULL OR response_id = '')");
+  }
+
+  if (hasRetries === true) {
+    whereClauses.push("retry_count > 0");
+  } else if (hasRetries === false) {
+    whereClauses.push("retry_count <= 0");
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";

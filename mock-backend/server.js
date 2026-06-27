@@ -5854,6 +5854,16 @@ app.get("/api/gemini/handoff", (req, res) => {
   const hasResponse = rawHasResponse
     ? ["1", "true", "yes", "on"].includes(rawHasResponse)
     : null;
+  const rawHasRetries = String(req.query?.has_retries || "").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawHasRetries)) {
+    return res.status(400).json({
+      error: "invalid_has_retries",
+      message: "has_retries must be a boolean flag (true/false)",
+    });
+  }
+  const hasRetries = rawHasRetries
+    ? ["1", "true", "yes", "on"].includes(rawHasRetries)
+    : null;
   const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
     return res.status(400).json({
@@ -5915,6 +5925,7 @@ app.get("/api/gemini/handoff", (req, res) => {
   const items = listGeminiHandoffRequests({
     status: statusFilter,
     hasResponse,
+    hasRetries,
     sort,
     limit,
     offset,
@@ -5935,7 +5946,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       };
     })
     : items;
-  const total = countGeminiHandoffRequests({ status: statusFilter, hasResponse });
+  const total = countGeminiHandoffRequests({ status: statusFilter, hasResponse, hasRetries });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
   const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
   const statusCounts = shouldIncludeStatusCounts ? getGeminiHandoffStatusCounts() : undefined;
@@ -5948,6 +5959,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     filters: {
       status: statusFilter,
       has_response: hasResponse,
+      has_retries: hasRetries,
       sort,
       limit,
       offset,
