@@ -5966,6 +5966,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     afterCompletedAt = new Date(parsedAfterCompletedAt).toISOString();
   }
+  const rawAfterLastRetryRequestedAt = String(req.query?.after_last_retry_requested_at || "").trim();
+  let afterLastRetryRequestedAt = null;
+  if (rawAfterLastRetryRequestedAt) {
+    const parsedAfterLastRetryRequestedAt = Date.parse(rawAfterLastRetryRequestedAt);
+    if (!Number.isFinite(parsedAfterLastRetryRequestedAt)) {
+      return res.status(400).json({
+        error: "invalid_after_last_retry_requested_at",
+        message: "after_last_retry_requested_at must be a valid datetime",
+      });
+    }
+    afterLastRetryRequestedAt = new Date(parsedAfterLastRetryRequestedAt).toISOString();
+  }
   const rawMinRetryCount = String(req.query?.min_retry_count || "").trim();
   let minRetryCount = null;
   if (rawMinRetryCount) {
@@ -6073,6 +6085,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     afterUpdatedAt,
     beforeCompletedAt,
     afterCompletedAt,
+    afterLastRetryRequestedAt,
     minRetryCount,
     maxRetryCount,
     retryCount,
@@ -6109,6 +6122,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     afterUpdatedAt,
     beforeCompletedAt,
     afterCompletedAt,
+    afterLastRetryRequestedAt,
     minRetryCount,
     maxRetryCount,
     retryCount,
@@ -6135,6 +6149,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       after_updated_at: afterUpdatedAt,
       before_completed_at: beforeCompletedAt,
       after_completed_at: afterCompletedAt,
+      after_last_retry_requested_at: afterLastRetryRequestedAt,
       min_retry_count: minRetryCount,
       max_retry_count: maxRetryCount,
       retry_count: retryCount,

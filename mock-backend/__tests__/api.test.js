@@ -1106,6 +1106,17 @@ describe("API endpoints", () => {
       assert.equal(afterCompletedAtList.data.items.some((entry) => entry.request_id === completedRequestId), true);
       assert.equal(afterCompletedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
 
+      const withRetries = await fetchJSON("/api/gemini/handoff?has_retries=true&limit=100&offset=0");
+      assert.equal(withRetries.status, 200);
+      const retriedEntry = withRetries.data.items.find((entry) => Boolean(entry.last_retry_requested_at));
+      assert.equal(Boolean(retriedEntry), true);
+      const afterLastRetryRequestedCutoff = new Date(Date.parse(retriedEntry.last_retry_requested_at) - 1000).toISOString();
+      const afterLastRetryRequestedAtList = await fetchJSON(`/api/gemini/handoff?after_last_retry_requested_at=${encodeURIComponent(afterLastRetryRequestedCutoff)}&limit=100&offset=0`);
+      assert.equal(afterLastRetryRequestedAtList.status, 200);
+      assert.equal(afterLastRetryRequestedAtList.data.filters.after_last_retry_requested_at, afterLastRetryRequestedCutoff);
+      assert.equal(afterLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === retriedEntry.request_id), true);
+      assert.equal(afterLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1205,6 +1216,10 @@ describe("API endpoints", () => {
       const invalidAfterCompletedAt = await fetchJSON("/api/gemini/handoff?after_completed_at=not-a-date");
       assert.equal(invalidAfterCompletedAt.status, 400);
       assert.equal(invalidAfterCompletedAt.data.error, "invalid_after_completed_at");
+
+      const invalidAfterLastRetryRequestedAt = await fetchJSON("/api/gemini/handoff?after_last_retry_requested_at=not-a-date");
+      assert.equal(invalidAfterLastRetryRequestedAt.status, 400);
+      assert.equal(invalidAfterLastRetryRequestedAt.data.error, "invalid_after_last_retry_requested_at");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
