@@ -6318,6 +6318,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentApprovalCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentApprovalCounts);
+  const rawIncludeRecentEventStageCounts = String(req.query?.include_recent_event_stage_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentEventStageCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_event_stage_counts",
+      message: "include_recent_event_stage_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentEventStageCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventStageCounts);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
@@ -6325,6 +6333,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentStatusCounts,
     includeRecentRetryCounts,
     includeRecentApprovalCounts,
+    includeRecentEventStageCounts,
   });
 
   return res.json({
