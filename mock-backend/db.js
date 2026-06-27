@@ -1796,6 +1796,28 @@ export function getGeminiHandoffStatusCounts() {
   return counts;
 }
 
+export function getGeminiHandoffRetryCounts(options = {}) {
+  const retryLimitRaw = Number.parseInt(String(options?.retryLimit || 5), 10);
+  const retryLimit = Number.isInteger(retryLimitRaw)
+    ? Math.max(1, Math.min(retryLimitRaw, 100))
+    : 5;
+
+  const row = db.prepare(`
+    SELECT
+      SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) AS requests_with_retries,
+      COALESCE(SUM(retry_count), 0) AS total_retry_attempts,
+      SUM(CASE WHEN retry_count >= ? THEN 1 ELSE 0 END) AS at_or_above_retry_limit
+    FROM gemini_handoff_requests
+  `).get(retryLimit);
+
+  return {
+    retry_limit: retryLimit,
+    requests_with_retries: Number(row?.requests_with_retries || 0),
+    total_retry_attempts: Number(row?.total_retry_attempts || 0),
+    at_or_above_retry_limit: Number(row?.at_or_above_retry_limit || 0),
+  };
+}
+
 export function getGeminiHandoffOperationalSummary(options = {}) {
   const recentHoursRaw = Number.parseInt(String(options?.recentHours || 24), 10);
   const recentHours = Number.isInteger(recentHoursRaw)
@@ -1817,13 +1839,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     GROUP BY status
   `).all();
 
-  const retryRow = db.prepare(`
-    SELECT
-      COUNT(*) AS requests_with_retries,
-      COALESCE(SUM(retry_count), 0) AS total_retry_attempts,
-      SUM(CASE WHEN retry_count >= ? THEN 1 ELSE 0 END) AS at_or_above_retry_limit
-    FROM gemini_handoff_requests
-  `).get(retryLimit);
+  const retryCounts = getGeminiHandoffRetryCounts({ retryLimit });
 
   const recentEventRows = db.prepare(`
     SELECT event_type, COUNT(*) AS count
@@ -1852,10 +1868,10 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       status_counts: statusCounts,
     },
     retry: {
-      max_retry_count: retryLimit,
-      requests_with_retries: Number(retryRow?.requests_with_retries || 0),
-      total_retry_attempts: Number(retryRow?.total_retry_attempts || 0),
-      at_or_above_retry_limit: Number(retryRow?.at_or_above_retry_limit || 0),
+      max_retry_count: retryCounts.retry_limit,
+      requests_with_retries: retryCounts.requests_with_retries,
+      total_retry_attempts: retryCounts.total_retry_attempts,
+      at_or_above_retry_limit: retryCounts.at_or_above_retry_limit,
     },
     recent_window_hours: recentHours,
     recent_event_counts: recentEventCounts,
