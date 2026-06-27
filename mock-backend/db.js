@@ -1748,6 +1748,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
     ? rawMinApprovalCount
     : null;
+  const rawMaxApprovalCount = Number.parseInt(String(filters?.maxApprovalCount ?? ""), 10);
+  const maxApprovalCount = Number.isInteger(rawMaxApprovalCount) && rawMaxApprovalCount >= 0
+    ? rawMaxApprovalCount
+    : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1900,6 +1904,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(minApprovalCount);
   }
 
+  if (maxApprovalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id) <= ?");
+    params.push(maxApprovalCount);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -2018,6 +2027,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const rawMinApprovalCount = Number.parseInt(String(filters?.minApprovalCount ?? ""), 10);
   const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
     ? rawMinApprovalCount
+    : null;
+  const rawMaxApprovalCount = Number.parseInt(String(filters?.maxApprovalCount ?? ""), 10);
+  const maxApprovalCount = Number.isInteger(rawMaxApprovalCount) && rawMaxApprovalCount >= 0
+    ? rawMaxApprovalCount
     : null;
 
   const whereClauses = [];
@@ -2138,6 +2151,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (minApprovalCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id) >= ?");
     params.push(minApprovalCount);
+  }
+
+  if (maxApprovalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id) <= ?");
+    params.push(maxApprovalCount);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
