@@ -1744,6 +1744,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const eventCount = Number.isInteger(rawEventCount) && rawEventCount >= 0
     ? rawEventCount
     : null;
+  const rawMinApprovalCount = Number.parseInt(String(filters?.minApprovalCount ?? ""), 10);
+  const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
+    ? rawMinApprovalCount
+    : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1891,6 +1895,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(eventCount);
   }
 
+  if (minApprovalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id) >= ?");
+    params.push(minApprovalCount);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -2006,6 +2015,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const eventCount = Number.isInteger(rawEventCount) && rawEventCount >= 0
     ? rawEventCount
     : null;
+  const rawMinApprovalCount = Number.parseInt(String(filters?.minApprovalCount ?? ""), 10);
+  const minApprovalCount = Number.isInteger(rawMinApprovalCount) && rawMinApprovalCount >= 0
+    ? rawMinApprovalCount
+    : null;
 
   const whereClauses = [];
   const params = [];
@@ -2120,6 +2133,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (eventCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id) = ?");
     params.push(eventCount);
+  }
+
+  if (minApprovalCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id) >= ?");
+    params.push(minApprovalCount);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";

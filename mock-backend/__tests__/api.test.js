@@ -1102,6 +1102,12 @@ describe("API endpoints", () => {
       assert.equal(eventCountList.data.items.length >= 1, true);
       assert.equal(eventCountList.data.items.every((entry) => Number(entry.event_count || 0) === 1), true);
 
+      const minApprovalCountList = await fetchJSON("/api/gemini/handoff?min_approval_count=1&limit=100&offset=0");
+      assert.equal(minApprovalCountList.status, 200);
+      assert.equal(minApprovalCountList.data.filters.min_approval_count, 1);
+      assert.equal(minApprovalCountList.data.items.length >= 1, true);
+      assert.equal(minApprovalCountList.data.items.every((entry) => Number(entry.approval_count || 0) >= 1), true);
+
       const completedStatus = await fetchJSON(`/api/gemini/handoff/${completedRequestId}`);
       assert.equal(completedStatus.status, 200);
       const completedCutoff = new Date(Date.parse(completedStatus.data.completed_at) + 1000).toISOString();
@@ -1259,6 +1265,10 @@ describe("API endpoints", () => {
       const invalidEventCount = await fetchJSON("/api/gemini/handoff?event_count=abc");
       assert.equal(invalidEventCount.status, 400);
       assert.equal(invalidEventCount.data.error, "invalid_event_count");
+
+      const invalidMinApprovalCount = await fetchJSON("/api/gemini/handoff?min_approval_count=abc");
+      assert.equal(invalidMinApprovalCount.status, 400);
+      assert.equal(invalidMinApprovalCount.data.error, "invalid_min_approval_count");
 
       const invalidBeforeCompletedAt = await fetchJSON("/api/gemini/handoff?before_completed_at=not-a-date");
       assert.equal(invalidBeforeCompletedAt.status, 400);
