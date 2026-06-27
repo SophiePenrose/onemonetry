@@ -922,6 +922,30 @@ describe("API endpoints", () => {
       assert.equal(withoutResponseOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
       assert.equal(withoutResponseOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const retryRequestedRequestId = "req_api_test_handoff_list_retry_requested_001";
+      const acceptedRetryRequested = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: retryRequestedRequestId })),
+      });
+      assert.equal(acceptedRetryRequested.status, 202);
+      const requestedRetry = await fetchJSON(`/api/gemini/handoff/${retryRequestedRequestId}/retry`, {
+        method: "POST",
+      });
+      assert.equal(requestedRetry.status, 202);
+
+      const withRetriesOnly = await fetchJSON("/api/gemini/handoff?has_retries=true&limit=100&offset=0");
+      assert.equal(withRetriesOnly.status, 200);
+      assert.equal(withRetriesOnly.data.filters.has_retries, true);
+      assert.equal(withRetriesOnly.data.items.some((entry) => entry.request_id === retryRequestedRequestId), true);
+      assert.equal(withRetriesOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
+      const withoutRetriesOnly = await fetchJSON("/api/gemini/handoff?has_retries=false&limit=100&offset=0");
+      assert.equal(withoutRetriesOnly.status, 200);
+      assert.equal(withoutRetriesOnly.data.filters.has_retries, false);
+      assert.equal(withoutRetriesOnly.data.items.some((entry) => entry.request_id === retryRequestedRequestId), false);
+      assert.equal(withoutRetriesOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
       const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
       assert.equal(withSummary.status, 200);
       assert.equal(withSummary.data.filters.include_yamm_summary, true);
@@ -1001,6 +1025,10 @@ describe("API endpoints", () => {
       const invalidHasResponse = await fetchJSON("/api/gemini/handoff?has_response=maybe");
       assert.equal(invalidHasResponse.status, 400);
       assert.equal(invalidHasResponse.data.error, "invalid_has_response");
+
+      const invalidHasRetries = await fetchJSON("/api/gemini/handoff?has_retries=maybe");
+      assert.equal(invalidHasRetries.status, 400);
+      assert.equal(invalidHasRetries.data.error, "invalid_has_retries");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
