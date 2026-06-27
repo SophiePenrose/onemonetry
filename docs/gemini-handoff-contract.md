@@ -280,6 +280,7 @@ Rules:
 - `GET /api/gemini/handoff` (supports `status`, `limit`, `offset` query params)
 - `GET /api/gemini/handoff/summary` (supports `recent_hours` query param)
 - `GET /api/gemini/handoff/:requestId`
+- `GET /api/gemini/handoff/:requestId/yamm-rows` (optional `approval_status` query param)
 - `GET /api/gemini/handoff/:requestId/events` (supports `limit`, `before_id`, `event_type`, `event_stage` query params)
 - `POST /api/gemini/handoff/:requestId/retry`
 - `POST /api/gemini/sheets/sync-approvals` (optional `expected_revision` query param)
