@@ -936,6 +936,12 @@ describe("API endpoints", () => {
       assert.equal(typeof withRetryCounts.data.retry_counts.total_retry_attempts, "number");
       assert.equal(typeof withRetryCounts.data.retry_counts.at_or_above_retry_limit, "number");
 
+      const withQueueMetrics = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_queue_metrics=true");
+      assert.equal(withQueueMetrics.status, 200);
+      assert.equal(withQueueMetrics.data.filters.include_queue_metrics, true);
+      assert.equal(typeof withQueueMetrics.data.status_counts, "object");
+      assert.equal(typeof withQueueMetrics.data.retry_counts, "object");
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -975,6 +981,10 @@ describe("API endpoints", () => {
       const invalidRetryCountsFlag = await fetchJSON("/api/gemini/handoff?include_retry_counts=maybe");
       assert.equal(invalidRetryCountsFlag.status, 400);
       assert.equal(invalidRetryCountsFlag.data.error, "invalid_include_retry_counts");
+
+      const invalidQueueMetricsFlag = await fetchJSON("/api/gemini/handoff?include_queue_metrics=maybe");
+      assert.equal(invalidQueueMetricsFlag.status, 400);
+      assert.equal(invalidQueueMetricsFlag.data.error, "invalid_include_queue_metrics");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);

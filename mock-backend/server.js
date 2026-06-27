@@ -5875,6 +5875,14 @@ app.get("/api/gemini/handoff", (req, res) => {
     });
   }
   const includeRetryCounts = ["1", "true", "yes", "on"].includes(rawIncludeRetryCounts);
+  const rawIncludeQueueMetrics = String(req.query?.include_queue_metrics || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeQueueMetrics)) {
+    return res.status(400).json({
+      error: "invalid_include_queue_metrics",
+      message: "include_queue_metrics must be a boolean flag (true/false)",
+    });
+  }
+  const includeQueueMetrics = ["1", "true", "yes", "on"].includes(rawIncludeQueueMetrics);
   const rawLimit = Number.parseInt(String(req.query?.limit || "50"), 10);
   const rawOffset = Number.parseInt(String(req.query?.offset || "0"), 10);
   const limit = Number.isFinite(rawLimit) ? rawLimit : NaN;
@@ -5917,8 +5925,10 @@ app.get("/api/gemini/handoff", (req, res) => {
     })
     : items;
   const total = countGeminiHandoffRequests({ status: statusFilter });
-  const statusCounts = includeStatusCounts ? getGeminiHandoffStatusCounts() : undefined;
-  const retryCounts = includeRetryCounts
+  const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
+  const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
+  const statusCounts = shouldIncludeStatusCounts ? getGeminiHandoffStatusCounts() : undefined;
+  const retryCounts = shouldIncludeRetryCounts
     ? getGeminiHandoffRetryCounts({ retryLimit: GEMINI_HANDOFF_MAX_RETRY_COUNT })
     : undefined;
 
@@ -5932,12 +5942,13 @@ app.get("/api/gemini/handoff", (req, res) => {
       include_yamm_summary: includeYammSummary,
       include_status_counts: includeStatusCounts,
       include_retry_counts: includeRetryCounts,
+      include_queue_metrics: includeQueueMetrics,
     },
     total,
     count: responseItems.length,
     items: responseItems,
-    ...(includeStatusCounts ? { status_counts: statusCounts } : {}),
-    ...(includeRetryCounts ? { retry_counts: retryCounts } : {}),
+    ...(shouldIncludeStatusCounts ? { status_counts: statusCounts } : {}),
+    ...(shouldIncludeRetryCounts ? { retry_counts: retryCounts } : {}),
   });
 });
 
