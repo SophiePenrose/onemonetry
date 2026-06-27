@@ -1686,6 +1686,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasRetries === "false"
       ? false
       : null;
+  const normalizedHasApprovals = String(filters?.hasApprovals ?? "").trim().toLowerCase();
+  const hasApprovals = normalizedHasApprovals === "true"
+    ? true
+    : normalizedHasApprovals === "false"
+      ? false
+      : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1736,6 +1742,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     whereClauses.push("r.retry_count > 0");
   } else if (hasRetries === false) {
     whereClauses.push("r.retry_count <= 0");
+  }
+
+  if (hasApprovals === true) {
+    whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id)");
+  } else if (hasApprovals === false) {
+    whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = r.request_id)");
   }
 
   if (whereClauses.length > 0) {
@@ -1795,6 +1807,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasRetries === "false"
       ? false
       : null;
+  const normalizedHasApprovals = String(filters?.hasApprovals ?? "").trim().toLowerCase();
+  const hasApprovals = normalizedHasApprovals === "true"
+    ? true
+    : normalizedHasApprovals === "false"
+      ? false
+      : null;
 
   const whereClauses = [];
   const params = [];
@@ -1814,6 +1832,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     whereClauses.push("retry_count > 0");
   } else if (hasRetries === false) {
     whereClauses.push("retry_count <= 0");
+  }
+
+  if (hasApprovals === true) {
+    whereClauses.push("EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id)");
+  } else if (hasApprovals === false) {
+    whereClauses.push("NOT EXISTS (SELECT 1 FROM gemini_handoff_approvals a WHERE a.request_id = gemini_handoff_requests.request_id)");
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";

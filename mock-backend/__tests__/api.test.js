@@ -893,6 +893,25 @@ describe("API endpoints", () => {
       });
       assert.equal(completed.status, 200);
 
+      const approvalsSynced = await fetchJSON("/api/gemini/sheets/sync-approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: completedRequestId,
+          approvals: [
+            {
+              sequence_id: "seq_01234567_st_001",
+              step_number: 1,
+              approval_status: "approved",
+              approved_by: "Sophie",
+              approved_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
+      assert.equal(approvalsSynced.status, 200);
+
       const listAll = await fetchJSON("/api/gemini/handoff?limit=100&offset=0");
       assert.equal(listAll.status, 200);
       assert.equal(listAll.data.contract_version, "gemini-handoff-v1");
@@ -945,6 +964,18 @@ describe("API endpoints", () => {
       assert.equal(withoutRetriesOnly.data.filters.has_retries, false);
       assert.equal(withoutRetriesOnly.data.items.some((entry) => entry.request_id === retryRequestedRequestId), false);
       assert.equal(withoutRetriesOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+
+      const withApprovalsOnly = await fetchJSON("/api/gemini/handoff?has_approvals=true&limit=100&offset=0");
+      assert.equal(withApprovalsOnly.status, 200);
+      assert.equal(withApprovalsOnly.data.filters.has_approvals, true);
+      assert.equal(withApprovalsOnly.data.items.some((entry) => entry.request_id === completedRequestId), true);
+      assert.equal(withApprovalsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
+      const withoutApprovalsOnly = await fetchJSON("/api/gemini/handoff?has_approvals=false&limit=100&offset=0");
+      assert.equal(withoutApprovalsOnly.status, 200);
+      assert.equal(withoutApprovalsOnly.data.filters.has_approvals, false);
+      assert.equal(withoutApprovalsOnly.data.items.some((entry) => entry.request_id === completedRequestId), false);
+      assert.equal(withoutApprovalsOnly.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
       const withSummary = await fetchJSON("/api/gemini/handoff?limit=100&offset=0&include_yamm_summary=true");
       assert.equal(withSummary.status, 200);
@@ -1029,6 +1060,10 @@ describe("API endpoints", () => {
       const invalidHasRetries = await fetchJSON("/api/gemini/handoff?has_retries=maybe");
       assert.equal(invalidHasRetries.status, 400);
       assert.equal(invalidHasRetries.data.error, "invalid_has_retries");
+
+      const invalidHasApprovals = await fetchJSON("/api/gemini/handoff?has_approvals=maybe");
+      assert.equal(invalidHasApprovals.status, 400);
+      assert.equal(invalidHasApprovals.data.error, "invalid_has_approvals");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
