@@ -1674,6 +1674,12 @@ export function getGeminiHandoffRequest(requestId) {
 
 export function listGeminiHandoffRequests(filters = {}) {
   const normalizedStatus = String(filters?.status || "").trim().toLowerCase() || null;
+  const normalizedHasResponse = String(filters?.hasResponse ?? "").trim().toLowerCase();
+  const hasResponse = normalizedHasResponse === "true"
+    ? true
+    : normalizedHasResponse === "false"
+      ? false
+      : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1707,10 +1713,21 @@ export function listGeminiHandoffRequests(filters = {}) {
     FROM gemini_handoff_requests r
   `;
   const params = [];
+  const whereClauses = [];
 
   if (normalizedStatus) {
-    sql += " WHERE r.status = ?";
+    whereClauses.push("r.status = ?");
     params.push(normalizedStatus);
+  }
+
+  if (hasResponse === true) {
+    whereClauses.push("r.response_id IS NOT NULL AND r.response_id <> ''");
+  } else if (hasResponse === false) {
+    whereClauses.push("(r.response_id IS NULL OR r.response_id = '')");
+  }
+
+  if (whereClauses.length > 0) {
+    sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
 
   if (sort === "accepted_asc") {
@@ -1754,17 +1771,33 @@ export function listGeminiHandoffRequests(filters = {}) {
 
 export function countGeminiHandoffRequests(filters = {}) {
   const normalizedStatus = String(filters?.status || "").trim().toLowerCase() || null;
+  const normalizedHasResponse = String(filters?.hasResponse ?? "").trim().toLowerCase();
+  const hasResponse = normalizedHasResponse === "true"
+    ? true
+    : normalizedHasResponse === "false"
+      ? false
+      : null;
+
+  const whereClauses = [];
+  const params = [];
 
   if (normalizedStatus) {
-    const row = db.prepare(`
-      SELECT COUNT(*) AS count
-      FROM gemini_handoff_requests
-      WHERE status = ?
-    `).get(normalizedStatus);
-    return Number(row?.count || 0);
+    whereClauses.push("status = ?");
+    params.push(normalizedStatus);
   }
 
-  const row = db.prepare("SELECT COUNT(*) AS count FROM gemini_handoff_requests").get();
+  if (hasResponse === true) {
+    whereClauses.push("response_id IS NOT NULL AND response_id <> ''");
+  } else if (hasResponse === false) {
+    whereClauses.push("(response_id IS NULL OR response_id = '')");
+  }
+
+  let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
+  if (whereClauses.length > 0) {
+    sql += ` WHERE ${whereClauses.join(" AND ")}`;
+  }
+
+  const row = db.prepare(sql).get(...params);
   return Number(row?.count || 0);
 }
 
