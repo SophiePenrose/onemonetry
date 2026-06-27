@@ -1707,6 +1707,7 @@ export function listGeminiHandoffRequests(filters = {}) {
   const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
+  const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1792,6 +1793,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(beforeUpdatedAt);
   }
 
+  if (afterUpdatedAt) {
+    whereClauses.push("julianday(r.updated_at) > julianday(?)");
+    params.push(afterUpdatedAt);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -1870,6 +1876,7 @@ export function countGeminiHandoffRequests(filters = {}) {
   const beforeAcceptedAt = String(filters?.beforeAcceptedAt || "").trim() || null;
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
+  const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
 
   const whereClauses = [];
   const params = [];
@@ -1922,6 +1929,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (beforeUpdatedAt) {
     whereClauses.push("julianday(updated_at) < julianday(?)");
     params.push(beforeUpdatedAt);
+  }
+
+  if (afterUpdatedAt) {
+    whereClauses.push("julianday(updated_at) > julianday(?)");
+    params.push(afterUpdatedAt);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
