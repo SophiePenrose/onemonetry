@@ -1704,6 +1704,12 @@ export function listGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const normalizedHasCompletedAt = String(filters?.hasCompletedAt ?? "").trim().toLowerCase();
+  const hasCompletedAt = normalizedHasCompletedAt === "true"
+    ? true
+    : normalizedHasCompletedAt === "false"
+      ? false
+      : null;
   const normalizedHasLastRetryRequested = String(filters?.hasLastRetryRequested ?? "").trim().toLowerCase();
   const hasLastRetryRequested = normalizedHasLastRetryRequested === "true"
     ? true
@@ -1797,6 +1803,12 @@ export function listGeminiHandoffRequests(filters = {}) {
   if (hasCompleted === true) {
     whereClauses.push("r.completed_at IS NOT NULL AND r.completed_at <> ''");
   } else if (hasCompleted === false) {
+    whereClauses.push("(r.completed_at IS NULL OR r.completed_at = '')");
+  }
+
+  if (hasCompletedAt === true) {
+    whereClauses.push("r.completed_at IS NOT NULL AND r.completed_at <> ''");
+  } else if (hasCompletedAt === false) {
     whereClauses.push("(r.completed_at IS NULL OR r.completed_at = '')");
   }
 
@@ -1936,6 +1948,12 @@ export function countGeminiHandoffRequests(filters = {}) {
     : normalizedHasCompleted === "false"
       ? false
       : null;
+  const normalizedHasCompletedAt = String(filters?.hasCompletedAt ?? "").trim().toLowerCase();
+  const hasCompletedAt = normalizedHasCompletedAt === "true"
+    ? true
+    : normalizedHasCompletedAt === "false"
+      ? false
+      : null;
   const normalizedHasLastRetryRequested = String(filters?.hasLastRetryRequested ?? "").trim().toLowerCase();
   const hasLastRetryRequested = normalizedHasLastRetryRequested === "true"
     ? true
@@ -1998,6 +2016,12 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (hasCompleted === true) {
     whereClauses.push("completed_at IS NOT NULL AND completed_at <> ''");
   } else if (hasCompleted === false) {
+    whereClauses.push("(completed_at IS NULL OR completed_at = '')");
+  }
+
+  if (hasCompletedAt === true) {
+    whereClauses.push("completed_at IS NOT NULL AND completed_at <> ''");
+  } else if (hasCompletedAt === false) {
     whereClauses.push("(completed_at IS NULL OR completed_at = '')");
   }
 

@@ -1136,6 +1136,18 @@ describe("API endpoints", () => {
       assert.equal(noLastRetryRequestedList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
       assert.equal(noLastRetryRequestedList.data.items.some((entry) => entry.request_id === retriedEntry.request_id), false);
 
+      const hasCompletedAtList = await fetchJSON("/api/gemini/handoff?has_completed_at=true&limit=100&offset=0");
+      assert.equal(hasCompletedAtList.status, 200);
+      assert.equal(hasCompletedAtList.data.filters.has_completed_at, true);
+      assert.equal(hasCompletedAtList.data.items.length >= 1, true);
+      assert.equal(hasCompletedAtList.data.items.every((entry) => Boolean(entry.completed_at)), true);
+
+      const noCompletedAtList = await fetchJSON("/api/gemini/handoff?has_completed_at=false&limit=100&offset=0");
+      assert.equal(noCompletedAtList.status, 200);
+      assert.equal(noCompletedAtList.data.filters.has_completed_at, false);
+      assert.equal(noCompletedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
+      assert.equal(noCompletedAtList.data.items.some((entry) => entry.request_id === completedRequestId), false);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1247,6 +1259,10 @@ describe("API endpoints", () => {
       const invalidHasLastRetryRequested = await fetchJSON("/api/gemini/handoff?has_last_retry_requested=maybe");
       assert.equal(invalidHasLastRetryRequested.status, 400);
       assert.equal(invalidHasLastRetryRequested.data.error, "invalid_has_last_retry_requested");
+
+      const invalidHasCompletedAt = await fetchJSON("/api/gemini/handoff?has_completed_at=maybe");
+      assert.equal(invalidHasCompletedAt.status, 400);
+      assert.equal(invalidHasCompletedAt.data.error, "invalid_has_completed_at");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);
