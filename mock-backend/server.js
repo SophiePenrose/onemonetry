@@ -373,6 +373,71 @@ function extractGeminiYammRows(responsePayload = {}) {
   return flattened;
 }
 
+function escapeCsvValue(value) {
+  const text = String(value ?? "");
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function buildGeminiYammRowsCsv(rows = []) {
+  const requiredColumns = [
+    "To",
+    "Subject",
+    "Body",
+    "Company",
+    "CompanyNumber",
+    "PriorityRank",
+    "PriorityBand",
+    "SequenceId",
+    "StepNumber",
+    "StepType",
+    "DayOffset",
+    "SendDate",
+    "SendTime",
+    "ApprovalStatus",
+    "ApprovedBy",
+    "ApprovedAt",
+    "ReviewNotes",
+  ];
+  const recommendedColumns = [
+    "RequestId",
+    "ResponseId",
+    "ContractVersion",
+    "QCScore",
+    "QCPassed",
+    "EvidenceRefs",
+    "DoNotSend",
+    "PersonId",
+  ];
+
+  const allPresentColumns = new Set();
+  for (const row of rows) {
+    for (const key of Object.keys(row || {})) {
+      allPresentColumns.add(key);
+    }
+  }
+
+  const trailingColumns = [...allPresentColumns]
+    .filter((key) => !requiredColumns.includes(key) && !recommendedColumns.includes(key))
+    .sort((a, b) => String(a).localeCompare(String(b)));
+
+  const header = [
+    ...requiredColumns,
+    ...recommendedColumns.filter((key) => allPresentColumns.has(key)),
+    ...trailingColumns,
+  ];
+
+  const lines = [header.map(escapeCsvValue).join(",")];
+  for (const row of rows) {
+    const values = header.map((key) => escapeCsvValue(row?.[key]));
+    lines.push(values.join(","));
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 if (IGNORE_RUNTIME_SIGTERM) {
   process.on("SIGTERM", () => {
     console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
@@ -5812,6 +5877,14 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     return res.status(404).json({ error: "not_found", request_id: requestId });
   }
 
+  const rawFormat = String(req.query?.format || "json").trim().toLowerCase();
+  if (!["json", "csv"].includes(rawFormat)) {
+    return res.status(400).json({
+      error: "invalid_format",
+      message: "format must be one of json or csv",
+    });
+  }
+
   const rawApprovalStatus = String(req.query?.approval_status || "").trim().toLowerCase();
   if (rawApprovalStatus && !GEMINI_APPROVAL_STATUSES.has(rawApprovalStatus)) {
     return res.status(400).json({
@@ -5832,6 +5905,14 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
   const rows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
+
+  if (rawFormat === "csv") {
+    const csv = buildGeminiYammRowsCsv(rows);
+    const approvalLabel = rawApprovalStatus || "all";
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="gemini-handoff-${requestId}-${approvalLabel}.csv"`);
+    return res.send(csv);
+  }
 
   return res.json({
     contract_version: record.contract_version,
