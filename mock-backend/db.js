@@ -1710,6 +1710,7 @@ export function listGeminiHandoffRequests(filters = {}) {
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
   const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const afterCompletedAt = String(filters?.afterCompletedAt || "").trim() || null;
+  const afterLastRetryRequestedAt = String(filters?.afterLastRetryRequestedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -1822,6 +1823,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(afterCompletedAt);
   }
 
+  if (afterLastRetryRequestedAt) {
+    whereClauses.push("julianday(r.last_retry_requested_at) > julianday(?)");
+    params.push(afterLastRetryRequestedAt);
+  }
+
   if (minRetryCount !== null) {
     whereClauses.push("r.retry_count >= ?");
     params.push(minRetryCount);
@@ -1918,6 +1924,7 @@ export function countGeminiHandoffRequests(filters = {}) {
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
   const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const afterCompletedAt = String(filters?.afterCompletedAt || "").trim() || null;
+  const afterLastRetryRequestedAt = String(filters?.afterLastRetryRequestedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -1997,6 +2004,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (afterCompletedAt) {
     whereClauses.push("julianday(completed_at) > julianday(?)");
     params.push(afterCompletedAt);
+  }
+
+  if (afterLastRetryRequestedAt) {
+    whereClauses.push("julianday(last_retry_requested_at) > julianday(?)");
+    params.push(afterLastRetryRequestedAt);
   }
 
   if (minRetryCount !== null) {
