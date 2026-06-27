@@ -1708,6 +1708,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
+  const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
+  const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
+    ? rawMinRetryCount
+    : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1798,6 +1802,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(afterUpdatedAt);
   }
 
+  if (minRetryCount !== null) {
+    whereClauses.push("r.retry_count >= ?");
+    params.push(minRetryCount);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -1877,6 +1886,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
+  const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
+  const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
+    ? rawMinRetryCount
+    : null;
 
   const whereClauses = [];
   const params = [];
@@ -1934,6 +1947,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (afterUpdatedAt) {
     whereClauses.push("julianday(updated_at) > julianday(?)");
     params.push(afterUpdatedAt);
+  }
+
+  if (minRetryCount !== null) {
+    whereClauses.push("retry_count >= ?");
+    params.push(minRetryCount);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
