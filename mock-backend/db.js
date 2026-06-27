@@ -2249,6 +2249,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const retryLimit = Number.isInteger(retryLimitRaw)
     ? Math.max(1, Math.min(retryLimitRaw, 100))
     : 5;
+  const includeRecentStatusCounts = options?.includeRecentStatusCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2270,6 +2271,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     GROUP BY event_type
   `).all(`-${recentHours} hours`);
 
+  const recentStatusRows = includeRecentStatusCounts
+    ? db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM gemini_handoff_requests
+      WHERE updated_at >= datetime('now', ?)
+      GROUP BY status
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2281,6 +2291,12 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     const key = String(row.event_type || "").trim();
     if (!key) continue;
     recentEventCounts[key] = Number(row.count || 0);
+  }
+
+  const recentStatusCounts = {};
+  for (const row of recentStatusRows) {
+    const key = String(row.status || "").trim().toLowerCase() || "unknown";
+    recentStatusCounts[key] = Number(row.count || 0);
   }
 
   return {
@@ -2297,6 +2313,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     },
     recent_window_hours: recentHours,
     recent_event_counts: recentEventCounts,
+    ...(includeRecentStatusCounts ? { recent_status_counts: recentStatusCounts } : {}),
   };
 }
 
