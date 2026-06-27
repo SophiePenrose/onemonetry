@@ -1069,6 +1069,13 @@ describe("API endpoints", () => {
       assert.equal(afterUpdatedAtList.data.filters.after_updated_at, afterUpdatedAt);
       assert.equal(afterUpdatedAtList.data.items.some((entry) => entry.request_id === newestRequestId), true);
 
+      const minRetryCountList = await fetchJSON("/api/gemini/handoff?min_retry_count=1&limit=100&offset=0");
+      assert.equal(minRetryCountList.status, 200);
+      assert.equal(minRetryCountList.data.filters.min_retry_count, 1);
+      assert.equal(minRetryCountList.data.items.length >= 1, true);
+      assert.equal(minRetryCountList.data.items.every((entry) => Number(entry.retry_count || 0) >= 1), true);
+      assert.equal(minRetryCountList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1148,6 +1155,10 @@ describe("API endpoints", () => {
       const invalidAfterUpdatedAt = await fetchJSON("/api/gemini/handoff?after_updated_at=not-a-date");
       assert.equal(invalidAfterUpdatedAt.status, 400);
       assert.equal(invalidAfterUpdatedAt.data.error, "invalid_after_updated_at");
+
+      const invalidMinRetryCount = await fetchJSON("/api/gemini/handoff?min_retry_count=abc");
+      assert.equal(invalidMinRetryCount.status, 400);
+      assert.equal(invalidMinRetryCount.data.error, "invalid_min_retry_count");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);

@@ -5942,6 +5942,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     afterUpdatedAt = new Date(parsedAfterUpdatedAt).toISOString();
   }
+  const rawMinRetryCount = String(req.query?.min_retry_count || "").trim();
+  let minRetryCount = null;
+  if (rawMinRetryCount) {
+    const parsedMinRetryCount = Number.parseInt(rawMinRetryCount, 10);
+    if (!Number.isInteger(parsedMinRetryCount) || parsedMinRetryCount < 0 || parsedMinRetryCount > 100) {
+      return res.status(400).json({
+        error: "invalid_min_retry_count",
+        message: "min_retry_count must be an integer between 0 and 100",
+      });
+    }
+    minRetryCount = parsedMinRetryCount;
+  }
   const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
     return res.status(400).json({
@@ -6011,6 +6023,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     afterAcceptedAt,
     beforeUpdatedAt,
     afterUpdatedAt,
+    minRetryCount,
     sort,
     limit,
     offset,
@@ -6042,6 +6055,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     afterAcceptedAt,
     beforeUpdatedAt,
     afterUpdatedAt,
+    minRetryCount,
   });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
   const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
@@ -6063,6 +6077,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       after_accepted_at: afterAcceptedAt,
       before_updated_at: beforeUpdatedAt,
       after_updated_at: afterUpdatedAt,
+      min_retry_count: minRetryCount,
       sort,
       limit,
       offset,
