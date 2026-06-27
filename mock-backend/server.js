@@ -178,6 +178,13 @@ const GEMINI_HANDOFF_RETRYABLE_STATUSES = new Set([
   "partial",
   "error",
 ]);
+const GEMINI_APPROVAL_STATUSES = new Set([
+  "pending",
+  "approved",
+  "rejected",
+  "sent",
+  "paused",
+]);
 const parsedGeminiHandoffMaxRetryCount = Number.parseInt(
   String(process.env.GEMINI_HANDOFF_MAX_RETRY_COUNT || "5"),
   10
@@ -336,6 +343,34 @@ function buildDevGeminiHandoffResponse(payload) {
     sequence_outputs: sequenceOutputs,
     errors: [],
   };
+}
+
+function extractGeminiYammRows(responsePayload = {}) {
+  const requestId = String(responsePayload?.request_id || "").trim() || null;
+  const responseId = String(responsePayload?.response_id || "").trim() || null;
+  const contractVersion = String(responsePayload?.contract_version || GEMINI_HANDOFF_CONTRACT_VERSION).trim();
+  const outputs = Array.isArray(responsePayload?.sequence_outputs) ? responsePayload.sequence_outputs : [];
+
+  const flattened = [];
+  for (const output of outputs) {
+    const yammRows = Array.isArray(output?.yamm_rows) ? output.yamm_rows : [];
+    for (const row of yammRows) {
+      if (!row || typeof row !== "object") continue;
+      const approvalStatus = String(row.ApprovalStatus ?? row.approval_status ?? "").trim().toLowerCase() || null;
+      flattened.push({
+        ...row,
+        RequestId: row.RequestId ?? requestId,
+        ResponseId: row.ResponseId ?? responseId,
+        ContractVersion: row.ContractVersion ?? contractVersion,
+        SequenceId: row.SequenceId ?? output?.sequence_id ?? null,
+        CompanyNumber: row.CompanyNumber ?? output?.company_number ?? null,
+        PersonId: row.PersonId ?? output?.person_id ?? null,
+        ApprovalStatus: row.ApprovalStatus ?? approvalStatus,
+      });
+    }
+  }
+
+  return flattened;
 }
 
 if (IGNORE_RUNTIME_SIGTERM) {
@@ -5767,6 +5802,46 @@ app.get("/api/gemini/handoff/:requestId", (req, res) => {
     response_payload_sha256: record.response_payload_sha256 || null,
     completed_at: record.completed_at || record.response?.completed_at || null,
     approval_counts: approvalCounts,
+  });
+});
+
+app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const rawApprovalStatus = String(req.query?.approval_status || "").trim().toLowerCase();
+  if (rawApprovalStatus && !GEMINI_APPROVAL_STATUSES.has(rawApprovalStatus)) {
+    return res.status(400).json({
+      error: "invalid_approval_status",
+      message: "approval_status must be one of pending, approved, rejected, sent, paused",
+    });
+  }
+
+  if (!record.response || typeof record.response !== "object") {
+    return res.status(409).json({
+      error: "handoff_not_completed",
+      request_id: requestId,
+      status: record.status,
+    });
+  }
+
+  const allRows = extractGeminiYammRows(record.response);
+  const rows = rawApprovalStatus
+    ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
+    : allRows;
+
+  return res.json({
+    contract_version: record.contract_version,
+    request_id: requestId,
+    response_id: record.response_id || record.response?.response_id || null,
+    count: rows.length,
+    filters: {
+      approval_status: rawApprovalStatus || null,
+    },
+    rows,
   });
 });
 

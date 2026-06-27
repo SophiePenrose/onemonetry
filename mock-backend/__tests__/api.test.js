@@ -1317,6 +1317,47 @@ describe("API endpoints", () => {
       );
     });
 
+    it("returns flattened YAMM rows for completed handoff with approval-status filtering", async () => {
+      const requestId = "req_api_test_yamm_rows_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const notCompleted = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows`);
+      assert.equal(notCompleted.status, 409);
+      assert.equal(notCompleted.data.error, "handoff_not_completed");
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      const allRows = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows`);
+      assert.equal(allRows.status, 200);
+      assert.equal(allRows.data.count, 1);
+      assert.equal(Array.isArray(allRows.data.rows), true);
+      assert.equal(allRows.data.rows[0]?.RequestId, requestId);
+      assert.equal(typeof allRows.data.rows[0]?.ResponseId, "string");
+      assert.equal(allRows.data.rows[0]?.ApprovalStatus, "pending");
+
+      const pendingRows = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?approval_status=pending`);
+      assert.equal(pendingRows.status, 200);
+      assert.equal(pendingRows.data.count, 1);
+
+      const approvedRows = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?approval_status=approved`);
+      assert.equal(approvedRows.status, 200);
+      assert.equal(approvedRows.data.count, 0);
+
+      const invalidFilter = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?approval_status=invalid`);
+      assert.equal(invalidFilter.status, 400);
+      assert.equal(invalidFilter.data.error, "invalid_approval_status");
+    });
+
     it("validates handoff event history query parameters", async () => {
       const requestId = "req_api_test_events_validation_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {
