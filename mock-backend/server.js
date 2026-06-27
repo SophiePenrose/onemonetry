@@ -5842,6 +5842,13 @@ app.post("/api/gemini/handoff", async (req, res) => {
 
 app.get("/api/gemini/handoff", (req, res) => {
   const statusFilter = String(req.query?.status || "").trim().toLowerCase() || null;
+  const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
+  if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
+    return res.status(400).json({
+      error: "invalid_sort",
+      message: "sort must be one of accepted_desc, accepted_asc, queue_health",
+    });
+  }
   const rawIncludeYammSummary = String(req.query?.include_yamm_summary || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeYammSummary)) {
     return res.status(400).json({
@@ -5871,6 +5878,7 @@ app.get("/api/gemini/handoff", (req, res) => {
 
   const items = listGeminiHandoffRequests({
     status: statusFilter,
+    sort,
     limit,
     offset,
   });
@@ -5896,6 +5904,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
     filters: {
       status: statusFilter,
+      sort,
       limit,
       offset,
       include_yamm_summary: includeYammSummary,

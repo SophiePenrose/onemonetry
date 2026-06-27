@@ -916,6 +916,24 @@ describe("API endpoints", () => {
       assert.equal(typeof completedWithSummary?.yamm_summary, "object");
       assert.equal(completedWithSummary?.yamm_summary?.totals?.rows >= 1, true);
       assert.equal(acceptedWithSummary?.yamm_summary, null);
+
+      const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
+      assert.equal(ascSorted.status, 200);
+      assert.equal(ascSorted.data.filters.sort, "accepted_asc");
+      const ascAcceptedIndex = ascSorted.data.items.findIndex((entry) => entry.request_id === acceptedOnlyRequestId);
+      const ascCompletedIndex = ascSorted.data.items.findIndex((entry) => entry.request_id === completedRequestId);
+      assert.equal(ascAcceptedIndex >= 0, true);
+      assert.equal(ascCompletedIndex >= 0, true);
+      assert.equal(ascAcceptedIndex < ascCompletedIndex, true);
+
+      const queueHealthSorted = await fetchJSON("/api/gemini/handoff?sort=queue_health&limit=100&offset=0");
+      assert.equal(queueHealthSorted.status, 200);
+      assert.equal(queueHealthSorted.data.filters.sort, "queue_health");
+      const queueCompletedIndex = queueHealthSorted.data.items.findIndex((entry) => entry.request_id === completedRequestId);
+      const queueAcceptedIndex = queueHealthSorted.data.items.findIndex((entry) => entry.request_id === acceptedOnlyRequestId);
+      assert.equal(queueCompletedIndex >= 0, true);
+      assert.equal(queueAcceptedIndex >= 0, true);
+      assert.equal(queueCompletedIndex < queueAcceptedIndex, true);
     });
 
     it("validates handoff list pagination parameters", async () => {
@@ -930,6 +948,10 @@ describe("API endpoints", () => {
       const invalidSummaryFlag = await fetchJSON("/api/gemini/handoff?include_yamm_summary=maybe");
       assert.equal(invalidSummaryFlag.status, 400);
       assert.equal(invalidSummaryFlag.data.error, "invalid_include_yamm_summary");
+
+      const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
+      assert.equal(invalidSort.status, 400);
+      assert.equal(invalidSort.data.error, "invalid_sort");
     });
 
     it("returns Gemini handoff operational summary", async () => {
