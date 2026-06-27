@@ -1090,6 +1090,12 @@ describe("API endpoints", () => {
       assert.equal(retryCountList.data.items.every((entry) => Number(entry.retry_count || 0) === 0), true);
       assert.equal(retryCountList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const maxEventCountList = await fetchJSON("/api/gemini/handoff?max_event_count=1&limit=100&offset=0");
+      assert.equal(maxEventCountList.status, 200);
+      assert.equal(maxEventCountList.data.filters.max_event_count, 1);
+      assert.equal(maxEventCountList.data.items.length >= 1, true);
+      assert.equal(maxEventCountList.data.items.every((entry) => Number(entry.event_count || 0) <= 1), true);
+
       const completedStatus = await fetchJSON(`/api/gemini/handoff/${completedRequestId}`);
       assert.equal(completedStatus.status, 200);
       const completedCutoff = new Date(Date.parse(completedStatus.data.completed_at) + 1000).toISOString();
@@ -1239,6 +1245,10 @@ describe("API endpoints", () => {
       const invalidRetryCount = await fetchJSON("/api/gemini/handoff?retry_count=abc");
       assert.equal(invalidRetryCount.status, 400);
       assert.equal(invalidRetryCount.data.error, "invalid_retry_count");
+
+      const invalidMaxEventCount = await fetchJSON("/api/gemini/handoff?max_event_count=abc");
+      assert.equal(invalidMaxEventCount.status, 400);
+      assert.equal(invalidMaxEventCount.data.error, "invalid_max_event_count");
 
       const invalidBeforeCompletedAt = await fetchJSON("/api/gemini/handoff?before_completed_at=not-a-date");
       assert.equal(invalidBeforeCompletedAt.status, 400);
