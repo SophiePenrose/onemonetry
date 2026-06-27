@@ -1674,6 +1674,10 @@ export function getGeminiHandoffRequest(requestId) {
 
 export function listGeminiHandoffRequests(filters = {}) {
   const normalizedStatus = String(filters?.status || "").trim().toLowerCase() || null;
+  const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
+  const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
+    ? normalizedSort
+    : "accepted_desc";
   const limit = Math.max(1, Math.min(200, Number.parseInt(String(filters?.limit || 50), 10) || 50));
   const offset = Math.max(0, Math.min(10000, Number.parseInt(String(filters?.offset || 0), 10) || 0));
 
@@ -1709,7 +1713,25 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(normalizedStatus);
   }
 
-  sql += " ORDER BY r.accepted_at DESC, r.request_id DESC LIMIT ? OFFSET ?";
+  if (sort === "accepted_asc") {
+    sql += " ORDER BY r.accepted_at ASC, r.request_id ASC";
+  } else if (sort === "queue_health") {
+    sql += `
+      ORDER BY
+        CASE
+          WHEN r.status = 'completed' THEN 0
+          WHEN r.status = 'accepted' THEN 1
+          WHEN r.status = 'retry_requested' THEN 2
+          ELSE 3
+        END ASC,
+        r.retry_count DESC,
+        r.accepted_at DESC,
+        r.request_id DESC
+    `;
+  } else {
+    sql += " ORDER BY r.accepted_at DESC, r.request_id DESC";
+  }
+  sql += " LIMIT ? OFFSET ?";
   params.push(limit, offset);
 
   return db.prepare(sql).all(...params).map((row) => ({
