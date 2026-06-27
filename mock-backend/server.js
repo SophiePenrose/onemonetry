@@ -6070,6 +6070,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     eventCount = parsedEventCount;
   }
+  const rawMinApprovalCount = String(req.query?.min_approval_count || "").trim();
+  let minApprovalCount = null;
+  if (rawMinApprovalCount) {
+    const parsedMinApprovalCount = Number.parseInt(rawMinApprovalCount, 10);
+    if (!Number.isInteger(parsedMinApprovalCount) || parsedMinApprovalCount < 0 || parsedMinApprovalCount > 10000) {
+      return res.status(400).json({
+        error: "invalid_min_approval_count",
+        message: "min_approval_count must be an integer between 0 and 10000",
+      });
+    }
+    minApprovalCount = parsedMinApprovalCount;
+  }
   const sort = String(req.query?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   if (!["accepted_desc", "accepted_asc", "queue_health"].includes(sort)) {
     return res.status(400).json({
@@ -6150,6 +6162,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     retryCount,
     maxEventCount,
     eventCount,
+    minApprovalCount,
     sort,
     limit,
     offset,
@@ -6192,6 +6205,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     retryCount,
     maxEventCount,
     eventCount,
+    minApprovalCount,
   });
   const shouldIncludeStatusCounts = includeStatusCounts || includeQueueMetrics;
   const shouldIncludeRetryCounts = includeRetryCounts || includeQueueMetrics;
@@ -6224,6 +6238,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       retry_count: retryCount,
       max_event_count: maxEventCount,
       event_count: eventCount,
+      min_approval_count: minApprovalCount,
       sort,
       limit,
       offset,
