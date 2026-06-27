@@ -1371,6 +1371,18 @@ describe("API endpoints", () => {
       const recentEventStageValues = Object.values(summaryWithRecentEventStageCounts.data.recent_event_stage_counts);
       assert.equal(recentEventStageValues.length >= 1, true);
       assert.equal(recentEventStageValues.every((value) => typeof value === "number"), true);
+
+      const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
+      assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
+      assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
+      assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.attempted, "number");
+      assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.completed, "number");
+      assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.retry_requested, "number");
+      assert.equal(
+        summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.success_rate_percent === null
+          || typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.success_rate_percent === "number",
+        true
+      );
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1393,6 +1405,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentEventStageCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_event_stage_counts=maybe");
       assert.equal(invalidIncludeRecentEventStageCounts.status, 400);
       assert.equal(invalidIncludeRecentEventStageCounts.data.error, "invalid_include_recent_event_stage_counts");
+
+      const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
+      assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
+      assert.equal(invalidIncludeRecentTransportDispatchCounts.data.error, "invalid_include_recent_transport_dispatch_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
