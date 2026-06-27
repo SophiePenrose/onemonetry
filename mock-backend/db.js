@@ -1708,6 +1708,7 @@ export function listGeminiHandoffRequests(filters = {}) {
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
+  const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -1810,6 +1811,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(afterUpdatedAt);
   }
 
+  if (beforeCompletedAt) {
+    whereClauses.push("julianday(r.completed_at) < julianday(?)");
+    params.push(beforeCompletedAt);
+  }
+
   if (minRetryCount !== null) {
     whereClauses.push("r.retry_count >= ?");
     params.push(minRetryCount);
@@ -1904,6 +1910,7 @@ export function countGeminiHandoffRequests(filters = {}) {
   const afterAcceptedAt = String(filters?.afterAcceptedAt || "").trim() || null;
   const beforeUpdatedAt = String(filters?.beforeUpdatedAt || "").trim() || null;
   const afterUpdatedAt = String(filters?.afterUpdatedAt || "").trim() || null;
+  const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -1973,6 +1980,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (afterUpdatedAt) {
     whereClauses.push("julianday(updated_at) > julianday(?)");
     params.push(afterUpdatedAt);
+  }
+
+  if (beforeCompletedAt) {
+    whereClauses.push("julianday(completed_at) < julianday(?)");
+    params.push(beforeCompletedAt);
   }
 
   if (minRetryCount !== null) {
