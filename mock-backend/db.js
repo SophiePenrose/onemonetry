@@ -1740,6 +1740,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const maxEventCount = Number.isInteger(rawMaxEventCount) && rawMaxEventCount >= 0
     ? rawMaxEventCount
     : null;
+  const rawEventCount = Number.parseInt(String(filters?.eventCount ?? ""), 10);
+  const eventCount = Number.isInteger(rawEventCount) && rawEventCount >= 0
+    ? rawEventCount
+    : null;
   const normalizedSort = String(filters?.sort || "accepted_desc").trim().toLowerCase() || "accepted_desc";
   const sort = ["accepted_desc", "accepted_asc", "queue_health"].includes(normalizedSort)
     ? normalizedSort
@@ -1882,6 +1886,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(maxEventCount);
   }
 
+  if (eventCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = r.request_id) = ?");
+    params.push(eventCount);
+  }
+
   if (whereClauses.length > 0) {
     sql += ` WHERE ${whereClauses.join(" AND ")}`;
   }
@@ -1993,6 +2002,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const maxEventCount = Number.isInteger(rawMaxEventCount) && rawMaxEventCount >= 0
     ? rawMaxEventCount
     : null;
+  const rawEventCount = Number.parseInt(String(filters?.eventCount ?? ""), 10);
+  const eventCount = Number.isInteger(rawEventCount) && rawEventCount >= 0
+    ? rawEventCount
+    : null;
 
   const whereClauses = [];
   const params = [];
@@ -2102,6 +2115,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (maxEventCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id) <= ?");
     params.push(maxEventCount);
+  }
+
+  if (eventCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id) = ?");
+    params.push(eventCount);
   }
 
   let sql = "SELECT COUNT(*) AS count FROM gemini_handoff_requests";
