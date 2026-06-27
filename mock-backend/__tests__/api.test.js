@@ -1117,6 +1117,13 @@ describe("API endpoints", () => {
       assert.equal(afterLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === retriedEntry.request_id), true);
       assert.equal(afterLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
 
+      const beforeLastRetryRequestedCutoff = new Date(Date.parse(retriedEntry.last_retry_requested_at) + 1000).toISOString();
+      const beforeLastRetryRequestedAtList = await fetchJSON(`/api/gemini/handoff?before_last_retry_requested_at=${encodeURIComponent(beforeLastRetryRequestedCutoff)}&limit=100&offset=0`);
+      assert.equal(beforeLastRetryRequestedAtList.status, 200);
+      assert.equal(beforeLastRetryRequestedAtList.data.filters.before_last_retry_requested_at, beforeLastRetryRequestedCutoff);
+      assert.equal(beforeLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === retriedEntry.request_id), true);
+      assert.equal(beforeLastRetryRequestedAtList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), false);
+
       const ascSorted = await fetchJSON("/api/gemini/handoff?sort=accepted_asc&limit=100&offset=0");
       assert.equal(ascSorted.status, 200);
       assert.equal(ascSorted.data.filters.sort, "accepted_asc");
@@ -1220,6 +1227,10 @@ describe("API endpoints", () => {
       const invalidAfterLastRetryRequestedAt = await fetchJSON("/api/gemini/handoff?after_last_retry_requested_at=not-a-date");
       assert.equal(invalidAfterLastRetryRequestedAt.status, 400);
       assert.equal(invalidAfterLastRetryRequestedAt.data.error, "invalid_after_last_retry_requested_at");
+
+      const invalidBeforeLastRetryRequestedAt = await fetchJSON("/api/gemini/handoff?before_last_retry_requested_at=not-a-date");
+      assert.equal(invalidBeforeLastRetryRequestedAt.status, 400);
+      assert.equal(invalidBeforeLastRetryRequestedAt.data.error, "invalid_before_last_retry_requested_at");
 
       const invalidSort = await fetchJSON("/api/gemini/handoff?sort=oldest_first");
       assert.equal(invalidSort.status, 400);

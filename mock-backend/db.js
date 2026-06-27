@@ -1711,6 +1711,7 @@ export function listGeminiHandoffRequests(filters = {}) {
   const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const afterCompletedAt = String(filters?.afterCompletedAt || "").trim() || null;
   const afterLastRetryRequestedAt = String(filters?.afterLastRetryRequestedAt || "").trim() || null;
+  const beforeLastRetryRequestedAt = String(filters?.beforeLastRetryRequestedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -1828,6 +1829,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(afterLastRetryRequestedAt);
   }
 
+  if (beforeLastRetryRequestedAt) {
+    whereClauses.push("julianday(r.last_retry_requested_at) < julianday(?)");
+    params.push(beforeLastRetryRequestedAt);
+  }
+
   if (minRetryCount !== null) {
     whereClauses.push("r.retry_count >= ?");
     params.push(minRetryCount);
@@ -1925,6 +1931,7 @@ export function countGeminiHandoffRequests(filters = {}) {
   const beforeCompletedAt = String(filters?.beforeCompletedAt || "").trim() || null;
   const afterCompletedAt = String(filters?.afterCompletedAt || "").trim() || null;
   const afterLastRetryRequestedAt = String(filters?.afterLastRetryRequestedAt || "").trim() || null;
+  const beforeLastRetryRequestedAt = String(filters?.beforeLastRetryRequestedAt || "").trim() || null;
   const rawMinRetryCount = Number.parseInt(String(filters?.minRetryCount ?? ""), 10);
   const minRetryCount = Number.isInteger(rawMinRetryCount) && rawMinRetryCount >= 0
     ? rawMinRetryCount
@@ -2009,6 +2016,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (afterLastRetryRequestedAt) {
     whereClauses.push("julianday(last_retry_requested_at) > julianday(?)");
     params.push(afterLastRetryRequestedAt);
+  }
+
+  if (beforeLastRetryRequestedAt) {
+    whereClauses.push("julianday(last_retry_requested_at) < julianday(?)");
+    params.push(beforeLastRetryRequestedAt);
   }
 
   if (minRetryCount !== null) {
