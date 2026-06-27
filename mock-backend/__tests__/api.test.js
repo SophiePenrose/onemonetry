@@ -1353,9 +1353,29 @@ describe("API endpoints", () => {
       assert.equal(approvedRows.status, 200);
       assert.equal(approvedRows.data.count, 0);
 
+      const csvResponse = await fetch(`${BASE}/api/gemini/handoff/${requestId}/yamm-rows?format=csv`);
+      assert.equal(csvResponse.status, 200);
+      assert.equal(String(csvResponse.headers.get("content-type") || "").includes("text/csv"), true);
+      assert.equal(
+        String(csvResponse.headers.get("content-disposition") || "").includes(`gemini-handoff-${requestId}-all.csv`),
+        true
+      );
+      const csvBody = await csvResponse.text();
+      assert.equal(csvBody.includes("Subject,Body,Company,CompanyNumber"), true);
+      assert.equal(csvBody.includes("Question about Example Co"), true);
+
+      const csvApproved = await fetch(`${BASE}/api/gemini/handoff/${requestId}/yamm-rows?format=csv&approval_status=approved`);
+      assert.equal(csvApproved.status, 200);
+      const csvApprovedBody = await csvApproved.text();
+      assert.equal(csvApprovedBody.split("\n").filter(Boolean).length, 1);
+
       const invalidFilter = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?approval_status=invalid`);
       assert.equal(invalidFilter.status, 400);
       assert.equal(invalidFilter.data.error, "invalid_approval_status");
+
+      const invalidFormat = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?format=xml`);
+      assert.equal(invalidFormat.status, 400);
+      assert.equal(invalidFormat.data.error, "invalid_format");
     });
 
     it("validates handoff event history query parameters", async () => {
