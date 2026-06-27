@@ -1456,6 +1456,76 @@ describe("API endpoints", () => {
       assert.equal(invalidSendEligible.data.error, "invalid_send_eligible");
     });
 
+    it("returns yamm row readiness summary for completed handoff", async () => {
+      const requestId = "req_api_test_yamm_summary_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const summaryBeforeComplete = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows/summary`);
+      assert.equal(summaryBeforeComplete.status, 409);
+      assert.equal(summaryBeforeComplete.data.error, "handoff_not_completed");
+
+      const payload = buildGeminiHandoffResponsePayload(requestId);
+      payload.sequence_outputs[0].yamm_rows = [
+        {
+          To: "",
+          Subject: "Pending no recipient",
+          Body: "pending",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 1,
+          ApprovalStatus: "pending",
+        },
+        {
+          To: "approved@example.co.uk",
+          Subject: "Approved and sendable",
+          Body: "approved",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 2,
+          ApprovalStatus: "approved",
+          DoNotSend: "false",
+        },
+        {
+          To: "blocked@example.co.uk",
+          Subject: "Approved but blocked",
+          Body: "blocked",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 3,
+          ApprovalStatus: "approved",
+          DoNotSend: "true",
+        },
+      ];
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(completed.status, 200);
+
+      const summary = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows/summary`);
+      assert.equal(summary.status, 200);
+      assert.equal(summary.data.totals.rows, 3);
+      assert.equal(summary.data.totals.send_eligible, 1);
+      assert.equal(summary.data.totals.missing_recipient, 1);
+      assert.equal(summary.data.totals.do_not_send, 1);
+      assert.equal(summary.data.by_approval_status.pending, 1);
+      assert.equal(summary.data.by_approval_status.approved, 2);
+      assert.equal(summary.data.by_approval_status.rejected, 0);
+    });
+
     it("validates handoff event history query parameters", async () => {
       const requestId = "req_api_test_events_validation_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {

@@ -444,6 +444,13 @@ function isTruthyGeminiYammFlag(value) {
   return ["1", "true", "yes", "on"].includes(normalized);
 }
 
+function isGeminiYammRowSendEligible(row = {}) {
+  const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+  const hasRecipient = String(row?.To || "").trim().length > 0;
+  const doNotSend = isTruthyGeminiYammFlag(row?.DoNotSend);
+  return approvalStatus === "approved" && hasRecipient && !doNotSend;
+}
+
 if (IGNORE_RUNTIME_SIGTERM) {
   process.on("SIGTERM", () => {
     console.warn("[runtime] SIGTERM received but ignored (IGNORE_RUNTIME_SIGTERM=true)");
@@ -5921,12 +5928,7 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
   const rows = sendEligible
-    ? approvalFilteredRows.filter((row) => {
-      const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
-      const hasRecipient = String(row?.To || "").trim().length > 0;
-      const doNotSend = isTruthyGeminiYammFlag(row?.DoNotSend);
-      return approvalStatus === "approved" && hasRecipient && !doNotSend;
-    })
+    ? approvalFilteredRows.filter((row) => isGeminiYammRowSendEligible(row))
     : approvalFilteredRows;
 
   if (rawFormat === "csv") {
@@ -5947,6 +5949,67 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
       send_eligible: sendEligible,
     },
     rows,
+  });
+});
+
+app.get("/api/gemini/handoff/:requestId/yamm-rows/summary", (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  if (!record.response || typeof record.response !== "object") {
+    return res.status(409).json({
+      error: "handoff_not_completed",
+      request_id: requestId,
+      status: record.status,
+    });
+  }
+
+  const rows = extractGeminiYammRows(record.response);
+  const byApprovalStatus = {
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    sent: 0,
+    paused: 0,
+    unknown: 0,
+  };
+  let missingRecipient = 0;
+  let doNotSendCount = 0;
+  let sendEligibleCount = 0;
+
+  for (const row of rows) {
+    const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+    if (GEMINI_APPROVAL_STATUSES.has(approvalStatus)) {
+      byApprovalStatus[approvalStatus] += 1;
+    } else {
+      byApprovalStatus.unknown += 1;
+    }
+
+    if (String(row?.To || "").trim().length < 1) {
+      missingRecipient += 1;
+    }
+    if (isTruthyGeminiYammFlag(row?.DoNotSend)) {
+      doNotSendCount += 1;
+    }
+    if (isGeminiYammRowSendEligible(row)) {
+      sendEligibleCount += 1;
+    }
+  }
+
+  return res.json({
+    contract_version: record.contract_version,
+    request_id: requestId,
+    response_id: record.response_id || record.response?.response_id || null,
+    totals: {
+      rows: rows.length,
+      send_eligible: sendEligibleCount,
+      missing_recipient: missingRecipient,
+      do_not_send: doNotSendCount,
+    },
+    by_approval_status: byApprovalStatus,
   });
 });
 
