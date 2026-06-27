@@ -33,6 +33,15 @@ const CONNECTOR_DEFINITIONS = [
     purpose: "contact_and_company_intelligence",
   },
   {
+    id: "phantombuster",
+    keyEnvs: ["PHANTOMBUSTER_API_KEY"],
+    keysOptional: true,
+    urlTemplateEnv: "PHANTOMBUSTER_URL_TEMPLATE",
+    authHeaderEnv: "PHANTOMBUSTER_AUTH_HEADER",
+    authSchemeEnv: "PHANTOMBUSTER_AUTH_SCHEME",
+    purpose: "workflow_automation_enrichment_exports",
+  },
+  {
     id: "similarweb",
     keyEnvs: ["SIMILARWEB_API_KEY"],
     urlTemplateEnv: "SIMILARWEB_URL_TEMPLATE",

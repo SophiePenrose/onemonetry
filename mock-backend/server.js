@@ -6321,6 +6321,12 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
       purpose: "Contact and company intelligence enrichment",
     },
+    phantombuster: {
+      configured: hasTemplate(process.env.PHANTOMBUSTER_URL_TEMPLATE),
+      required: false,
+      env_var: "PHANTOMBUSTER_URL_TEMPLATE (+ optional PHANTOMBUSTER_API_KEY)",
+      purpose: "Workflow automation exports used for hiring/tech/traffic signal ingestion",
+    },
     similarweb: {
       configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
       required: false,
@@ -6442,6 +6448,8 @@ app.get("/api/integrations/status", (_req, res) => {
       "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
       "PROSPEO_API_KEY=optional_prospeo_key",
       "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
+      "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
+      "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
       "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
       "BUILTWITH_API_KEY=optional_builtwith_key",
