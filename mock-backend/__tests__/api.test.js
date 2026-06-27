@@ -995,6 +995,39 @@ describe("API endpoints", () => {
       assert.equal(synced.data.counts.pending, 1);
     });
 
+    it("enforces Gemini retry max-attempt guardrail", async () => {
+      const requestId = "req_api_test_retry_limit_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      for (let i = 0; i < 5; i += 1) {
+        const retry = await fetchJSON(`/api/gemini/handoff/${requestId}/retry`, {
+          method: "POST",
+        });
+        assert.equal(retry.status, 202);
+      }
+
+      const blocked = await fetchJSON(`/api/gemini/handoff/${requestId}/retry`, {
+        method: "POST",
+      });
+      assert.equal(blocked.status, 409);
+      assert.equal(blocked.data.error, "retry_limit_reached");
+      assert.equal(blocked.data.request_id, requestId);
+      assert.equal(blocked.data.current_retry_count, 5);
+      assert.equal(blocked.data.max_retry_count, 5);
+    });
+
     it("treats duplicate complete callbacks with same response_id as idempotent", async () => {
       const requestId = "req_api_test_duplicate_complete_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {

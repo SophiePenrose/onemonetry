@@ -244,6 +244,7 @@ Error codes:
 - `sheet_write_failed`
 - `sheet_permission_denied`
 - `rate_limited`
+- `retry_limit_reached`
 - `unknown_error`
 
 ## Idempotency and Deduplication
@@ -261,6 +262,7 @@ Rules:
 5. Repeating completion with a different `response_id` for the same `request_id` is rejected as `response_id_conflict`.
 6. Status responses expose `request_payload_sha256` and `response_payload_sha256` for audit-safe replay tracing without returning raw stored payload text.
 7. Repeating completion with the same `response_id` but different payload content is rejected as `response_payload_mismatch`.
+8. Retries are bounded by `GEMINI_HANDOFF_MAX_RETRY_COUNT` (default `5`); additional retries are rejected as `retry_limit_reached`.
 
 ## Security and Compliance
 
