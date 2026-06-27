@@ -2252,6 +2252,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentStatusCounts = options?.includeRecentStatusCounts === true;
   const includeRecentRetryCounts = options?.includeRecentRetryCounts === true;
   const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
+  const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2310,6 +2311,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`)
     : [];
 
+  const recentEventStageRows = includeRecentEventStageCounts
+    ? db.prepare(`
+      SELECT event_stage, COUNT(*) AS count
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+      GROUP BY event_stage
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2336,6 +2346,12 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   }
   const recentApprovalTotal = Object.values(recentApprovalStatusCounts)
     .reduce((sum, value) => sum + Number(value || 0), 0);
+
+  const recentEventStageCounts = {};
+  for (const row of recentEventStageRows) {
+    const key = String(row.event_stage || "").trim().toLowerCase() || "unknown";
+    recentEventStageCounts[key] = Number(row.count || 0);
+  }
 
   return {
     generated_at: new Date().toISOString(),
@@ -2369,6 +2385,9 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           by_status: recentApprovalStatusCounts,
         },
       }
+      : {}),
+    ...(includeRecentEventStageCounts
+      ? { recent_event_stage_counts: recentEventStageCounts }
       : {}),
   };
 }
