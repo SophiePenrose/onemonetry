@@ -2263,6 +2263,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentCallbackPayloadConsistencyCounts = options?.includeRecentCallbackPayloadConsistencyCounts === true;
   const includeRecentYammRowReadinessCounts = options?.includeRecentYammRowReadinessCounts === true;
   const includeRecentYammRowGapCounts = options?.includeRecentYammRowGapCounts === true;
+  const includeRecentYammRowStuckCounts = options?.includeRecentYammRowStuckCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2429,6 +2430,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     || includeRecentCallbackPayloadConsistencyCounts
     || includeRecentYammRowReadinessCounts
     || includeRecentYammRowGapCounts
+    || includeRecentYammRowStuckCounts
   )
     ? db.prepare(`
       SELECT
@@ -2992,6 +2994,107 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const yammRowStuckCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    total_yamm_rows: 0,
+    unsent_rows: 0,
+    unsent_rows_over_24h: 0,
+    unsent_rows_over_72h: 0,
+    approved_unsent_rows: 0,
+    approved_unsent_rows_over_24h: 0,
+    approved_unsent_rows_over_72h: 0,
+    send_eligible_unsent_rows: 0,
+    send_eligible_unsent_rows_over_24h: 0,
+    send_eligible_unsent_rows_over_72h: 0,
+    pending_unsent_rows: 0,
+    pending_unsent_rows_over_24h: 0,
+    pending_unsent_rows_over_72h: 0,
+    unsent_rows_missing_completed_at: 0,
+  };
+
+  if (includeRecentYammRowStuckCounts) {
+    const nowMs = Date.now();
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+    const seventyTwoHoursMs = 72 * 60 * 60 * 1000;
+
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        yammRowStuckCounts.parse_errors += 1;
+        continue;
+      }
+
+      const completedAtValue = String(row?.completed_at || parsedPayload?.completed_at || "").trim();
+      const completedAtMs = completedAtValue ? Date.parse(completedAtValue) : Number.NaN;
+      const hasCompletedAt = Number.isFinite(completedAtMs);
+      const ageMs = hasCompletedAt ? Math.max(0, nowMs - completedAtMs) : null;
+
+      const sequenceOutputs = Array.isArray(parsedPayload?.sequence_outputs)
+        ? parsedPayload.sequence_outputs
+        : [];
+
+      for (const sequenceOutput of sequenceOutputs) {
+        const yammRows = Array.isArray(sequenceOutput?.yamm_rows)
+          ? sequenceOutput.yamm_rows
+          : [];
+
+        for (const yammRow of yammRows) {
+          yammRowStuckCounts.total_yamm_rows += 1;
+          const approvalStatus = String(yammRow?.ApprovalStatus || "").trim().toLowerCase();
+          const isSent = approvalStatus === "sent";
+          if (isSent) continue;
+
+          yammRowStuckCounts.unsent_rows += 1;
+          if (!hasCompletedAt) {
+            yammRowStuckCounts.unsent_rows_missing_completed_at += 1;
+          }
+
+          if (ageMs !== null && ageMs > twentyFourHoursMs) {
+            yammRowStuckCounts.unsent_rows_over_24h += 1;
+          }
+          if (ageMs !== null && ageMs > seventyTwoHoursMs) {
+            yammRowStuckCounts.unsent_rows_over_72h += 1;
+          }
+
+          const hasTo = String(yammRow?.To || "").trim().length > 0;
+          const hasSubject = String(yammRow?.Subject || "").trim().length > 0;
+          const hasBody = String(yammRow?.Body || "").trim().length > 0;
+
+          if (approvalStatus === "approved") {
+            yammRowStuckCounts.approved_unsent_rows += 1;
+            if (ageMs !== null && ageMs > twentyFourHoursMs) {
+              yammRowStuckCounts.approved_unsent_rows_over_24h += 1;
+            }
+            if (ageMs !== null && ageMs > seventyTwoHoursMs) {
+              yammRowStuckCounts.approved_unsent_rows_over_72h += 1;
+            }
+
+            if (hasTo && hasSubject && hasBody) {
+              yammRowStuckCounts.send_eligible_unsent_rows += 1;
+              if (ageMs !== null && ageMs > twentyFourHoursMs) {
+                yammRowStuckCounts.send_eligible_unsent_rows_over_24h += 1;
+              }
+              if (ageMs !== null && ageMs > seventyTwoHoursMs) {
+                yammRowStuckCounts.send_eligible_unsent_rows_over_72h += 1;
+              }
+            }
+          }
+
+          if (approvalStatus === "pending") {
+            yammRowStuckCounts.pending_unsent_rows += 1;
+            if (ageMs !== null && ageMs > twentyFourHoursMs) {
+              yammRowStuckCounts.pending_unsent_rows_over_24h += 1;
+            }
+            if (ageMs !== null && ageMs > seventyTwoHoursMs) {
+              yammRowStuckCounts.pending_unsent_rows_over_72h += 1;
+            }
+          }
+        }
+      }
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -3161,6 +3264,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ...(includeRecentYammRowGapCounts
       ? {
         recent_yamm_row_gap_counts: yammRowGapCounts,
+      }
+      : {}),
+    ...(includeRecentYammRowStuckCounts
+      ? {
+        recent_yamm_row_stuck_counts: yammRowStuckCounts,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts
