@@ -1518,6 +1518,26 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_almost_ready_missing_only_subject, "number");
       assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_almost_ready_missing_only_body, "number");
 
+      const summaryWithRecentYammRowStuckCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_yamm_row_stuck_counts=true");
+      assert.equal(summaryWithRecentYammRowStuckCounts.status, 200);
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts, "object");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.completed_recent, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.parse_errors, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.total_yamm_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.unsent_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.unsent_rows_over_24h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.unsent_rows_over_72h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.approved_unsent_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.approved_unsent_rows_over_24h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.approved_unsent_rows_over_72h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.send_eligible_unsent_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.send_eligible_unsent_rows_over_24h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.send_eligible_unsent_rows_over_72h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.pending_unsent_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.pending_unsent_rows_over_24h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.pending_unsent_rows_over_72h, "number");
+      assert.equal(typeof summaryWithRecentYammRowStuckCounts.data.recent_yamm_row_stuck_counts.unsent_rows_missing_completed_at, "number");
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1680,6 +1700,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentYammRowGapCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_yamm_row_gap_counts=maybe");
       assert.equal(invalidIncludeRecentYammRowGapCounts.status, 400);
       assert.equal(invalidIncludeRecentYammRowGapCounts.data.error, "invalid_include_recent_yamm_row_gap_counts");
+
+      const invalidIncludeRecentYammRowStuckCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_yamm_row_stuck_counts=maybe");
+      assert.equal(invalidIncludeRecentYammRowStuckCounts.status, 400);
+      assert.equal(invalidIncludeRecentYammRowStuckCounts.data.error, "invalid_include_recent_yamm_row_stuck_counts");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
