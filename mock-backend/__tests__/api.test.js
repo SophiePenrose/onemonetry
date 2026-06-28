@@ -1460,6 +1460,18 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.requests_touched_recent, "number");
       assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.requests_multi_sync_recent, "number");
       assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.max_revision_recent, "number");
+
+      const summaryWithApprovalSyncConflictCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_approval_sync_conflict_counts=true");
+      assert.equal(summaryWithApprovalSyncConflictCounts.status, 200);
+      assert.equal(typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts, "object");
+      assert.equal(typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.sync_attempts_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.sync_successes_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.sync_conflicts_recent, "number");
+      assert.equal(
+        summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.conflict_rate_percent === null
+          || typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.conflict_rate_percent === "number",
+        true
+      );
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1510,6 +1522,10 @@ describe("API endpoints", () => {
       const invalidIncludeApprovalSyncHealthCounts = await fetchJSON("/api/gemini/handoff/summary?include_approval_sync_health_counts=maybe");
       assert.equal(invalidIncludeApprovalSyncHealthCounts.status, 400);
       assert.equal(invalidIncludeApprovalSyncHealthCounts.data.error, "invalid_include_approval_sync_health_counts");
+
+      const invalidIncludeApprovalSyncConflictCounts = await fetchJSON("/api/gemini/handoff/summary?include_approval_sync_conflict_counts=maybe");
+      assert.equal(invalidIncludeApprovalSyncConflictCounts.status, 400);
+      assert.equal(invalidIncludeApprovalSyncConflictCounts.data.error, "invalid_include_approval_sync_conflict_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {

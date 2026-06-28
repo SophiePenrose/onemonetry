@@ -2260,6 +2260,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeQueueThroughputCounts = options?.includeQueueThroughputCounts === true;
   const includeQueueLatencyCounts = options?.includeQueueLatencyCounts === true;
   const includeApprovalSyncHealthCounts = options?.includeApprovalSyncHealthCounts === true;
+  const includeApprovalSyncConflictCounts = options?.includeApprovalSyncConflictCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2429,6 +2430,17 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).get(`-${recentHours} hours`)
     : null;
 
+  const approvalSyncConflictRows = includeApprovalSyncConflictCounts
+    ? db.prepare(`
+      SELECT event_type, COUNT(*) AS count
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_stage = 'callback'
+        AND event_type IN ('approvals_synced', 'approvals_sync_conflict')
+      GROUP BY event_type
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2514,6 +2526,19 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const throughputNetCompletedMinusRetries = throughputCompleted - throughputRetryRequested;
   const completionsPerHour = Math.round((throughputCompleted / recentHours) * 100) / 100;
   const retriesPerHour = Math.round((throughputRetryRequested / recentHours) * 100) / 100;
+
+  const approvalSyncByType = {};
+  for (const row of approvalSyncConflictRows) {
+    const key = String(row.event_type || "").trim();
+    if (!key) continue;
+    approvalSyncByType[key] = Number(row.count || 0);
+  }
+  const approvalSyncSuccesses = Number(approvalSyncByType.approvals_synced || 0);
+  const approvalSyncConflicts = Number(approvalSyncByType.approvals_sync_conflict || 0);
+  const approvalSyncAttempts = approvalSyncSuccesses + approvalSyncConflicts;
+  const approvalSyncConflictRatePercent = approvalSyncAttempts > 0
+    ? Math.round((approvalSyncConflicts / approvalSyncAttempts) * 10000) / 100
+    : null;
 
   return {
     generated_at: new Date().toISOString(),
@@ -2624,6 +2649,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           requests_touched_recent: Number(approvalSyncRequestHealthRow?.requests_touched_recent || 0),
           requests_multi_sync_recent: Number(approvalSyncRequestHealthRow?.requests_multi_sync_recent || 0),
           max_revision_recent: Number(approvalSyncRequestHealthRow?.max_revision_recent || 0),
+        },
+      }
+      : {}),
+    ...(includeApprovalSyncConflictCounts
+      ? {
+        approval_sync_conflict_counts: {
+          sync_attempts_recent: approvalSyncAttempts,
+          sync_successes_recent: approvalSyncSuccesses,
+          sync_conflicts_recent: approvalSyncConflicts,
+          conflict_rate_percent: approvalSyncConflictRatePercent,
         },
       }
       : {}),
