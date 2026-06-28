@@ -2272,6 +2272,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeQueueLatencyCounts = options?.includeQueueLatencyCounts === true;
   const includeApprovalSyncHealthCounts = options?.includeApprovalSyncHealthCounts === true;
   const includeApprovalSyncConflictCounts = options?.includeApprovalSyncConflictCounts === true;
+  const includeApprovalRevisionDistribution = options?.includeApprovalRevisionDistribution === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2553,6 +2554,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
         AND event_stage = 'callback'
         AND event_type IN ('approvals_synced', 'approvals_sync_conflict')
       GROUP BY event_type
+    `).all(`-${recentHours} hours`)
+    : [];
+
+  const approvalRevisionRows = includeApprovalRevisionDistribution
+    ? db.prepare(`
+      SELECT approvals_revision, COUNT(*) AS count
+      FROM gemini_handoff_requests
+      WHERE updated_at >= datetime('now', ?)
+      GROUP BY approvals_revision
     `).all(`-${recentHours} hours`)
     : [];
 
@@ -3161,6 +3171,25 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ? Math.round((approvalSyncConflicts / approvalSyncAttempts) * 10000) / 100
     : null;
 
+  const approvalRevisionDistributionByRevision = {};
+  for (const row of approvalRevisionRows) {
+    const revision = Math.max(0, Number.parseInt(String(row?.approvals_revision || 0), 10) || 0);
+    approvalRevisionDistributionByRevision[String(revision)] = Number(row?.count || 0);
+  }
+  const approvalRevisionTotalRecent = Object.values(approvalRevisionDistributionByRevision)
+    .reduce((sum, value) => sum + Number(value || 0), 0);
+  const approvalRevisionZero = Number(approvalRevisionDistributionByRevision["0"] || 0);
+  const approvalRevisionOne = Number(approvalRevisionDistributionByRevision["1"] || 0);
+  const approvalRevisionTwo = Number(approvalRevisionDistributionByRevision["2"] || 0);
+  const approvalRevisionThreeOrMore = Object.entries(approvalRevisionDistributionByRevision)
+    .filter(([key]) => Number.parseInt(String(key), 10) >= 3)
+    .reduce((sum, [, value]) => sum + Number(value || 0), 0);
+  const approvalRevisionTouchedRecent = Math.max(0, approvalRevisionTotalRecent - approvalRevisionZero);
+  const approvalRevisionMaxRecent = Object.keys(approvalRevisionDistributionByRevision)
+    .map((key) => Number.parseInt(String(key), 10))
+    .filter((value) => Number.isFinite(value))
+    .reduce((max, value) => Math.max(max, value), 0);
+
   return {
     generated_at: new Date().toISOString(),
     totals: {
@@ -3354,6 +3383,20 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           sync_successes_recent: approvalSyncSuccesses,
           sync_conflicts_recent: approvalSyncConflicts,
           conflict_rate_percent: approvalSyncConflictRatePercent,
+        },
+      }
+      : {}),
+    ...(includeApprovalRevisionDistribution
+      ? {
+        approval_revision_distribution: {
+          total_requests_recent: approvalRevisionTotalRecent,
+          touched_requests_recent: approvalRevisionTouchedRecent,
+          zero_revision_requests: approvalRevisionZero,
+          one_revision_requests: approvalRevisionOne,
+          two_revision_requests: approvalRevisionTwo,
+          three_or_more_revision_requests: approvalRevisionThreeOrMore,
+          max_revision_recent: approvalRevisionMaxRecent,
+          by_revision: approvalRevisionDistributionByRevision,
         },
       }
       : {}),
