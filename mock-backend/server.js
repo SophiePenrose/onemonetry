@@ -6375,6 +6375,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeQueueLatencyCounts = ["1", "true", "yes", "on"].includes(rawIncludeQueueLatencyCounts);
+  const rawIncludeApprovalSyncHealthCounts = String(req.query?.include_approval_sync_health_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeApprovalSyncHealthCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_approval_sync_health_counts",
+      message: "include_approval_sync_health_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeApprovalSyncHealthCounts = ["1", "true", "yes", "on"].includes(rawIncludeApprovalSyncHealthCounts);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
@@ -6389,6 +6397,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeQueueBacklogCounts,
     includeQueueThroughputCounts,
     includeQueueLatencyCounts,
+    includeApprovalSyncHealthCounts,
   });
 
   return res.json({

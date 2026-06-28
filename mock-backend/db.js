@@ -2259,6 +2259,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeQueueBacklogCounts = options?.includeQueueBacklogCounts === true;
   const includeQueueThroughputCounts = options?.includeQueueThroughputCounts === true;
   const includeQueueLatencyCounts = options?.includeQueueLatencyCounts === true;
+  const includeApprovalSyncHealthCounts = options?.includeApprovalSyncHealthCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2406,6 +2407,26 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       ORDER BY datetime(COALESCE(accepted_at, updated_at)) ASC
       LIMIT 1
     `).get()
+    : null;
+
+  const approvalSyncRequestHealthRow = includeApprovalSyncHealthCounts
+    ? db.prepare(`
+      SELECT
+        SUM(CASE WHEN updated_at >= datetime('now', ?) AND approvals_revision > 0 THEN 1 ELSE 0 END) AS requests_touched_recent,
+        SUM(CASE WHEN updated_at >= datetime('now', ?) AND approvals_revision >= 2 THEN 1 ELSE 0 END) AS requests_multi_sync_recent,
+        MAX(CASE WHEN updated_at >= datetime('now', ?) THEN approvals_revision ELSE 0 END) AS max_revision_recent
+      FROM gemini_handoff_requests
+    `).get(`-${recentHours} hours`, `-${recentHours} hours`, `-${recentHours} hours`)
+    : null;
+
+  const approvalSyncRowsRow = includeApprovalSyncHealthCounts
+    ? db.prepare(`
+      SELECT
+        COUNT(*) AS synced_rows_recent,
+        COUNT(DISTINCT request_id) AS synced_requests_recent
+      FROM gemini_handoff_approvals
+      WHERE synced_at >= datetime('now', ?)
+    `).get(`-${recentHours} hours`)
     : null;
 
   const statusCounts = {};
@@ -2592,6 +2613,17 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           oldest_open_status: queueOldestOpenRow?.status || null,
           oldest_open_accepted_at: queueOldestOpenRow?.accepted_at || null,
           oldest_open_updated_at: queueOldestOpenRow?.updated_at || null,
+        },
+      }
+      : {}),
+    ...(includeApprovalSyncHealthCounts
+      ? {
+        approval_sync_health_counts: {
+          synced_rows_recent: Number(approvalSyncRowsRow?.synced_rows_recent || 0),
+          synced_requests_recent: Number(approvalSyncRowsRow?.synced_requests_recent || 0),
+          requests_touched_recent: Number(approvalSyncRequestHealthRow?.requests_touched_recent || 0),
+          requests_multi_sync_recent: Number(approvalSyncRequestHealthRow?.requests_multi_sync_recent || 0),
+          max_revision_recent: Number(approvalSyncRequestHealthRow?.max_revision_recent || 0),
         },
       }
       : {}),
