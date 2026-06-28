@@ -6335,6 +6335,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentEventVolumeCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventVolumeCounts);
+  const rawIncludeRecentEventTypeShare = String(req.query?.include_recent_event_type_share || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentEventTypeShare)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_event_type_share",
+      message: "include_recent_event_type_share must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentEventTypeShare = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventTypeShare);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6408,6 +6416,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentApprovalCounts,
     includeRecentEventStageCounts,
     includeRecentEventVolumeCounts,
+    includeRecentEventTypeShare,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,
