@@ -1445,6 +1445,19 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithRecentCallbackAgingBands.data.recent_callback_aging_bands.age_band_counts.over_120m, "number");
       assert.equal(typeof summaryWithRecentCallbackAgingBands.data.recent_callback_aging_bands.age_band_counts_by_latest_callback_event, "object");
 
+      const summaryWithRecentCallbackPayloadQualityCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_callback_payload_quality_counts=true");
+      assert.equal(summaryWithRecentCallbackPayloadQualityCounts.status, 200);
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts, "object");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.completed_recent, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.parse_errors, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.missing_response_id, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.missing_completed_at, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.missing_status_field, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.status_ok, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.status_non_ok, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.empty_payload_object, "number");
+      assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.by_payload_status, "object");
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1587,6 +1600,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentCallbackAgingBands = await fetchJSON("/api/gemini/handoff/summary?include_recent_callback_aging_bands=maybe");
       assert.equal(invalidIncludeRecentCallbackAgingBands.status, 400);
       assert.equal(invalidIncludeRecentCallbackAgingBands.data.error, "invalid_include_recent_callback_aging_bands");
+
+      const invalidIncludeRecentCallbackPayloadQualityCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_callback_payload_quality_counts=maybe");
+      assert.equal(invalidIncludeRecentCallbackPayloadQualityCounts.status, 400);
+      assert.equal(invalidIncludeRecentCallbackPayloadQualityCounts.data.error, "invalid_include_recent_callback_payload_quality_counts");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
