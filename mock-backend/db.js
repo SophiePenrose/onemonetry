@@ -2254,6 +2254,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
   const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
+  const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2332,6 +2333,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`)
     : [];
 
+  const recentTransportRetryDetailRows = includeRecentTransportErrorCodeCounts
+    ? db.prepare(`
+      SELECT detail
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_stage = 'transport'
+        AND event_type = 'handoff_retry_requested'
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2378,6 +2389,18 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ? Math.round((dispatchCompleted / dispatchAttempted) * 10000) / 100
     : null;
 
+  const transportErrorCodeCounts = {};
+  for (const row of recentTransportRetryDetailRows) {
+    const parsedDetail = parseJsonText(row?.detail, null);
+    const rawCode = parsedDetail && typeof parsedDetail === "object"
+      ? (parsedDetail.reason ?? parsedDetail.code ?? "unknown")
+      : "unknown";
+    const key = String(rawCode || "unknown").trim().toLowerCase() || "unknown";
+    transportErrorCodeCounts[key] = Number(transportErrorCodeCounts[key] || 0) + 1;
+  }
+  const totalTransportFailures = Object.values(transportErrorCodeCounts)
+    .reduce((sum, value) => sum + Number(value || 0), 0);
+
   return {
     generated_at: new Date().toISOString(),
     totals: {
@@ -2421,6 +2444,14 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           completed: dispatchCompleted,
           retry_requested: dispatchRetryRequested,
           success_rate_percent: dispatchSuccessRatePercent,
+        },
+      }
+      : {}),
+    ...(includeRecentTransportErrorCodeCounts
+      ? {
+        recent_transport_error_code_counts: {
+          total_failures: totalTransportFailures,
+          by_code: transportErrorCodeCounts,
         },
       }
       : {}),
