@@ -6327,6 +6327,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentEventStageCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventStageCounts);
+  const rawIncludeRecentEventVolumeCounts = String(req.query?.include_recent_event_volume_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentEventVolumeCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_event_volume_counts",
+      message: "include_recent_event_volume_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentEventVolumeCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventVolumeCounts);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6399,6 +6407,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentRetryCounts,
     includeRecentApprovalCounts,
     includeRecentEventStageCounts,
+    includeRecentEventVolumeCounts,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,
