@@ -2261,6 +2261,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentCallbackPayloadQualityCounts = options?.includeRecentCallbackPayloadQualityCounts === true;
   const includeRecentCallbackSchemaPresenceCounts = options?.includeRecentCallbackSchemaPresenceCounts === true;
   const includeRecentCallbackPayloadConsistencyCounts = options?.includeRecentCallbackPayloadConsistencyCounts === true;
+  const includeRecentYammRowReadinessCounts = options?.includeRecentYammRowReadinessCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2425,6 +2426,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     includeRecentCallbackPayloadQualityCounts
     || includeRecentCallbackSchemaPresenceCounts
     || includeRecentCallbackPayloadConsistencyCounts
+    || includeRecentYammRowReadinessCounts
   )
     ? db.prepare(`
       SELECT
@@ -2862,6 +2864,70 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const yammRowReadinessCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    payloads_with_sequence_outputs: 0,
+    payloads_with_yamm_rows: 0,
+    total_yamm_rows: 0,
+    send_eligible_rows: 0,
+    approved_rows: 0,
+    pending_rows: 0,
+    rejected_rows: 0,
+    sent_rows: 0,
+    paused_rows: 0,
+    unknown_status_rows: 0,
+  };
+
+  if (includeRecentYammRowReadinessCounts) {
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        yammRowReadinessCounts.parse_errors += 1;
+        continue;
+      }
+
+      const sequenceOutputs = Array.isArray(parsedPayload?.sequence_outputs)
+        ? parsedPayload.sequence_outputs
+        : [];
+      if (sequenceOutputs.length > 0) {
+        yammRowReadinessCounts.payloads_with_sequence_outputs += 1;
+      }
+
+      let payloadHasYammRows = false;
+      for (const sequenceOutput of sequenceOutputs) {
+        const yammRows = Array.isArray(sequenceOutput?.yamm_rows)
+          ? sequenceOutput.yamm_rows
+          : [];
+        if (yammRows.length > 0) {
+          payloadHasYammRows = true;
+        }
+
+        for (const yammRow of yammRows) {
+          yammRowReadinessCounts.total_yamm_rows += 1;
+          const approvalStatus = String(yammRow?.ApprovalStatus || "").trim().toLowerCase();
+          if (approvalStatus === "approved") yammRowReadinessCounts.approved_rows += 1;
+          else if (approvalStatus === "pending") yammRowReadinessCounts.pending_rows += 1;
+          else if (approvalStatus === "rejected") yammRowReadinessCounts.rejected_rows += 1;
+          else if (approvalStatus === "sent") yammRowReadinessCounts.sent_rows += 1;
+          else if (approvalStatus === "paused") yammRowReadinessCounts.paused_rows += 1;
+          else yammRowReadinessCounts.unknown_status_rows += 1;
+
+          const hasTo = String(yammRow?.To || "").trim().length > 0;
+          const hasSubject = String(yammRow?.Subject || "").trim().length > 0;
+          const hasBody = String(yammRow?.Body || "").trim().length > 0;
+          if (approvalStatus === "approved" && hasTo && hasSubject && hasBody) {
+            yammRowReadinessCounts.send_eligible_rows += 1;
+          }
+        }
+      }
+
+      if (payloadHasYammRows) {
+        yammRowReadinessCounts.payloads_with_yamm_rows += 1;
+      }
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -3021,6 +3087,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ...(includeRecentCallbackPayloadConsistencyCounts
       ? {
         recent_callback_payload_consistency_counts: callbackPayloadConsistencyCounts,
+      }
+      : {}),
+    ...(includeRecentYammRowReadinessCounts
+      ? {
+        recent_yamm_row_readiness_counts: yammRowReadinessCounts,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts
