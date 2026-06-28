@@ -2257,6 +2257,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
   const includeQueueBacklogCounts = options?.includeQueueBacklogCounts === true;
+  const includeQueueThroughputCounts = options?.includeQueueThroughputCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2371,6 +2372,24 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).get()
     : null;
 
+  const queueThroughputRow = includeQueueThroughputCounts
+    ? db.prepare(`
+      SELECT
+        SUM(CASE WHEN datetime(completed_at) >= datetime('now', ?) THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN datetime(accepted_at) >= datetime('now', ?) THEN 1 ELSE 0 END) AS accepted
+      FROM gemini_handoff_requests
+    `).get(`-${recentHours} hours`, `-${recentHours} hours`)
+    : null;
+
+  const queueRetryEventsRow = includeQueueThroughputCounts
+    ? db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_type = 'handoff_retry_requested'
+    `).get(`-${recentHours} hours`)
+    : null;
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2450,6 +2469,13 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     + transportOutcomeCounts.fail_closed
     + transportOutcomeCounts.unknown;
 
+  const throughputCompleted = Number(queueThroughputRow?.completed || 0);
+  const throughputAccepted = Number(queueThroughputRow?.accepted || 0);
+  const throughputRetryRequested = Number(queueRetryEventsRow?.count || 0);
+  const throughputNetCompletedMinusRetries = throughputCompleted - throughputRetryRequested;
+  const completionsPerHour = Math.round((throughputCompleted / recentHours) * 100) / 100;
+  const retriesPerHour = Math.round((throughputRetryRequested / recentHours) * 100) / 100;
+
   return {
     generated_at: new Date().toISOString(),
     totals: {
@@ -2523,6 +2549,18 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           with_retries: Number(queueBacklogRow?.with_retries || 0),
           stale_over_1h: Number(queueBacklogRow?.stale_over_1h || 0),
           stale_over_24h: Number(queueBacklogRow?.stale_over_24h || 0),
+        },
+      }
+      : {}),
+    ...(includeQueueThroughputCounts
+      ? {
+        queue_throughput_counts: {
+          accepted: throughputAccepted,
+          completed: throughputCompleted,
+          retry_requested: throughputRetryRequested,
+          net_completed_minus_retries: throughputNetCompletedMinusRetries,
+          completed_per_hour: completionsPerHour,
+          retry_requested_per_hour: retriesPerHour,
         },
       }
       : {}),
