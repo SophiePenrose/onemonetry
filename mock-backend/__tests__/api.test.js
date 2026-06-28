@@ -1451,6 +1451,15 @@ describe("API endpoints", () => {
           || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_updated_at === "string",
         true
       );
+
+      const summaryWithApprovalSyncHealthCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_approval_sync_health_counts=true");
+      assert.equal(summaryWithApprovalSyncHealthCounts.status, 200);
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts, "object");
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.synced_rows_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.synced_requests_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.requests_touched_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.requests_multi_sync_recent, "number");
+      assert.equal(typeof summaryWithApprovalSyncHealthCounts.data.approval_sync_health_counts.max_revision_recent, "number");
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1497,6 +1506,10 @@ describe("API endpoints", () => {
       const invalidIncludeQueueLatencyCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_latency_counts=maybe");
       assert.equal(invalidIncludeQueueLatencyCounts.status, 400);
       assert.equal(invalidIncludeQueueLatencyCounts.data.error, "invalid_include_queue_latency_counts");
+
+      const invalidIncludeApprovalSyncHealthCounts = await fetchJSON("/api/gemini/handoff/summary?include_approval_sync_health_counts=maybe");
+      assert.equal(invalidIncludeApprovalSyncHealthCounts.status, 400);
+      assert.equal(invalidIncludeApprovalSyncHealthCounts.data.error, "invalid_include_approval_sync_health_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
