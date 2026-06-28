@@ -6351,6 +6351,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentEventRequestOutliers = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventRequestOutliers);
+  const rawIncludeRecentCallbackLatencyCounts = String(req.query?.include_recent_callback_latency_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentCallbackLatencyCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_callback_latency_counts",
+      message: "include_recent_callback_latency_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentCallbackLatencyCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentCallbackLatencyCounts);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6426,6 +6434,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentEventVolumeCounts,
     includeRecentEventTypeShare,
     includeRecentEventRequestOutliers,
+    includeRecentCallbackLatencyCounts,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,

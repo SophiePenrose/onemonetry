@@ -2256,6 +2256,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentEventVolumeCounts = options?.includeRecentEventVolumeCounts === true;
   const includeRecentEventTypeShare = options?.includeRecentEventTypeShare === true;
   const includeRecentEventRequestOutliers = options?.includeRecentEventRequestOutliers === true;
+  const includeRecentCallbackLatencyCounts = options?.includeRecentCallbackLatencyCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2371,6 +2372,24 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       LIMIT 5
     `).all(`-${recentHours} hours`)
     : [];
+
+  const recentCallbackLatencyRow = includeRecentCallbackLatencyCounts
+    ? db.prepare(`
+      SELECT
+        COUNT(*) AS completed_recent,
+        AVG((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) AS avg_latency_minutes,
+        MIN((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) AS min_latency_minutes,
+        MAX((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) AS max_latency_minutes,
+        SUM(CASE WHEN ((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) <= 1 THEN 1 ELSE 0 END) AS within_1m,
+        SUM(CASE WHEN ((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) > 5 THEN 1 ELSE 0 END) AS over_5m,
+        SUM(CASE WHEN ((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) > 30 THEN 1 ELSE 0 END) AS over_30m,
+        SUM(CASE WHEN ((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) > 120 THEN 1 ELSE 0 END) AS over_120m
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NOT NULL
+        AND accepted_at IS NOT NULL
+        AND datetime(completed_at) >= datetime('now', ?)
+    `).get(`-${recentHours} hours`)
+    : null;
 
   const recentTransportDispatchRows = includeRecentTransportDispatchCounts
     ? db.prepare(`
@@ -2548,6 +2567,20 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     is_completed: Boolean(row?.completed_at),
   }));
 
+  const avgCallbackLatencyMinutesRaw = recentCallbackLatencyRow?.avg_latency_minutes;
+  const minCallbackLatencyMinutesRaw = recentCallbackLatencyRow?.min_latency_minutes;
+  const maxCallbackLatencyMinutesRaw = recentCallbackLatencyRow?.max_latency_minutes;
+
+  const avgCallbackLatencyMinutes = Number.isFinite(Number(avgCallbackLatencyMinutesRaw))
+    ? Math.round(Number(avgCallbackLatencyMinutesRaw) * 100) / 100
+    : null;
+  const minCallbackLatencyMinutes = Number.isFinite(Number(minCallbackLatencyMinutesRaw))
+    ? Math.round(Number(minCallbackLatencyMinutesRaw) * 100) / 100
+    : null;
+  const maxCallbackLatencyMinutes = Number.isFinite(Number(maxCallbackLatencyMinutesRaw))
+    ? Math.round(Number(maxCallbackLatencyMinutesRaw) * 100) / 100
+    : null;
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2674,6 +2707,20 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           total_requests_with_events_recent: requestsWithEventsRecent,
           max_events_single_request_recent: maxEventsSingleRequestRecent,
           top_requests: recentEventRequestOutliers,
+        },
+      }
+      : {}),
+    ...(includeRecentCallbackLatencyCounts
+      ? {
+        recent_callback_latency_counts: {
+          completed_recent: Number(recentCallbackLatencyRow?.completed_recent || 0),
+          avg_latency_minutes: avgCallbackLatencyMinutes,
+          min_latency_minutes: minCallbackLatencyMinutes,
+          max_latency_minutes: maxCallbackLatencyMinutes,
+          within_1m: Number(recentCallbackLatencyRow?.within_1m || 0),
+          over_5m: Number(recentCallbackLatencyRow?.over_5m || 0),
+          over_30m: Number(recentCallbackLatencyRow?.over_30m || 0),
+          over_120m: Number(recentCallbackLatencyRow?.over_120m || 0),
         },
       }
       : {}),
