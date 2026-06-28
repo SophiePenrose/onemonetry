@@ -42,6 +42,15 @@ const CONNECTOR_DEFINITIONS = [
     purpose: "workflow_automation_enrichment_exports",
   },
   {
+    id: "cursor",
+    keyEnvs: ["CURSOR_API_KEY"],
+    keysOptional: true,
+    urlTemplateEnv: "CURSOR_URL_TEMPLATE",
+    authHeaderEnv: "CURSOR_AUTH_HEADER",
+    authSchemeEnv: "CURSOR_AUTH_SCHEME",
+    purpose: "workflow_automation_enrichment_exports",
+  },
+  {
     id: "similarweb",
     keyEnvs: ["SIMILARWEB_API_KEY"],
     urlTemplateEnv: "SIMILARWEB_URL_TEMPLATE",
