@@ -2255,6 +2255,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
+  const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2343,6 +2344,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`)
     : [];
 
+  const recentTransportOutcomeDetailRows = includeRecentTransportOutcomeCounts
+    ? db.prepare(`
+      SELECT detail
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_stage = 'transport'
+        AND event_type = 'handoff_retry_requested'
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2401,6 +2412,27 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const totalTransportFailures = Object.values(transportErrorCodeCounts)
     .reduce((sum, value) => sum + Number(value || 0), 0);
 
+  const transportOutcomeCounts = {
+    fail_open: 0,
+    fail_closed: 0,
+    unknown: 0,
+  };
+  for (const row of recentTransportOutcomeDetailRows) {
+    const parsedDetail = parseJsonText(row?.detail, null);
+    if (parsedDetail && typeof parsedDetail === "object" && parsedDetail.fail_open === true) {
+      transportOutcomeCounts.fail_open += 1;
+      continue;
+    }
+    if (parsedDetail && typeof parsedDetail === "object" && parsedDetail.fail_open === false) {
+      transportOutcomeCounts.fail_closed += 1;
+      continue;
+    }
+    transportOutcomeCounts.unknown += 1;
+  }
+  const totalTransportOutcomeRetries = transportOutcomeCounts.fail_open
+    + transportOutcomeCounts.fail_closed
+    + transportOutcomeCounts.unknown;
+
   return {
     generated_at: new Date().toISOString(),
     totals: {
@@ -2452,6 +2484,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
         recent_transport_error_code_counts: {
           total_failures: totalTransportFailures,
           by_code: transportErrorCodeCounts,
+        },
+      }
+      : {}),
+    ...(includeRecentTransportOutcomeCounts
+      ? {
+        recent_transport_outcome_counts: {
+          total_retries: totalTransportOutcomeRetries,
+          fail_open: transportOutcomeCounts.fail_open,
+          fail_closed: transportOutcomeCounts.fail_closed,
+          unknown: transportOutcomeCounts.unknown,
         },
       }
       : {}),

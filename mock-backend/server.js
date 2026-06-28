@@ -5792,6 +5792,7 @@ app.post("/api/gemini/handoff", async (req, res) => {
     addGeminiHandoffEvent(payload.request_id, "handoff_retry_requested", "transport", {
       reason: dispatchResult.error_code || "transport_error",
       retry_count: updated?.retry_count || 1,
+      fail_open: transportRuntime.fail_open === true,
     });
 
     if (!transportRuntime.fail_open) {
@@ -6342,6 +6343,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentTransportErrorCodeCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentTransportErrorCodeCounts);
+  const rawIncludeRecentTransportOutcomeCounts = String(req.query?.include_recent_transport_outcome_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportOutcomeCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_transport_outcome_counts",
+      message: "include_recent_transport_outcome_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentTransportOutcomeCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentTransportOutcomeCounts);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
@@ -6352,6 +6361,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentEventStageCounts,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
+    includeRecentTransportOutcomeCounts,
   });
 
   return res.json({
