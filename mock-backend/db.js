@@ -2262,6 +2262,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentCallbackSchemaPresenceCounts = options?.includeRecentCallbackSchemaPresenceCounts === true;
   const includeRecentCallbackPayloadConsistencyCounts = options?.includeRecentCallbackPayloadConsistencyCounts === true;
   const includeRecentYammRowReadinessCounts = options?.includeRecentYammRowReadinessCounts === true;
+  const includeRecentYammRowGapCounts = options?.includeRecentYammRowGapCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2427,6 +2428,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     || includeRecentCallbackSchemaPresenceCounts
     || includeRecentCallbackPayloadConsistencyCounts
     || includeRecentYammRowReadinessCounts
+    || includeRecentYammRowGapCounts
   )
     ? db.prepare(`
       SELECT
@@ -2928,6 +2930,68 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const yammRowGapCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    total_yamm_rows: 0,
+    rows_missing_to: 0,
+    rows_missing_subject: 0,
+    rows_missing_body: 0,
+    rows_missing_any_core_field: 0,
+    rows_missing_multiple_core_fields: 0,
+    approved_rows_missing_core_field: 0,
+    approved_rows_almost_ready_missing_only_to: 0,
+    approved_rows_almost_ready_missing_only_subject: 0,
+    approved_rows_almost_ready_missing_only_body: 0,
+  };
+
+  if (includeRecentYammRowGapCounts) {
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        yammRowGapCounts.parse_errors += 1;
+        continue;
+      }
+
+      const sequenceOutputs = Array.isArray(parsedPayload?.sequence_outputs)
+        ? parsedPayload.sequence_outputs
+        : [];
+
+      for (const sequenceOutput of sequenceOutputs) {
+        const yammRows = Array.isArray(sequenceOutput?.yamm_rows)
+          ? sequenceOutput.yamm_rows
+          : [];
+
+        for (const yammRow of yammRows) {
+          yammRowGapCounts.total_yamm_rows += 1;
+
+          const hasTo = String(yammRow?.To || "").trim().length > 0;
+          const hasSubject = String(yammRow?.Subject || "").trim().length > 0;
+          const hasBody = String(yammRow?.Body || "").trim().length > 0;
+          const missingCount = Number(!hasTo) + Number(!hasSubject) + Number(!hasBody);
+
+          if (!hasTo) yammRowGapCounts.rows_missing_to += 1;
+          if (!hasSubject) yammRowGapCounts.rows_missing_subject += 1;
+          if (!hasBody) yammRowGapCounts.rows_missing_body += 1;
+          if (missingCount >= 1) yammRowGapCounts.rows_missing_any_core_field += 1;
+          if (missingCount >= 2) yammRowGapCounts.rows_missing_multiple_core_fields += 1;
+
+          const approvalStatus = String(yammRow?.ApprovalStatus || "").trim().toLowerCase();
+          if (approvalStatus === "approved" && missingCount >= 1) {
+            yammRowGapCounts.approved_rows_missing_core_field += 1;
+            if (!hasTo && hasSubject && hasBody) {
+              yammRowGapCounts.approved_rows_almost_ready_missing_only_to += 1;
+            } else if (hasTo && !hasSubject && hasBody) {
+              yammRowGapCounts.approved_rows_almost_ready_missing_only_subject += 1;
+            } else if (hasTo && hasSubject && !hasBody) {
+              yammRowGapCounts.approved_rows_almost_ready_missing_only_body += 1;
+            }
+          }
+        }
+      }
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -3092,6 +3156,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ...(includeRecentYammRowReadinessCounts
       ? {
         recent_yamm_row_readiness_counts: yammRowReadinessCounts,
+      }
+      : {}),
+    ...(includeRecentYammRowGapCounts
+      ? {
+        recent_yamm_row_gap_counts: yammRowGapCounts,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts

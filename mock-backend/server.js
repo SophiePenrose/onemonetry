@@ -6399,6 +6399,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentYammRowReadinessCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentYammRowReadinessCounts);
+  const rawIncludeRecentYammRowGapCounts = String(req.query?.include_recent_yamm_row_gap_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentYammRowGapCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_yamm_row_gap_counts",
+      message: "include_recent_yamm_row_gap_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentYammRowGapCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentYammRowGapCounts);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6480,6 +6488,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentCallbackSchemaPresenceCounts,
     includeRecentCallbackPayloadConsistencyCounts,
     includeRecentYammRowReadinessCounts,
+    includeRecentYammRowGapCounts,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,
