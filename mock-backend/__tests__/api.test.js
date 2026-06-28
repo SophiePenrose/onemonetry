@@ -1422,6 +1422,35 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.net_completed_minus_retries, "number");
       assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.completed_per_hour, "number");
       assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.retry_requested_per_hour, "number");
+
+      const summaryWithQueueLatencyCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_queue_latency_counts=true");
+      assert.equal(summaryWithQueueLatencyCounts.status, 200);
+      assert.equal(typeof summaryWithQueueLatencyCounts.data.queue_latency_counts, "object");
+      assert.equal(
+        summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_age_minutes === null
+          || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_age_minutes === "number",
+        true
+      );
+      assert.equal(
+        summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_request_id === null
+          || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_request_id === "string",
+        true
+      );
+      assert.equal(
+        summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_status === null
+          || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_status === "string",
+        true
+      );
+      assert.equal(
+        summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_accepted_at === null
+          || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_accepted_at === "string",
+        true
+      );
+      assert.equal(
+        summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_updated_at === null
+          || typeof summaryWithQueueLatencyCounts.data.queue_latency_counts.oldest_open_updated_at === "string",
+        true
+      );
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1464,6 +1493,10 @@ describe("API endpoints", () => {
       const invalidIncludeQueueThroughputCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_throughput_counts=maybe");
       assert.equal(invalidIncludeQueueThroughputCounts.status, 400);
       assert.equal(invalidIncludeQueueThroughputCounts.data.error, "invalid_include_queue_throughput_counts");
+
+      const invalidIncludeQueueLatencyCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_latency_counts=maybe");
+      assert.equal(invalidIncludeQueueLatencyCounts.status, 400);
+      assert.equal(invalidIncludeQueueLatencyCounts.data.error, "invalid_include_queue_latency_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
