@@ -1502,6 +1502,22 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithRecentYammRowReadinessCounts.data.recent_yamm_row_readiness_counts.paused_rows, "number");
       assert.equal(typeof summaryWithRecentYammRowReadinessCounts.data.recent_yamm_row_readiness_counts.unknown_status_rows, "number");
 
+      const summaryWithRecentYammRowGapCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_yamm_row_gap_counts=true");
+      assert.equal(summaryWithRecentYammRowGapCounts.status, 200);
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts, "object");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.completed_recent, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.parse_errors, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.total_yamm_rows, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.rows_missing_to, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.rows_missing_subject, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.rows_missing_body, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.rows_missing_any_core_field, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.rows_missing_multiple_core_fields, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_missing_core_field, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_almost_ready_missing_only_to, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_almost_ready_missing_only_subject, "number");
+      assert.equal(typeof summaryWithRecentYammRowGapCounts.data.recent_yamm_row_gap_counts.approved_rows_almost_ready_missing_only_body, "number");
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1660,6 +1676,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentYammRowReadinessCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_yamm_row_readiness_counts=maybe");
       assert.equal(invalidIncludeRecentYammRowReadinessCounts.status, 400);
       assert.equal(invalidIncludeRecentYammRowReadinessCounts.data.error, "invalid_include_recent_yamm_row_readiness_counts");
+
+      const invalidIncludeRecentYammRowGapCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_yamm_row_gap_counts=maybe");
+      assert.equal(invalidIncludeRecentYammRowGapCounts.status, 400);
+      assert.equal(invalidIncludeRecentYammRowGapCounts.data.error, "invalid_include_recent_yamm_row_gap_counts");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
