@@ -18,6 +18,10 @@ const originalEnv = {
   PHANTOMBUSTER_URL_TEMPLATE: process.env.PHANTOMBUSTER_URL_TEMPLATE,
   PHANTOMBUSTER_AUTH_HEADER: process.env.PHANTOMBUSTER_AUTH_HEADER,
   PHANTOMBUSTER_AUTH_SCHEME: process.env.PHANTOMBUSTER_AUTH_SCHEME,
+  CURSOR_API_KEY: process.env.CURSOR_API_KEY,
+  CURSOR_URL_TEMPLATE: process.env.CURSOR_URL_TEMPLATE,
+  CURSOR_AUTH_HEADER: process.env.CURSOR_AUTH_HEADER,
+  CURSOR_AUTH_SCHEME: process.env.CURSOR_AUTH_SCHEME,
   STATUSPAGE_URL_TEMPLATE: process.env.STATUSPAGE_URL_TEMPLATE,
   STATUS_FEED_URL_TEMPLATE: process.env.STATUS_FEED_URL_TEMPLATE,
   STATUS_API_URL_TEMPLATE: process.env.STATUS_API_URL_TEMPLATE,
@@ -62,6 +66,10 @@ describe("external signal connectors", () => {
     delete process.env.PHANTOMBUSTER_URL_TEMPLATE;
     delete process.env.PHANTOMBUSTER_AUTH_HEADER;
     delete process.env.PHANTOMBUSTER_AUTH_SCHEME;
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_URL_TEMPLATE;
+    delete process.env.CURSOR_AUTH_HEADER;
+    delete process.env.CURSOR_AUTH_SCHEME;
   });
 
   it("returns no_connectors_configured when templates are missing", async () => {
@@ -150,6 +158,7 @@ describe("external signal connectors", () => {
     assert.equal(result.available_connectors.includes("endole"), true);
     assert.equal(result.available_connectors.includes("prospeo"), true);
     assert.equal(result.available_connectors.includes("phantombuster"), true);
+    assert.equal(result.available_connectors.includes("cursor"), true);
   });
 
   it("syncs configured PhantomBuster connector payload into hiring, marketing, and tech envelopes", async () => {

@@ -817,6 +817,7 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.email_generation_llm, "object");
       assert.equal(typeof data.integrations.prospeo, "object");
       assert.equal(typeof data.integrations.phantombuster, "object");
+      assert.equal(typeof data.integrations.cursor, "object");
       assert.equal(typeof data.integrations.status_api, "object");
       assert.equal(typeof data.integrations.status_instatus, "object");
       assert.equal(typeof data.integrations.status_cachet, "object");
@@ -839,6 +840,7 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
       assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}"));
       assert.ok(data.env_template.includes("PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}"));
+      assert.ok(data.env_template.includes("CURSOR_URL_TEMPLATE=https://example.com/cursor?company={company_number}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
     });
