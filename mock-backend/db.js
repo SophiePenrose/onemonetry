@@ -2256,6 +2256,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
+  const includeQueueBacklogCounts = options?.includeQueueBacklogCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2353,6 +2354,22 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
         AND event_type = 'handoff_retry_requested'
     `).all(`-${recentHours} hours`)
     : [];
+
+  const queueBacklogRow = includeQueueBacklogCounts
+    ? db.prepare(`
+      SELECT
+        COUNT(*) AS total_open,
+        SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+        SUM(CASE WHEN status = 'retry_requested' THEN 1 ELSE 0 END) AS retry_requested,
+        SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) AS with_retries,
+        SUM(CASE WHEN datetime(updated_at) <= datetime('now', '-1 hour') THEN 1 ELSE 0 END) AS stale_over_1h,
+        SUM(CASE WHEN datetime(updated_at) <= datetime('now', '-24 hours') THEN 1 ELSE 0 END) AS stale_over_24h
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NULL
+        AND response_payload IS NULL
+        AND status IN ('accepted', 'retry_requested')
+    `).get()
+    : null;
 
   const statusCounts = {};
   for (const row of statusRows) {
@@ -2494,6 +2511,18 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           fail_open: transportOutcomeCounts.fail_open,
           fail_closed: transportOutcomeCounts.fail_closed,
           unknown: transportOutcomeCounts.unknown,
+        },
+      }
+      : {}),
+    ...(includeQueueBacklogCounts
+      ? {
+        queue_backlog_counts: {
+          total_open: Number(queueBacklogRow?.total_open || 0),
+          accepted: Number(queueBacklogRow?.accepted || 0),
+          retry_requested: Number(queueBacklogRow?.retry_requested || 0),
+          with_retries: Number(queueBacklogRow?.with_retries || 0),
+          stale_over_1h: Number(queueBacklogRow?.stale_over_1h || 0),
+          stale_over_24h: Number(queueBacklogRow?.stale_over_24h || 0),
         },
       }
       : {}),

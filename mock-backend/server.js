@@ -6351,6 +6351,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentTransportOutcomeCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentTransportOutcomeCounts);
+  const rawIncludeQueueBacklogCounts = String(req.query?.include_queue_backlog_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeQueueBacklogCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_queue_backlog_counts",
+      message: "include_queue_backlog_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeQueueBacklogCounts = ["1", "true", "yes", "on"].includes(rawIncludeQueueBacklogCounts);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
@@ -6362,6 +6370,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,
+    includeQueueBacklogCounts,
   });
 
   return res.json({

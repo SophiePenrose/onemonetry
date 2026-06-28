@@ -1402,6 +1402,16 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.fail_open, "number");
       assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.fail_closed, "number");
       assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.unknown, "number");
+
+      const summaryWithQueueBacklogCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_queue_backlog_counts=true");
+      assert.equal(summaryWithQueueBacklogCounts.status, 200);
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts, "object");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.total_open, "number");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.accepted, "number");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.retry_requested, "number");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.with_retries, "number");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.stale_over_1h, "number");
+      assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.stale_over_24h, "number");
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1436,6 +1446,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentTransportOutcomeCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_outcome_counts=maybe");
       assert.equal(invalidIncludeRecentTransportOutcomeCounts.status, 400);
       assert.equal(invalidIncludeRecentTransportOutcomeCounts.data.error, "invalid_include_recent_transport_outcome_counts");
+
+      const invalidIncludeQueueBacklogCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_backlog_counts=maybe");
+      assert.equal(invalidIncludeQueueBacklogCounts.status, 400);
+      assert.equal(invalidIncludeQueueBacklogCounts.data.error, "invalid_include_queue_backlog_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
