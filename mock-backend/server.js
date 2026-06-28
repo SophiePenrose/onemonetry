@@ -107,6 +107,7 @@ import {
   getCadenceLog,
   addCadenceEntry,
   pruneHistoricMonthlyFilingsBefore,
+  purgeOutOfScopeMonitoredCompanies,
   getAnalysisQueueItemsByCompanyNumbers,
   getAnalysisQueueCounts,
   reconcileAnalysisQueueWithStoredAnalyses,
@@ -5359,6 +5360,35 @@ app.get("/api/monitor/companies", (req, res) => {
 app.get("/api/monitor/companies/:number/filings", (req, res) => {
   const filings = getFilingsForCompany(req.params.number);
   res.json({ filings });
+});
+
+app.post("/api/monitor/cleanup-turnover-scope", (req, res) => {
+  try {
+    const {
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    } = req.body || {};
+
+    const result = purgeOutOfScopeMonitoredCompanies({
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    });
+
+    res.json({
+      message: result.dry_run
+        ? "Dry run complete. No records were removed."
+        : "Cleanup complete. Out-of-scope company data removed.",
+      ...result,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "cleanup_failed" });
+  }
 });
 
 app.post("/api/monitor/import-list", async (req, res) => {
