@@ -2258,6 +2258,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentEventRequestOutliers = options?.includeRecentEventRequestOutliers === true;
   const includeRecentCallbackLatencyPercentilesByStatus = options?.includeRecentCallbackLatencyPercentilesByStatus === true;
   const includeRecentCallbackAgingBands = options?.includeRecentCallbackAgingBands === true;
+  const includeRecentCallbackPayloadQualityCounts = options?.includeRecentCallbackPayloadQualityCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2416,6 +2417,18 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           LIMIT 1
         )
     `).all(`-${recentHours} hours`, `-${recentHours} hours`)
+    : [];
+
+  const callbackPayloadQualityRows = includeRecentCallbackPayloadQualityCounts
+    ? db.prepare(`
+      SELECT
+        response_payload,
+        response_id,
+        completed_at
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NOT NULL
+        AND datetime(completed_at) >= datetime('now', ?)
+    `).all(`-${recentHours} hours`)
     : [];
 
   const recentTransportDispatchRows = includeRecentTransportDispatchCounts
@@ -2676,6 +2689,55 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const callbackPayloadStatusCounts = {};
+  const callbackPayloadQualityCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    missing_response_id: 0,
+    missing_completed_at: 0,
+    missing_status_field: 0,
+    status_ok: 0,
+    status_non_ok: 0,
+    empty_payload_object: 0,
+  };
+
+  if (includeRecentCallbackPayloadQualityCounts) {
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        callbackPayloadQualityCounts.parse_errors += 1;
+        continue;
+      }
+
+      if (Object.keys(parsedPayload).length === 0) {
+        callbackPayloadQualityCounts.empty_payload_object += 1;
+      }
+
+      const hasResponseId = String(row?.response_id || "").trim().length > 0;
+      if (!hasResponseId) {
+        callbackPayloadQualityCounts.missing_response_id += 1;
+      }
+
+      const hasCompletedAt = String(row?.completed_at || "").trim().length > 0;
+      if (!hasCompletedAt) {
+        callbackPayloadQualityCounts.missing_completed_at += 1;
+      }
+
+      const rawStatus = parsedPayload?.status;
+      const statusKey = String(rawStatus || "").trim().toLowerCase();
+      if (!statusKey) {
+        callbackPayloadQualityCounts.missing_status_field += 1;
+      } else {
+        callbackPayloadStatusCounts[statusKey] = Number(callbackPayloadStatusCounts[statusKey] || 0) + 1;
+        if (statusKey === "ok") {
+          callbackPayloadQualityCounts.status_ok += 1;
+        } else {
+          callbackPayloadQualityCounts.status_non_ok += 1;
+        }
+      }
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2816,6 +2878,14 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           total_open_requests: callbackAgingOpenRows.length,
           age_band_counts: callbackAgingBands,
           age_band_counts_by_latest_callback_event: callbackAgingBandsByLatestCallbackEvent,
+        },
+      }
+      : {}),
+    ...(includeRecentCallbackPayloadQualityCounts
+      ? {
+        recent_callback_payload_quality_counts: {
+          ...callbackPayloadQualityCounts,
+          by_payload_status: callbackPayloadStatusCounts,
         },
       }
       : {}),
