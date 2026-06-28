@@ -2256,6 +2256,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentEventVolumeCounts = options?.includeRecentEventVolumeCounts === true;
   const includeRecentEventTypeShare = options?.includeRecentEventTypeShare === true;
   const includeRecentEventRequestOutliers = options?.includeRecentEventRequestOutliers === true;
+  const includeRecentCallbackLatencyPercentilesByStatus = options?.includeRecentCallbackLatencyPercentilesByStatus === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2369,6 +2370,18 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       GROUP BY e.request_id
       ORDER BY event_count DESC, datetime(latest_event_at) DESC
       LIMIT 5
+    `).all(`-${recentHours} hours`)
+    : [];
+
+  const recentCallbackLatencyRows = includeRecentCallbackLatencyPercentilesByStatus
+    ? db.prepare(`
+      SELECT
+        status,
+        ((julianday(completed_at) - julianday(accepted_at)) * 24 * 60) AS latency_minutes
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NOT NULL
+        AND accepted_at IS NOT NULL
+        AND datetime(completed_at) >= datetime('now', ?)
     `).all(`-${recentHours} hours`)
     : [];
 
@@ -2548,6 +2561,43 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     is_completed: Boolean(row?.completed_at),
   }));
 
+  const percentile = (sortedValues, ratio) => {
+    if (!Array.isArray(sortedValues) || sortedValues.length === 0) return null;
+    const index = Math.max(0, Math.min(sortedValues.length - 1, Math.ceil(ratio * sortedValues.length) - 1));
+    const value = Number(sortedValues[index]);
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
+  };
+
+  const callbackLatencyPercentilesByStatus = {};
+  if (includeRecentCallbackLatencyPercentilesByStatus) {
+    const byStatus = {};
+    for (const row of recentCallbackLatencyRows) {
+      const key = String(row?.status || "").trim().toLowerCase() || "unknown";
+      const latencyMinutes = Number(row?.latency_minutes);
+      if (!Number.isFinite(latencyMinutes) || latencyMinutes < 0) continue;
+      if (!Array.isArray(byStatus[key])) byStatus[key] = [];
+      byStatus[key].push(latencyMinutes);
+    }
+
+    for (const [status, values] of Object.entries(byStatus)) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const count = sorted.length;
+      const avg = count > 0
+        ? Math.round((sorted.reduce((sum, value) => sum + value, 0) / count) * 100) / 100
+        : null;
+      const max = count > 0 ? Math.round(sorted[count - 1] * 100) / 100 : null;
+
+      callbackLatencyPercentilesByStatus[status] = {
+        count,
+        avg_latency_minutes: avg,
+        p50_latency_minutes: percentile(sorted, 0.5),
+        p90_latency_minutes: percentile(sorted, 0.9),
+        p95_latency_minutes: percentile(sorted, 0.95),
+        max_latency_minutes: max,
+      };
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2675,6 +2725,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           max_events_single_request_recent: maxEventsSingleRequestRecent,
           top_requests: recentEventRequestOutliers,
         },
+      }
+      : {}),
+    ...(includeRecentCallbackLatencyPercentilesByStatus
+      ? {
+        recent_callback_latency_percentiles_by_status: callbackLatencyPercentilesByStatus,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts

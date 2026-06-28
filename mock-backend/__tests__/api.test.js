@@ -1418,6 +1418,22 @@ describe("API endpoints", () => {
         true
       );
 
+      const summaryWithRecentCallbackLatencyPercentilesByStatus = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_callback_latency_percentiles_by_status=true");
+      assert.equal(summaryWithRecentCallbackLatencyPercentilesByStatus.status, 200);
+      assert.equal(typeof summaryWithRecentCallbackLatencyPercentilesByStatus.data.recent_callback_latency_percentiles_by_status, "object");
+      assert.equal(
+        Object.values(summaryWithRecentCallbackLatencyPercentilesByStatus.data.recent_callback_latency_percentiles_by_status).every((entry) => {
+          return entry
+            && typeof entry.count === "number"
+            && (entry.avg_latency_minutes === null || typeof entry.avg_latency_minutes === "number")
+            && (entry.p50_latency_minutes === null || typeof entry.p50_latency_minutes === "number")
+            && (entry.p90_latency_minutes === null || typeof entry.p90_latency_minutes === "number")
+            && (entry.p95_latency_minutes === null || typeof entry.p95_latency_minutes === "number")
+            && (entry.max_latency_minutes === null || typeof entry.max_latency_minutes === "number");
+        }),
+        true
+      );
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1552,6 +1568,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentEventRequestOutliers = await fetchJSON("/api/gemini/handoff/summary?include_recent_event_request_outliers=maybe");
       assert.equal(invalidIncludeRecentEventRequestOutliers.status, 400);
       assert.equal(invalidIncludeRecentEventRequestOutliers.data.error, "invalid_include_recent_event_request_outliers");
+
+      const invalidIncludeRecentCallbackLatencyPercentilesByStatus = await fetchJSON("/api/gemini/handoff/summary?include_recent_callback_latency_percentiles_by_status=maybe");
+      assert.equal(invalidIncludeRecentCallbackLatencyPercentilesByStatus.status, 400);
+      assert.equal(invalidIncludeRecentCallbackLatencyPercentilesByStatus.data.error, "invalid_include_recent_callback_latency_percentiles_by_status");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
