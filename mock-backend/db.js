@@ -1890,6 +1890,10 @@ export function listGeminiHandoffRequests(filters = {}) {
   const retryCount = Number.isInteger(rawRetryCount) && rawRetryCount >= 0
     ? rawRetryCount
     : null;
+  const rawMinEventCount = Number.parseInt(String(filters?.minEventCount ?? ""), 10);
+  const minEventCount = Number.isInteger(rawMinEventCount) && rawMinEventCount >= 0
+    ? rawMinEventCount
+    : null;
   const rawMaxEventCount = Number.parseInt(String(filters?.maxEventCount ?? ""), 10);
   const maxEventCount = Number.isInteger(rawMaxEventCount) && rawMaxEventCount >= 0
     ? rawMaxEventCount
@@ -2047,6 +2051,11 @@ export function listGeminiHandoffRequests(filters = {}) {
     params.push(retryCount);
   }
 
+  if (minEventCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = r.request_id) >= ?");
+    params.push(minEventCount);
+  }
+
   if (maxEventCount !== null) {
     whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = r.request_id) <= ?");
     params.push(maxEventCount);
@@ -2178,6 +2187,10 @@ export function countGeminiHandoffRequests(filters = {}) {
   const retryCount = Number.isInteger(rawRetryCount) && rawRetryCount >= 0
     ? rawRetryCount
     : null;
+  const rawMinEventCount = Number.parseInt(String(filters?.minEventCount ?? ""), 10);
+  const minEventCount = Number.isInteger(rawMinEventCount) && rawMinEventCount >= 0
+    ? rawMinEventCount
+    : null;
   const rawMaxEventCount = Number.parseInt(String(filters?.maxEventCount ?? ""), 10);
   const maxEventCount = Number.isInteger(rawMaxEventCount) && rawMaxEventCount >= 0
     ? rawMaxEventCount
@@ -2302,6 +2315,11 @@ export function countGeminiHandoffRequests(filters = {}) {
   if (retryCount !== null) {
     whereClauses.push("retry_count = ?");
     params.push(retryCount);
+  }
+
+  if (minEventCount !== null) {
+    whereClauses.push("(SELECT COUNT(*) FROM gemini_handoff_events e WHERE e.request_id = gemini_handoff_requests.request_id) >= ?");
+    params.push(minEventCount);
   }
 
   if (maxEventCount !== null) {
