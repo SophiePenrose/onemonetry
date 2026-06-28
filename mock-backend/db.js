@@ -2257,6 +2257,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentEventTypeShare = options?.includeRecentEventTypeShare === true;
   const includeRecentEventRequestOutliers = options?.includeRecentEventRequestOutliers === true;
   const includeRecentCallbackLatencyPercentilesByStatus = options?.includeRecentCallbackLatencyPercentilesByStatus === true;
+  const includeRecentCallbackAgingBands = options?.includeRecentCallbackAgingBands === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2383,6 +2384,38 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
         AND accepted_at IS NOT NULL
         AND datetime(completed_at) >= datetime('now', ?)
     `).all(`-${recentHours} hours`)
+    : [];
+
+  const callbackAgingOpenRows = includeRecentCallbackAgingBands
+    ? db.prepare(`
+      SELECT
+        request_id,
+        CAST((julianday('now') - julianday(COALESCE(accepted_at, updated_at))) * 24 * 60 AS INTEGER) AS age_minutes
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NULL
+        AND response_payload IS NULL
+        AND status IN ('accepted', 'retry_requested')
+    `).all()
+    : [];
+
+  const callbackAgingRecentCallbackRows = includeRecentCallbackAgingBands
+    ? db.prepare(`
+      SELECT
+        e.request_id,
+        e.event_type
+      FROM gemini_handoff_events e
+      WHERE e.event_stage = 'callback'
+        AND e.created_at >= datetime('now', ?)
+        AND e.id = (
+          SELECT e2.id
+          FROM gemini_handoff_events e2
+          WHERE e2.request_id = e.request_id
+            AND e2.event_stage = 'callback'
+            AND e2.created_at >= datetime('now', ?)
+          ORDER BY datetime(e2.created_at) DESC, e2.id DESC
+          LIMIT 1
+        )
+    `).all(`-${recentHours} hours`, `-${recentHours} hours`)
     : [];
 
   const recentTransportDispatchRows = includeRecentTransportDispatchCounts
@@ -2598,6 +2631,51 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const callbackAgingBands = {
+    under_5m: 0,
+    from_5m_to_30m: 0,
+    from_30m_to_120m: 0,
+    over_120m: 0,
+  };
+  const callbackAgingBandsByLatestCallbackEvent = {};
+  const latestCallbackEventByRequest = {};
+
+  if (includeRecentCallbackAgingBands) {
+    for (const row of callbackAgingRecentCallbackRows) {
+      const requestId = String(row?.request_id || "").trim();
+      if (!requestId) continue;
+      const eventType = String(row?.event_type || "").trim().toLowerCase() || "unknown";
+      latestCallbackEventByRequest[requestId] = eventType;
+    }
+
+    const getBand = (ageMinutes) => {
+      if (!Number.isFinite(ageMinutes) || ageMinutes < 0) return "under_5m";
+      if (ageMinutes < 5) return "under_5m";
+      if (ageMinutes < 30) return "from_5m_to_30m";
+      if (ageMinutes < 120) return "from_30m_to_120m";
+      return "over_120m";
+    };
+
+    for (const row of callbackAgingOpenRows) {
+      const requestId = String(row?.request_id || "").trim();
+      if (!requestId) continue;
+      const ageMinutes = Number(row?.age_minutes);
+      const band = getBand(ageMinutes);
+      callbackAgingBands[band] += 1;
+
+      const latestEventType = latestCallbackEventByRequest[requestId] || "no_recent_callback_event";
+      if (!callbackAgingBandsByLatestCallbackEvent[latestEventType]) {
+        callbackAgingBandsByLatestCallbackEvent[latestEventType] = {
+          under_5m: 0,
+          from_5m_to_30m: 0,
+          from_30m_to_120m: 0,
+          over_120m: 0,
+        };
+      }
+      callbackAgingBandsByLatestCallbackEvent[latestEventType][band] += 1;
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2730,6 +2808,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ...(includeRecentCallbackLatencyPercentilesByStatus
       ? {
         recent_callback_latency_percentiles_by_status: callbackLatencyPercentilesByStatus,
+      }
+      : {}),
+    ...(includeRecentCallbackAgingBands
+      ? {
+        recent_callback_aging_bands: {
+          total_open_requests: callbackAgingOpenRows.length,
+          age_band_counts: callbackAgingBands,
+          age_band_counts_by_latest_callback_event: callbackAgingBandsByLatestCallbackEvent,
+        },
       }
       : {}),
     ...(includeRecentTransportDispatchCounts
