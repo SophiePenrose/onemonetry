@@ -10,9 +10,16 @@ import {
 // bulk-processor.js
 
 const CH_DOWNLOAD_BASE = "https://download.companieshouse.gov.uk";
-const TURNOVER_THRESHOLD = 15_000_000;
+const TURNOVER_MIN_THRESHOLD = 30_000_000;
+const TURNOVER_MAX_THRESHOLD = 200_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
 export const MONTHLY_BACKFILL_MONTHS = 24;
+
+function isTurnoverInEligibleRange(turnover) {
+  return Number.isFinite(turnover)
+    && turnover >= TURNOVER_MIN_THRESHOLD
+    && turnover <= TURNOVER_MAX_THRESHOLD;
+}
 
 // --- Turnover extraction from iXBRL/XBRL ---
 
@@ -259,7 +266,7 @@ export async function processAccountsZip(zipUrl, filename, onProgress) {
           continue;
         }
 
-        if (turnover < TURNOVER_THRESHOLD) {
+        if (!isTurnoverInEligibleRange(turnover)) {
           belowThreshold++;
           continue;
         }

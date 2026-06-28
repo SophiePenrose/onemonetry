@@ -45,7 +45,7 @@ async function run() {
       });
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      console.log(`  ✅ Done in ${elapsed}s: ${result.total_files} files, ${result.qualifying} qualifying (£15M+), ${result.below_threshold} below, ${result.no_turnover_data} no data`);
+      console.log(`  ✅ Done in ${elapsed}s: ${result.total_files} files, ${result.qualifying} qualifying (£30M-£200M), ${result.below_threshold} out of scope, ${result.no_turnover_data} no data`);
       totalQualifying += result.qualifying;
       totalProcessed++;
     } catch (err) {

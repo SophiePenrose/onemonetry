@@ -1216,12 +1216,17 @@ export function getShortlistCompanies(filters = {}) {
     FROM company_monitor cm
     WHERE cm.status = 'active'
     AND cm.latest_turnover >= ?
+    AND cm.latest_turnover <= ?
   `;
-  const params = [filters.min_turnover || 15000000];
+  const params = [
+    Number.isFinite(Number(filters.min_turnover)) ? Number(filters.min_turnover) : 30_000_000,
+    Number.isFinite(Number(filters.max_turnover)) ? Number(filters.max_turnover) : 200_000_000,
+  ];
 
   if (filters.below_threshold) {
     sql = sql.replace("AND cm.latest_turnover >= ?", "");
-    params.shift();
+    sql = sql.replace("AND cm.latest_turnover <= ?", "");
+    params.length = 0;
     sql += " AND cm.below_threshold = 1";
   }
 
@@ -1232,8 +1237,10 @@ export function getShortlistCompanies(filters = {}) {
   return db.prepare(sql).all(...params);
 }
 
-export function getShortlistCount(minTurnover = 15000000) {
-  return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
+export function getShortlistCount(minTurnover = 30_000_000, maxTurnover = 200_000_000) {
+  return db.prepare(
+    "SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ? AND latest_turnover <= ?"
+  ).get(minTurnover, maxTurnover).count;
 }
 
 export function pruneHistoricMonthlyFilingsBefore(cutoffPeriod) {

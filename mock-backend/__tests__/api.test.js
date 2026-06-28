@@ -2667,7 +2667,7 @@ describe("API endpoints", () => {
           name: "Shadow Style Test Co",
           industry: "Technology",
           segment: "Mid-Market",
-          turnover: 22000000,
+          turnover: 32000000,
         }),
       });
 

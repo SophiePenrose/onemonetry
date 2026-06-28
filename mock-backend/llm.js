@@ -539,9 +539,9 @@ async function enrichSupplementaryContext(analysis, companyName, filingText) {
 
 function inferSegment(turnover, employeeEstimate) {
   if (employeeEstimate && employeeEstimate >= 1000) return "Enterprise";
-  if (turnover && turnover > 500_000_000) return "Enterprise";
+  if (turnover && turnover > 200_000_000) return "Enterprise";
   if (employeeEstimate && employeeEstimate >= 50) return "Mid-Market";
-  if (turnover && turnover >= 10_000_000) return "Mid-Market";
+  if (turnover && turnover >= 30_000_000) return "Mid-Market";
   return "SMB";
 }
 
@@ -1181,7 +1181,7 @@ REVOLUT BUSINESS CONTEXT:
 - Spend Management: cheaper than Pleo (£5/user vs £9.50), 2-4x cheaper FX
 - API: unified platform across banking + acquiring
 
-TARGET: Mid-market companies £15M-£500M turnover with international operations, payment processing needs, or growing teams needing expense management.
+TARGET: Mid-market companies £30M-£200M turnover with international operations, payment processing needs, or growing teams needing expense management.
 
 KEY COMPETITORS TO DETECT:
 - HSBC/Barclays/NatWest (FX): digital friction, 1-3% FX costs, legacy tech
