@@ -1412,6 +1412,16 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.with_retries, "number");
       assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.stale_over_1h, "number");
       assert.equal(typeof summaryWithQueueBacklogCounts.data.queue_backlog_counts.stale_over_24h, "number");
+
+      const summaryWithQueueThroughputCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_queue_throughput_counts=true");
+      assert.equal(summaryWithQueueThroughputCounts.status, 200);
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts, "object");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.accepted, "number");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.completed, "number");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.retry_requested, "number");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.net_completed_minus_retries, "number");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.completed_per_hour, "number");
+      assert.equal(typeof summaryWithQueueThroughputCounts.data.queue_throughput_counts.retry_requested_per_hour, "number");
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1450,6 +1460,10 @@ describe("API endpoints", () => {
       const invalidIncludeQueueBacklogCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_backlog_counts=maybe");
       assert.equal(invalidIncludeQueueBacklogCounts.status, 400);
       assert.equal(invalidIncludeQueueBacklogCounts.data.error, "invalid_include_queue_backlog_counts");
+
+      const invalidIncludeQueueThroughputCounts = await fetchJSON("/api/gemini/handoff/summary?include_queue_throughput_counts=maybe");
+      assert.equal(invalidIncludeQueueThroughputCounts.status, 400);
+      assert.equal(invalidIncludeQueueThroughputCounts.data.error, "invalid_include_queue_throughput_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
