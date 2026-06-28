@@ -332,6 +332,44 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("POST /api/closed-won/import", () => {
+    it("accepts raw export text containing Companies Registry Office numbers", async () => {
+      const before = await fetchJSON("/api/closed-won/registry?limit=1");
+      assert.equal(before.status, 200);
+      const initialTotal = Number(before.data.total || 0);
+
+      const rawText = [
+        "Select Item 1",
+        "ACME ONE LTD",
+        "COMPANIES REGISTRY OFFICE Number (GB): 07139565",
+        "Select Item 2",
+        "ACME TWO LTD",
+        "COMPANIES REGISTRY OFFICE Number (GB): 02598164",
+      ].join("\n");
+
+      const imported = await fetchJSON("/api/closed-won/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "api_test_raw_text",
+          csv_content: rawText,
+          dry_run: false,
+          mark_existing_closed_won: false,
+        }),
+      });
+
+      assert.equal(imported.status, 200);
+      assert.equal(imported.data.skipped_invalid, 0);
+      assert.equal(imported.data.total_registry_count, initialTotal + 2);
+
+      const after = await fetchJSON("/api/closed-won/registry?limit=5000");
+      assert.equal(after.status, 200);
+      const numbers = new Set((after.data.rows || []).map((row) => row.company_number));
+      assert.equal(numbers.has("07139565"), true);
+      assert.equal(numbers.has("02598164"), true);
+    });
+  });
+
   describe("GET /api/unified-shortlist", () => {
     it("returns companies array with meta", async () => {
       const { status, data } = await fetchJSON("/api/unified-shortlist");
@@ -1092,6 +1130,12 @@ describe("API endpoints", () => {
       assert.equal(retryCountList.data.items.every((entry) => Number(entry.retry_count || 0) === 0), true);
       assert.equal(retryCountList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const minEventCountList = await fetchJSON("/api/gemini/handoff?min_event_count=1&limit=100&offset=0");
+      assert.equal(minEventCountList.status, 200);
+      assert.equal(minEventCountList.data.filters.min_event_count, 1);
+      assert.equal(minEventCountList.data.items.length >= 1, true);
+      assert.equal(minEventCountList.data.items.every((entry) => Number(entry.event_count || 0) >= 1), true);
+
       const maxEventCountList = await fetchJSON("/api/gemini/handoff?max_event_count=1&limit=100&offset=0");
       assert.equal(maxEventCountList.status, 200);
       assert.equal(maxEventCountList.data.filters.max_event_count, 1);
@@ -1270,6 +1314,10 @@ describe("API endpoints", () => {
       const invalidRetryCount = await fetchJSON("/api/gemini/handoff?retry_count=abc");
       assert.equal(invalidRetryCount.status, 400);
       assert.equal(invalidRetryCount.data.error, "invalid_retry_count");
+
+      const invalidMinEventCount = await fetchJSON("/api/gemini/handoff?min_event_count=abc");
+      assert.equal(invalidMinEventCount.status, 400);
+      assert.equal(invalidMinEventCount.data.error, "invalid_min_event_count");
 
       const invalidMaxEventCount = await fetchJSON("/api/gemini/handoff?max_event_count=abc");
       assert.equal(invalidMaxEventCount.status, 400);
@@ -2667,7 +2715,7 @@ describe("API endpoints", () => {
           name: "Shadow Style Test Co",
           industry: "Technology",
           segment: "Mid-Market",
-          turnover: 22000000,
+          turnover: 32000000,
         }),
       });
 

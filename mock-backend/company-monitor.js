@@ -12,7 +12,8 @@ import { lookupCompany, lookupCompanyOwnership, isCompaniesHouseConfigured } fro
 import { parseCsvRow, parseNonEmptyCsvLines } from "./csv-utils.js";
 import { UK_TIMEZONE, getNextWeeklyZonedRun } from "./timezone-schedule.js";
 
-const TURNOVER_THRESHOLD = 15_000_000;
+const TURNOVER_MIN_THRESHOLD = 30_000_000;
+const TURNOVER_MAX_THRESHOLD = 200_000_000;
 const INACTIVE_STATUSES = ["dissolved", "liquidation", "converted-closed", "voluntary-arrangement", "insolvency-proceedings"];
 const API_DELAY_MS = parseInt(process.env.CH_API_DELAY_MS || "600");
 const BATCH_SIZE = parseInt(process.env.CH_MONITOR_BATCH_SIZE || "50");
@@ -35,6 +36,12 @@ let staleMonitorRunning = false;
 let staleMonitorProgress = null;
 let ownershipStaleMonitorRunning = false;
 let ownershipStaleMonitorProgress = null;
+
+function isTurnoverInEligibleRange(turnover) {
+  return Number.isFinite(turnover)
+    && turnover >= TURNOVER_MIN_THRESHOLD
+    && turnover <= TURNOVER_MAX_THRESHOLD;
+}
 
 export function getMonitorProgress() {
   return monitorProgress;
@@ -504,13 +511,13 @@ export async function runWeeklyMonitorBatch(batchSize = BATCH_SIZE) {
         }
       }
 
-      if (chData.turnover_hint && chData.turnover_hint < TURNOVER_THRESHOLD) {
+      if (Number.isFinite(chData.turnover_hint) && !isTurnoverInEligibleRange(chData.turnover_hint)) {
         monitorProgress.below_threshold++;
         updateMonitorCheck(company.company_number, {
           previous_turnover: company.latest_turnover,
           latest_turnover: chData.turnover_hint,
           below_threshold: 1,
-          notes: `Turnover dropped below £15M threshold (£${(chData.turnover_hint / 1e6).toFixed(1)}M)`,
+          notes: `Turnover outside £30M-£200M scope (£${(chData.turnover_hint / 1e6).toFixed(1)}M)`,
         });
       }
     } catch (err) {

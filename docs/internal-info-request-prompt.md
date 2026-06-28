@@ -1,6 +1,6 @@
 # Internal Information Request for Prospecting App Scoring Model
 
-I'm building an automated prospecting tool that scores and ranks mid-market companies (£15M+ turnover) based on their fit for Revolut Business products. The tool analyses Companies House filings to identify pain signals, product fit, and prioritisation factors.
+I'm building an automated prospecting tool that scores and ranks mid-market companies (£30M-£200M turnover) based on their fit for Revolut Business products. The tool analyses Companies House filings to identify pain signals, product fit, and prioritisation factors.
 
 I need the following information to calibrate the scoring model accurately. Please provide as much detail as possible.
 
@@ -71,7 +71,7 @@ From real deals the mid-market team has won or lost, what signals predict:
 **Negative signals (predict a wasted meeting):**
 - E.g. "Just signed a 3-year contract with incumbent"
 - E.g. "Company is in administration or distressed"
-- E.g. "Sub-£15M turnover with no growth trajectory"
+- E.g. "Turnover outside £30M-£200M scope"
 
 Please list as many real-world signals as possible from the team's experience.
 
@@ -79,7 +79,7 @@ Please list as many real-world signals as possible from the team's experience.
 
 ## 5. Segment-Specific Expectations
 
-For mid-market companies (roughly £15M-£500M turnover):
+For mid-market companies (roughly £30M-£200M turnover):
 - What level of decision-maker do you typically engage? (CFO, Finance Director, Treasury, Head of Payments?)
 - How many stakeholders are usually involved in the buying decision?
 - What's the typical onboarding timeline once a deal is agreed?

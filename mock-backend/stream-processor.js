@@ -6,7 +6,8 @@ import { promisify } from "util";
 import { upsertFiling, upsertMonitoredCompany, getMonitoredCompany } from "./db.js";
 import { markZipProcessed } from "./processed-zips.js";
 
-const TURNOVER_THRESHOLD = 15_000_000;
+const TURNOVER_MIN_THRESHOLD = 30_000_000;
+const TURNOVER_MAX_THRESHOLD = 200_000_000;
 const DATA_DIR = path.join(process.cwd(), "mock-backend", "data");
 const ADMZIP_MAX_BYTES = (2 * 1024 * 1024 * 1024) - 1;
 const execFileAsync = promisify(execFile);
@@ -16,7 +17,17 @@ function ensureDataDir() {
 }
 
 export function getTurnoverThreshold() {
-  return TURNOVER_THRESHOLD;
+  return TURNOVER_MIN_THRESHOLD;
+}
+
+export function getTurnoverMaxThreshold() {
+  return TURNOVER_MAX_THRESHOLD;
+}
+
+function isTurnoverInEligibleRange(turnover) {
+  return Number.isFinite(turnover)
+    && turnover >= TURNOVER_MIN_THRESHOLD
+    && turnover <= TURNOVER_MAX_THRESHOLD;
 }
 
 // --- Turnover extraction from iXBRL/XBRL content ---
@@ -188,7 +199,7 @@ function processFilingContent(name, content, source, state) {
 
     const bsDate = extractBalanceSheetDate(name);
 
-    if (turnover < TURNOVER_THRESHOLD) {
+    if (!isTurnoverInEligibleRange(turnover)) {
       state.belowThreshold++;
       return;
     }

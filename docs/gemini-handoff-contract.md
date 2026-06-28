@@ -277,7 +277,7 @@ Rules:
 ## Suggested API Endpoints
 
 - `POST /api/gemini/handoff`
-- `GET /api/gemini/handoff` (supports `status`, `has_response`, `has_retries`, `has_approvals`, `has_events`, `has_completed`, `has_completed_at`, `has_last_retry_requested`, `before_accepted_at`, `after_accepted_at`, `before_updated_at`, `after_updated_at`, `before_completed_at`, `after_completed_at`, `after_last_retry_requested_at`, `before_last_retry_requested_at`, `min_retry_count`, `max_retry_count`, `retry_count`, `max_event_count`, `event_count`, `min_approval_count`, `max_approval_count`, `approval_count`, `sort`, `limit`, `offset`, `include_yamm_summary`, `include_status_counts`, `include_retry_counts`, `include_queue_metrics` query params)
+- `GET /api/gemini/handoff` (supports `status`, `has_response`, `has_retries`, `has_approvals`, `has_events`, `has_completed`, `has_completed_at`, `has_last_retry_requested`, `before_accepted_at`, `after_accepted_at`, `before_updated_at`, `after_updated_at`, `before_completed_at`, `after_completed_at`, `after_last_retry_requested_at`, `before_last_retry_requested_at`, `min_retry_count`, `max_retry_count`, `retry_count`, `min_event_count`, `max_event_count`, `event_count`, `min_approval_count`, `max_approval_count`, `approval_count`, `sort`, `limit`, `offset`, `include_yamm_summary`, `include_status_counts`, `include_retry_counts`, `include_queue_metrics` query params)
 - `GET /api/gemini/handoff/summary` (supports `recent_hours`, `include_recent_status_counts`, `include_recent_retry_counts`, `include_recent_approval_counts`, `include_recent_event_stage_counts`, `include_recent_event_volume_counts`, `include_recent_event_type_share`, `include_recent_event_request_outliers`, `include_recent_callback_latency_percentiles_by_status`, `include_recent_callback_aging_bands`, `include_recent_callback_payload_quality_counts`, `include_recent_callback_schema_presence_counts`, `include_recent_callback_payload_consistency_counts`, `include_recent_yamm_row_readiness_counts`, `include_recent_yamm_row_gap_counts`, `include_recent_yamm_row_stuck_counts`, `include_recent_transport_dispatch_counts`, `include_recent_transport_error_code_counts`, `include_recent_transport_outcome_counts`, `include_queue_backlog_counts`, `include_queue_throughput_counts`, `include_queue_latency_counts`, `include_approval_sync_health_counts`, `include_approval_sync_conflict_counts`, `include_approval_revision_distribution` query params)
 - `GET /api/gemini/handoff/:requestId`
 - `GET /api/gemini/handoff/:requestId/yamm-rows` (optional `approval_status` query param, `format=json|csv`, `send_eligible=true|false`)
@@ -308,6 +308,29 @@ Behavior:
 5. `POST /api/gemini/handoff/:requestId/retry` re-dispatches the stored request payload when transport is enabled, then re-completes on success.
 
 This keeps the application-side state transitions, schema validation, and retry handling testable without external dependencies.
+
+## Direct Gemini API Bridge (Local)
+
+If you want a machine-callable Gemini path without hosting a separate webhook, you can use the backend's local bridge endpoint:
+
+- `POST /api/dev/gemini/handoff-google-api`
+
+Recommended local flags:
+
+- `ENABLE_GEMINI_HANDOFF_TRANSPORT=true`
+- `GEMINI_HANDOFF_TRANSPORT_URL=http://127.0.0.1:8000/api/dev/gemini/handoff-google-api`
+- `GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=false`
+- `ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=false`
+- `ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE=true`
+- `GEMINI_API_KEY=...` (or `GOOGLE_API_KEY=...`)
+- `GEMINI_API_MODEL=gemini-2.5-flash`
+- `GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS=30000`
+
+Notes:
+
+1. Gemini share links from the web UI are not transport endpoints; they return HTML and are not suitable for backend POST dispatch.
+2. The local bridge generates contract-compliant response payloads and preserves existing app-side validation and retry behavior.
+3. On transient Gemini API failures, the bridge marks response status as `partial` and includes retryable error entries per request scope.
 
 ## Acceptance Criteria
 

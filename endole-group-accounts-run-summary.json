@@ -1,0 +1,240 @@
+{
+  "generated_at": "2026-06-28T20:47:41.962Z",
+  "status": "success",
+  "source_url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801",
+  "output": {
+    "csv_path": "/workspaces/onemonetry/exports/endole-live-pagination-20260628.csv",
+    "diagnostics_path": "/workspaces/onemonetry/endole-group-accounts-diagnostics.json",
+    "run_summary_path": "/workspaces/onemonetry/endole-group-accounts-run-summary.json"
+  },
+  "options": {
+    "headless": true,
+    "selector_profile": "endole_grid",
+    "login_provider": "auto",
+    "row_selector": null,
+    "wait_selector": null,
+    "next_selector": "button[aria-label='Next']",
+    "credential_login_with_env": false,
+    "max_pages": 25,
+    "max_empty_pages": 2,
+    "scroll_steps": 0,
+    "scroll_delay_ms": 350,
+    "max_rows": null,
+    "apply": false,
+    "apply_args": []
+  },
+  "extraction": {
+    "pages_visited": 25,
+    "raw_rows": 525,
+    "deduped_rows": 500,
+    "output_rows": 500,
+    "stop_reason": "no_next_selector_or_page_limit_reached",
+    "pages": [
+      {
+        "page_index": 1,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:1->2"
+      },
+      {
+        "page_index": 2,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=2",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:2->3"
+      },
+      {
+        "page_index": 3,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=3",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:3->4"
+      },
+      {
+        "page_index": 4,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=4",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:4->5"
+      },
+      {
+        "page_index": 5,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=5",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:5->6"
+      },
+      {
+        "page_index": 6,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=6",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:6->7"
+      },
+      {
+        "page_index": 7,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=7",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:7->8"
+      },
+      {
+        "page_index": 8,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=8",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:8->9"
+      },
+      {
+        "page_index": 9,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=9",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:9->10"
+      },
+      {
+        "page_index": 10,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=10",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:10->11"
+      },
+      {
+        "page_index": 11,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=11",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:11->12"
+      },
+      {
+        "page_index": 12,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=12",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:12->13"
+      },
+      {
+        "page_index": 13,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=13",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:13->14"
+      },
+      {
+        "page_index": 14,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=14",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:14->15"
+      },
+      {
+        "page_index": 15,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=15",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:15->16"
+      },
+      {
+        "page_index": 16,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=16",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:16->17"
+      },
+      {
+        "page_index": 17,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=17",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:17->18"
+      },
+      {
+        "page_index": 18,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=18",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:18->19"
+      },
+      {
+        "page_index": 19,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=19",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:19->20"
+      },
+      {
+        "page_index": 20,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=20",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:20->21"
+      },
+      {
+        "page_index": 21,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=21",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:21->22"
+      },
+      {
+        "page_index": 22,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=22",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:22->23"
+      },
+      {
+        "page_index": 23,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=23",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:23->24"
+      },
+      {
+        "page_index": 24,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=24",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20,
+        "next_selector": ".pagination select:24->25"
+      },
+      {
+        "page_index": 25,
+        "url": "https://app.endole.co.uk/lists/55098-copy-of-codeing?view=3801&page=25",
+        "extractor": "row_selector:.table .tr",
+        "raw_rows": 21,
+        "mapped_rows": 20
+      }
+    ]
+  },
+  "apply": {
+    "requested": false,
+    "executed": false,
+    "exit_code": null
+  },
+  "error": null
+}

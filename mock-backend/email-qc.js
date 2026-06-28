@@ -433,9 +433,8 @@ export const EXCLUDED_STATUSES = [
 ];
 
 export function isCompanyExcluded(company, analysis) {
-  if (company.turnover && company.turnover < 15_000_000) {
-    const growth = analysis?.turnover_trend;
-    if (growth !== "growing") return { excluded: true, reason: "Below £15M turnover with no growth trajectory" };
+  if (company.turnover && (company.turnover < 30_000_000 || company.turnover > 200_000_000)) {
+    return { excluded: true, reason: "Turnover outside £30M-£200M target scope" };
   }
 
   const status = (company.status || "").toLowerCase();

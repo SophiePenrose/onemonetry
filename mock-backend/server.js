@@ -55,7 +55,7 @@ import {
   startAnalysisQueueWorker,
   getAnalysisQueueWorkerStatus,
 } from "./analysis-queue.js";
-import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
+import { processZipInChunks, getTurnoverThreshold, getTurnoverMaxThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
 import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences } from "./email-sequences.js";
 import { generateFullSequence, getEmailLlmRuntimeInfo } from "./email-generator.js";
@@ -107,6 +107,7 @@ import {
   getCadenceLog,
   addCadenceEntry,
   pruneHistoricMonthlyFilingsBefore,
+  purgeOutOfScopeMonitoredCompanies,
   getAnalysisQueueItemsByCompanyNumbers,
   getAnalysisQueueCounts,
   reconcileAnalysisQueueWithStoredAnalyses,
@@ -201,6 +202,23 @@ function loadLocalJsonSchema(fileName) {
   return JSON.parse(raw);
 }
 
+function resolveConfiguredSecret(value) {
+  const key = String(value || "").trim();
+  if (!key) return null;
+  const lower = key.toLowerCase();
+  const looksPlaceholder = lower.startsWith("replace_")
+    || lower.startsWith("replace-")
+    || lower.startsWith("replace")
+    || lower.includes("replace_with")
+    || lower.includes("replacewith")
+    || lower.includes("your_api_key")
+    || lower.includes("optional_")
+    || lower.includes("example")
+    || lower === "changeme"
+    || lower === "change_me";
+  return looksPlaceholder ? null : key;
+}
+
 const GEMINI_HANDOFF_REQUEST_SCHEMA = loadLocalJsonSchema("gemini-handoff-request.schema.json");
 const GEMINI_HANDOFF_RESPONSE_SCHEMA = loadLocalJsonSchema("gemini-handoff-response.schema.json");
 const GEMINI_APPROVALS_SYNC_SCHEMA = loadLocalJsonSchema("gemini-approvals-sync.schema.json");
@@ -209,6 +227,20 @@ const GEMINI_HANDOFF_DEV_SIMULATOR_ENABLED = ["1", "true", "yes", "on"].includes
     .trim()
     .toLowerCase()
 );
+const GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(process.env.ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE || "false")
+    .trim()
+    .toLowerCase()
+);
+const GEMINI_API_KEY = resolveConfiguredSecret(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+const GEMINI_API_MODEL = String(process.env.GEMINI_API_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
+const parsedGeminiHandoffGoogleApiTimeoutMs = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS || "30000"),
+  10
+);
+const GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS = Number.isFinite(parsedGeminiHandoffGoogleApiTimeoutMs)
+  ? Math.max(3000, Math.min(parsedGeminiHandoffGoogleApiTimeoutMs, 120000))
+  : 30000;
 
 function formatSchemaErrors(errors) {
   return (errors || []).map((entry) => `${entry.path}: ${entry.message}`);
@@ -268,6 +300,332 @@ function slugToTitle(value) {
   const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
   if (!normalized) return "Unknown";
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function sanitizeSingleLine(value, maxLength = 180) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function sanitizeBodyText(value, maxLength = 4000) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function extractGeminiApiGeneratedText(payload) {
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+  const firstCandidate = candidates[0] || {};
+  const parts = Array.isArray(firstCandidate?.content?.parts) ? firstCandidate.content.parts : [];
+  return parts
+    .map((part) => String(part?.text || "").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function parseJsonObjectFromText(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function buildGeminiApiFallbackDraft({ companyName, stakeholderName, roleName }) {
+  const safeCompanyName = sanitizeSingleLine(companyName || "Unknown Company", 120) || "Unknown Company";
+  const safeStakeholderName = sanitizeSingleLine(stakeholderName || "there", 80) || "there";
+  const safeRoleName = sanitizeSingleLine(roleName || "stakeholder", 60) || "stakeholder";
+  const subject = `Question about ${safeRoleName} priorities at ${safeCompanyName}`;
+  const body = `Hi ${safeStakeholderName},\n\nI am reaching out because your team appears to be scaling payments and treasury workflows at ${safeCompanyName}. If useful, I can share a focused view of where Revolut Business tends to reduce friction for ${safeRoleName} teams.\n\nBest,\nSophie`;
+  return {
+    subject,
+    body,
+    citations: ["gemini.google.api.fallback"],
+  };
+}
+
+function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy }) {
+  const forbiddenLine = generationPolicy?.forbidden_phrases_enforced
+    ? "Do not use these phrases: I noticed, quick question. Avoid filler punctuation such as em dash parentheticals."
+    : "";
+  const insightsText = company?.insights && typeof company.insights === "object"
+    ? JSON.stringify(company.insights).slice(0, 1800)
+    : "{}";
+  const scoreBreakdown = company?.score_breakdown && typeof company.score_breakdown === "object"
+    ? JSON.stringify(company.score_breakdown)
+    : "{}";
+
+  return [
+    "You are Sophie writing concise UK B2B prospecting outreach.",
+    "Write exactly one outreach email step for the stakeholder below.",
+    "Return strict JSON only with keys: subject (string), body (string), citations (string array).",
+    "Do not include markdown fences or commentary.",
+    forbiddenLine,
+    "\nCampaign context:",
+    `campaign_name: ${sanitizeSingleLine(campaign?.campaign_name || "Prospecting", 120)}`,
+    `sequence_template: ${sanitizeSingleLine(campaign?.sequence_template || "standard", 120)}`,
+    `max_touches: ${Number.parseInt(String(campaign?.max_touches || 4), 10) || 4}`,
+    `voice_profile: ${sanitizeSingleLine(generationPolicy?.voice_profile || "sophie_outreach", 120)}`,
+    `require_citations: ${generationPolicy?.require_citations === true ? "true" : "false"}`,
+    "\nCompany context:",
+    `company_name: ${sanitizeSingleLine(company?.company_name || "Unknown Company", 160)}`,
+    `company_number: ${sanitizeSingleLine(company?.company_number || "", 40)}`,
+    `priority_band: ${sanitizeSingleLine(company?.priority_band || "", 40)}`,
+    `rank: ${Number.parseInt(String(company?.rank || 0), 10) || 0}`,
+    `score_breakdown: ${scoreBreakdown}`,
+    `insights: ${insightsText}`,
+    "\nStakeholder context:",
+    `full_name: ${sanitizeSingleLine(stakeholder?.full_name || "there", 120)}`,
+    `role: ${sanitizeSingleLine(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder", 80)}`,
+    `persona_bucket: ${sanitizeSingleLine(stakeholder?.persona_bucket || "", 80)}`,
+    `confidence: ${sanitizeSingleLine(stakeholder?.confidence || "", 40)}`,
+    "\nOutput requirements:",
+    "- subject under 120 characters",
+    "- body between 70 and 180 words",
+    "- body should end with a light CTA",
+    "- citations should reference evidence source labels when possible",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function generateGeminiApiDraft({ company, stakeholder, campaign, generationPolicy }) {
+  const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
+  const fallbackDraft = buildGeminiApiFallbackDraft({
+    companyName: company?.company_name,
+    stakeholderName: stakeholder?.full_name,
+    roleName,
+  });
+
+  if (!GEMINI_API_KEY) {
+    return {
+      ...fallbackDraft,
+      used_fallback: true,
+      error: {
+        code: "gemini_api_key_missing",
+        message: "GEMINI_API_KEY or GOOGLE_API_KEY is not configured",
+        retryable: false,
+      },
+    };
+  }
+
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_API_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const prompt = buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy });
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        generationConfig: {
+          temperature: 0.45,
+          maxOutputTokens: 900,
+          responseMimeType: "application/json",
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    const responseJson = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return {
+        ...fallbackDraft,
+        used_fallback: true,
+        error: {
+          code: "gemini_api_http_error",
+          message: `Google Gemini API returned HTTP ${response.status}`,
+          retryable: response.status >= 500 || response.status === 429,
+        },
+      };
+    }
+
+    const generatedText = extractGeminiApiGeneratedText(responseJson);
+    const generatedObject = parseJsonObjectFromText(generatedText);
+    const subject = sanitizeSingleLine(generatedObject?.subject || "", 180);
+    const body = sanitizeBodyText(generatedObject?.body || "", 4000);
+    const citations = Array.isArray(generatedObject?.citations)
+      ? generatedObject.citations
+        .map((entry) => sanitizeSingleLine(entry, 120))
+        .filter(Boolean)
+        .slice(0, 6)
+      : [];
+
+    if (!subject || !body) {
+      return {
+        ...fallbackDraft,
+        used_fallback: true,
+        error: {
+          code: "gemini_api_invalid_output",
+          message: "Gemini API did not return parseable subject/body JSON",
+          retryable: true,
+        },
+      };
+    }
+
+    return {
+      subject,
+      body,
+      citations: citations.length ? citations : ["gemini.google.api"],
+      used_fallback: false,
+      error: null,
+    };
+  } catch (err) {
+    const isAbort = err?.name === "AbortError";
+    return {
+      ...fallbackDraft,
+      used_fallback: true,
+      error: {
+        code: isAbort ? "gemini_api_timeout" : "gemini_api_network_error",
+        message: isAbort
+          ? `Gemini API timed out after ${GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS}ms`
+          : String(err?.message || "Gemini API request failed"),
+        retryable: true,
+      },
+    };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function buildGoogleApiGeminiHandoffResponse(payload) {
+  const requestId = String(payload?.request_id || "").trim();
+  const workspace = payload?.workspace || {};
+  const campaign = payload?.campaign || {};
+  const generationPolicy = payload?.generation_policy || {};
+  const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+
+  const sequenceOutputs = [];
+  const errors = [];
+
+  for (let index = 0; index < rankedCompanies.length; index += 1) {
+    const company = rankedCompanies[index];
+    const stakeholders = Array.isArray(company?.stakeholders) ? company.stakeholders : [];
+    const stakeholder = stakeholders[0] || null;
+    if (!stakeholder) {
+      errors.push({
+        code: "missing_stakeholder",
+        message: "No stakeholder was provided for company in ranked payload",
+        retryable: false,
+        scope: {
+          company_number: String(company?.company_number || "").trim() || null,
+        },
+      });
+      continue;
+    }
+
+    const companyNumber = String(company?.company_number || "").trim();
+    const companyName = String(company?.company_name || "").trim() || "Unknown Company";
+    const personId = String(stakeholder?.person_id || "").trim();
+    if (!companyNumber || !personId) {
+      errors.push({
+        code: "invalid_company_or_person",
+        message: "Company number and person id are required to build sequence output",
+        retryable: false,
+        scope: {
+          company_number: companyNumber || null,
+          person_id: personId || null,
+        },
+      });
+      continue;
+    }
+
+    const draft = await generateGeminiApiDraft({
+      company,
+      stakeholder,
+      campaign,
+      generationPolicy,
+    });
+
+    if (draft.error) {
+      errors.push({
+        code: draft.error.code,
+        message: draft.error.message,
+        retryable: draft.error.retryable !== false,
+        scope: {
+          company_number: companyNumber,
+          person_id: personId,
+        },
+      });
+    }
+
+    const sequenceId = `seq_${companyNumber}_${personId}`;
+    const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
+    const qcScore = draft.used_fallback ? 0.62 : 0.88;
+
+    sequenceOutputs.push({
+      company_number: companyNumber,
+      person_id: personId,
+      sequence_id: sequenceId,
+      qc: {
+        passed: !draft.used_fallback,
+        score: qcScore,
+        notes: draft.used_fallback ? ["fallback_copy_used"] : [],
+      },
+      steps: [
+        {
+          step_number: 1,
+          step_type: "proof",
+          day_offset: 0,
+          subject: draft.subject,
+          body: draft.body,
+          citations: draft.citations,
+        },
+      ],
+      yamm_rows: [
+        {
+          To: String(stakeholder?.email || ""),
+          Subject: draft.subject,
+          Body: draft.body,
+          Company: companyName,
+          CompanyNumber: companyNumber,
+          PriorityRank: rank,
+          SequenceId: sequenceId,
+          StepNumber: 1,
+          ApprovalStatus: "pending",
+        },
+      ],
+    });
+  }
+
+  const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
+  const rowCount = sequenceOutputs.length;
+  const status = rowCount === 0 ? "error" : (errors.length > 0 ? "partial" : "ok");
+  const responseIdSeed = requestId ? requestId.replace(/[^a-zA-Z0-9_-]/g, "_") : Date.now().toString();
+
+  return {
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    response_id: `resp_google_api_${responseIdSeed}`,
+    completed_at: new Date().toISOString(),
+    status,
+    sheet_write: {
+      sheet_id: String(workspace?.sheet_id || "gemini_api_sheet").trim() || "gemini_api_sheet",
+      sheet_tab: sheetTab,
+      rows_written: rowCount,
+      range: `${sheetTab}!A2:AZ${Math.max(1, rowCount + 1)}`,
+    },
+    sequence_outputs: sequenceOutputs,
+    errors,
+  };
 }
 
 function buildDevGeminiHandoffResponse(payload) {
@@ -894,7 +1252,7 @@ export function computePriorityBreakdown(companyRow, score, analysisStatus, segm
   const productFit = clamp01(Number(score?.layers?.product_fit?.score || 0));
   const commercialValue = clamp01(Number(score?.layers?.commercial_value?.score || 0));
   const bestMotionWeighted = clamp01(Number(score?.layers?.product_fit?.best_score || 0));
-  const turnoverSignal = clamp01(turnover / 500_000_000);
+  const turnoverSignal = clamp01(turnover / getTurnoverMaxThreshold());
   const velocitySignal = clamp01(Number(score?.velocity?.score || 0.5));
   const confidencePlusMinus = clamp01(Number(score?.confidence_interval?.plus_minus || 0) * 1.5);
   const confidenceLevel = String(score?.confidence_interval?.confidence_level || "medium");
@@ -2285,6 +2643,44 @@ function parseClosedWonRowsFromCsv(csvContent) {
   const text = String(csvContent || "").replace(/\r/g, "").trim();
   if (!text) return [];
 
+  const normalizeClosedWonCompanyNumber = (value) => {
+    const raw = String(value || "").trim().toUpperCase();
+    if (!raw) return null;
+
+    const stripped = raw.replace(/^CH-/, "").replace(/\s+/g, "");
+    if (!stripped) return null;
+
+    // Accept plain UK numeric registration numbers (1-8 digits) with left-zero normalization.
+    if (/^\d{1,8}$/.test(stripped)) {
+      return normalizeCompanyNumber(stripped);
+    }
+
+    // Accept alphanumeric registration numbers only when they contain enough digits
+    // to avoid false positives from prose tokens like "SELECTITEM1".
+    if (/^[A-Z0-9]{2,12}$/.test(stripped)) {
+      const digitCount = (stripped.match(/\d/g) || []).length;
+      if (digitCount >= 4) return normalizeCompanyNumber(stripped);
+    }
+
+    return null;
+  };
+
+  const parseFromRawText = () => {
+    const rows = [];
+    const seen = new Set();
+    const pattern = /COMPANIES\s+REGISTRY\s+OFFICE\s+Number\s*\(GB\):\s*([A-Z0-9]{1,12})/gi;
+
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const normalizedNumber = normalizeClosedWonCompanyNumber(match[1]);
+      if (!normalizedNumber || seen.has(normalizedNumber)) continue;
+      seen.add(normalizedNumber);
+      rows.push({ company_number: normalizedNumber, company_name: null });
+    }
+
+    return rows;
+  };
+
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) return [];
 
@@ -2327,15 +2723,15 @@ function parseClosedWonRowsFromCsv(csvContent) {
 
     let candidateNumber = numberIdx >= 0 ? cells[numberIdx] : null;
     if (!candidateNumber) {
-      candidateNumber = cells.find((cell) => !!normalizeCompanyNumber(cell)) || null;
+      candidateNumber = cells.find((cell) => !!normalizeClosedWonCompanyNumber(cell)) || null;
     }
 
-    const normalizedNumber = normalizeCompanyNumber(candidateNumber);
+    const normalizedNumber = normalizeClosedWonCompanyNumber(candidateNumber);
     if (!normalizedNumber) continue;
 
     const candidateName = nameIdx >= 0
       ? cells[nameIdx]
-      : cells.find((cell, idx) => idx !== numberIdx && idx !== -1 && cell && !normalizeCompanyNumber(cell));
+      : cells.find((cell, idx) => idx !== numberIdx && idx !== -1 && cell && !normalizeClosedWonCompanyNumber(cell));
 
     rows.push({
       company_number: normalizedNumber,
@@ -2343,7 +2739,8 @@ function parseClosedWonRowsFromCsv(csvContent) {
     });
   }
 
-  return rows;
+  if (rows.length > 0) return rows;
+  return parseFromRawText();
 }
 
 function parseSuppressionRowsFromCsv(csvContent) {
@@ -2861,7 +3258,7 @@ app.post("/api/closed-won/import", (req, res) => {
 
 app.get("/api/dashboard", (_req, res) => {
   const stats = getMonitorStats();
-  const totalCompanies = getShortlistCount(getTurnoverThreshold());
+  const totalCompanies = getShortlistCount(getTurnoverThreshold(), getTurnoverMaxThreshold());
 
   const pipeline = {};
   for (const s of WORKFLOW_STATES) {
@@ -2870,14 +3267,12 @@ app.get("/api/dashboard", (_req, res) => {
   pipeline.new_candidate.count = totalCompanies;
 
   const turnoverBuckets = {
-    "£500M+": { min: 500_000_000, count: 0 },
-    "£100M-£500M": { min: 100_000_000, max: 500_000_000, count: 0 },
+    "£100M-£200M": { min: 100_000_000, max: 200_000_000, count: 0 },
     "£50M-£100M": { min: 50_000_000, max: 100_000_000, count: 0 },
-    "£25M-£50M": { min: 25_000_000, max: 50_000_000, count: 0 },
-    "£15M-£25M": { min: 15_000_000, max: 25_000_000, count: 0 },
+    "£30M-£50M": { min: 30_000_000, max: 50_000_000, count: 0 },
   };
 
-  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 })
+  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: 500 })
     .filter((c) => !isSuppressed(`ch-${c.company_number}`, c.company_number).suppressed);
   const motionSummary = Object.fromEntries(VALID_MOTIONS.map((motion) => [motion, { count: 0, top_score: 0 }]));
 
@@ -2913,17 +3308,17 @@ app.get("/api/dashboard", (_req, res) => {
     turnover_distribution: turnoverBuckets,
     top_companies: top10,
     monitor_stats: stats,
+    threshold_min: getTurnoverThreshold(),
+    threshold_max: getTurnoverMaxThreshold(),
     threshold: getTurnoverThreshold(),
   });
 });
 
 const SHORTLIST_TURNOVER_BANDS = {
   all: null,
-  "15-25": { min: 15_000_000, max: 25_000_000 },
-  "25-50": { min: 25_000_000, max: 50_000_000 },
+  "30-50": { min: 30_000_000, max: 50_000_000 },
   "50-100": { min: 50_000_000, max: 100_000_000 },
-  "100-500": { min: 100_000_000, max: 500_000_000 },
-  "500+": { min: 500_000_000, max: null },
+  "100-200": { min: 100_000_000, max: 200_000_000 },
 };
 
 const SHORTLIST_SORT_FIELDS = new Set([
@@ -3197,7 +3592,8 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
   const topN = Number.isFinite(requestedTopN) ? Math.max(10, Math.min(requestedTopN, 500)) : 50;
 
   const threshold = getTurnoverThreshold();
-  const allCompanies = getShortlistCompanies({ min_turnover: threshold, limit: sampleLimit });
+  const thresholdMax = getTurnoverMaxThreshold();
+  const allCompanies = getShortlistCompanies({ min_turnover: threshold, max_turnover: thresholdMax, limit: sampleLimit });
   const companies = allCompanies.filter((c) => turnoverMatchesBand(c.latest_turnover, turnoverBand));
   const companyNumbers = companies.map((c) => c.company_number);
   const queueRows = getAnalysisQueueItemsByCompanyNumbers(companyNumbers);
@@ -3274,6 +3670,7 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
     },
     meta: {
       threshold,
+      threshold_max: thresholdMax,
       sample_limit: sampleLimit,
       turnover_band: turnoverBand,
       sort_by: sortBy,
@@ -3296,7 +3693,8 @@ app.get("/api/unified-shortlist", (req, res) => {
   const turnoverBand = parseShortlistTurnoverBand(req.query.turnover_band);
 
   const threshold = getTurnoverThreshold();
-  const allCompanies = getShortlistCompanies({ min_turnover: threshold });
+  const thresholdMax = getTurnoverMaxThreshold();
+  const allCompanies = getShortlistCompanies({ min_turnover: threshold, max_turnover: thresholdMax });
   const companies = allCompanies.filter((c) => turnoverMatchesBand(c.latest_turnover, turnoverBand));
 
   const companyNumbers = companies.map((c) => c.company_number);
@@ -3411,6 +3809,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       limit: pageLimit,
       offset: pageOffset,
       threshold,
+      threshold_max: thresholdMax,
       turnover_band: turnoverBand,
       sort_by: sortBy,
       sort_dir: sortDir,
@@ -3539,7 +3938,7 @@ app.get("/api/company/:id", async (req, res) => {
       const cadenceHistory = getCadenceLog(profileId);
       const ownershipStructure = getSetting(`ownership_${companyNumber}`, null);
       const sicCodes = getStoredSicCodes(companyNumber);
-      const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0);
+      const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / getTurnoverMaxThreshold(), 1) * 0.7 + 0.3) * 100) / 100 : 0);
 
       return res.json({
         company: {
@@ -3740,7 +4139,7 @@ function getHistoricBackfillCutoffPeriod(now = new Date()) {
 }
 
 async function buildMonitorReportEntries(topN = 20) {
-  const monitoredCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: topN * 3 });
+  const monitoredCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: topN * 3 });
   const entries = [];
 
   for (const company of monitoredCompanies) {
@@ -4626,8 +5025,8 @@ function mapSICToIndustry(sicCodes) {
 
 function guessTurnoverSegment(turnover) {
   if (!turnover) return "Mid-Market";
-  if (turnover >= 250_000_000) return "Enterprise";
-  if (turnover >= 10_000_000) return "Mid-Market";
+  if (turnover >= 200_000_000) return "Enterprise";
+  if (turnover >= 30_000_000) return "Mid-Market";
   return "SMB";
 }
 
@@ -5184,7 +5583,7 @@ app.post("/api/score/company", (req, res) => {
 
 app.post("/api/score/batch", (req, res) => {
   const { limit } = req.body;
-  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 100 });
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: limit || 100 });
   const results = batchScoreCompanies(companies);
   res.json({
     scored: results.length,
@@ -5335,6 +5734,8 @@ app.get("/api/monitor/status", (_req, res) => {
       running: isOwnershipStaleMonitorRunning(),
       progress: getOwnershipStaleMonitorProgress(),
     },
+    threshold_min: getTurnoverThreshold(),
+    threshold_max: getTurnoverMaxThreshold(),
     threshold: getTurnoverThreshold(),
     filing_count: getFilingCount(),
   });
@@ -5355,6 +5756,35 @@ app.get("/api/monitor/companies", (req, res) => {
 app.get("/api/monitor/companies/:number/filings", (req, res) => {
   const filings = getFilingsForCompany(req.params.number);
   res.json({ filings });
+});
+
+app.post("/api/monitor/cleanup-turnover-scope", (req, res) => {
+  try {
+    const {
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    } = req.body || {};
+
+    const result = purgeOutOfScopeMonitoredCompanies({
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    });
+
+    res.json({
+      message: result.dry_run
+        ? "Dry run complete. No records were removed."
+        : "Cleanup complete. Out-of-scope company data removed.",
+      ...result,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "cleanup_failed" });
+  }
 });
 
 app.post("/api/monitor/import-list", async (req, res) => {
@@ -5724,6 +6154,49 @@ app.post("/api/dev/gemini/handoff-simulator", (req, res) => {
   return res.status(200).json(responsePayload);
 });
 
+app.post("/api/dev/gemini/handoff-google-api", async (req, res) => {
+  if (!GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED) {
+    return res.status(403).json({
+      error: "google_api_bridge_disabled",
+      message: "Enable bridge via ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE=true",
+    });
+  }
+
+  if (!GEMINI_API_KEY) {
+    return res.status(503).json({
+      error: "gemini_api_key_missing",
+      message: "Set GEMINI_API_KEY (or GOOGLE_API_KEY) before using this bridge",
+    });
+  }
+
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      details: formatSchemaErrors(validation.errors),
+    });
+  }
+
+  try {
+    const responsePayload = await buildGoogleApiGeminiHandoffResponse(payload);
+    const responseValidation = validateJsonSchema(GEMINI_HANDOFF_RESPONSE_SCHEMA, responsePayload);
+    if (!responseValidation.valid) {
+      return res.status(502).json({
+        error: "invalid_google_api_bridge_response",
+        details: formatSchemaErrors(responseValidation.errors),
+      });
+    }
+
+    return res.status(200).json(responsePayload);
+  } catch (err) {
+    return res.status(502).json({
+      error: "google_api_bridge_failed",
+      message: String(err?.message || "unknown_error"),
+    });
+  }
+});
+
 app.post("/api/gemini/handoff", async (req, res) => {
   const payload = req.body && typeof req.body === "object" ? req.body : {};
   const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
@@ -6047,6 +6520,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     retryCount = parsedRetryCount;
   }
+  const rawMinEventCount = String(req.query?.min_event_count || "").trim();
+  let minEventCount = null;
+  if (rawMinEventCount) {
+    const parsedMinEventCount = Number.parseInt(rawMinEventCount, 10);
+    if (!Number.isInteger(parsedMinEventCount) || parsedMinEventCount < 0 || parsedMinEventCount > 10000) {
+      return res.status(400).json({
+        error: "invalid_min_event_count",
+        message: "min_event_count must be an integer between 0 and 10000",
+      });
+    }
+    minEventCount = parsedMinEventCount;
+  }
   const rawMaxEventCount = String(req.query?.max_event_count || "").trim();
   let maxEventCount = null;
   if (rawMaxEventCount) {
@@ -6185,6 +6670,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     minRetryCount,
     maxRetryCount,
     retryCount,
+    minEventCount,
     maxEventCount,
     eventCount,
     minApprovalCount,
@@ -6230,6 +6716,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     minRetryCount,
     maxRetryCount,
     retryCount,
+    minEventCount,
     maxEventCount,
     eventCount,
     minApprovalCount,
@@ -6265,6 +6752,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       min_retry_count: minRetryCount,
       max_retry_count: maxRetryCount,
       retry_count: retryCount,
+      min_event_count: minEventCount,
       max_event_count: maxEventCount,
       event_count: eventCount,
       min_approval_count: minApprovalCount,
@@ -7282,6 +7770,18 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR",
       purpose: "Local simulator endpoint for contract-compliant Gemini handoff transport testing",
     },
+    gemini_google_api_bridge: {
+      configured: GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED && !!GEMINI_API_KEY,
+      required: false,
+      env_var: "ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE, GEMINI_API_KEY (or GOOGLE_API_KEY), GEMINI_API_MODEL, GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS",
+      purpose: "Local contract bridge that calls Gemini API when used as the transport URL",
+      runtime: {
+        enabled: GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED,
+        api_key_configured: !!GEMINI_API_KEY,
+        model: GEMINI_API_MODEL,
+        timeout_ms: GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS,
+      },
+    },
   };
 
   const missingRequired = Object.entries(integrations)
@@ -7364,6 +7864,11 @@ app.get("/api/integrations/status", (_req, res) => {
       "GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=true",
       "GEMINI_HANDOFF_MAX_RETRY_COUNT=5",
       "ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=false",
+      "ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE=false",
+      "GEMINI_API_KEY=replace_with_google_gemini_api_key",
+      "# Optional alias supported: GOOGLE_API_KEY=your_google_gemini_api_key",
+      "GEMINI_API_MODEL=gemini-2.5-flash",
+      "GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS=30000",
     ],
   });
 });
@@ -8642,7 +9147,7 @@ app.post("/api/enrichment/tech-stack/batch", async (req, res) => {
       targets.push(context);
     }
   } else {
-    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit });
     for (const company of shortlist) {
       targets.push({
         canonical_id: `ch-${company.company_number}`,
@@ -9198,7 +9703,7 @@ app.post("/api/score/company-llm", async (req, res) => {
 
 app.post("/api/score/batch-llm", async (req, res) => {
   const { limit, concurrency } = req.body;
-  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 20 });
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: limit || 20 });
 
   try {
     const results = await batchScoreWithLLM(companies, concurrency || 2);
