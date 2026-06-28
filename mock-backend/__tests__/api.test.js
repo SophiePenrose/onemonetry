@@ -1472,6 +1472,19 @@ describe("API endpoints", () => {
           || typeof summaryWithApprovalSyncConflictCounts.data.approval_sync_conflict_counts.conflict_rate_percent === "number",
         true
       );
+
+      const summaryWithApprovalRevisionDistribution = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_approval_revision_distribution=true");
+      assert.equal(summaryWithApprovalRevisionDistribution.status, 200);
+      assert.equal(typeof summaryWithApprovalRevisionDistribution.data.approval_revision_distribution, "object");
+      assert.equal(typeof summaryWithApprovalRevisionDistribution.data.approval_revision_distribution.requests_recent, "number");
+      assert.equal(typeof summaryWithApprovalRevisionDistribution.data.approval_revision_distribution.requests_with_approvals_recent, "number");
+      assert.equal(typeof summaryWithApprovalRevisionDistribution.data.approval_revision_distribution.max_revision_recent, "number");
+      assert.equal(typeof summaryWithApprovalRevisionDistribution.data.approval_revision_distribution.by_revision, "object");
+      assert.equal(
+        Object.values(summaryWithApprovalRevisionDistribution.data.approval_revision_distribution.by_revision)
+          .every((value) => typeof value === "number"),
+        true
+      );
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1526,6 +1539,10 @@ describe("API endpoints", () => {
       const invalidIncludeApprovalSyncConflictCounts = await fetchJSON("/api/gemini/handoff/summary?include_approval_sync_conflict_counts=maybe");
       assert.equal(invalidIncludeApprovalSyncConflictCounts.status, 400);
       assert.equal(invalidIncludeApprovalSyncConflictCounts.data.error, "invalid_include_approval_sync_conflict_counts");
+
+      const invalidIncludeApprovalRevisionDistribution = await fetchJSON("/api/gemini/handoff/summary?include_approval_revision_distribution=maybe");
+      assert.equal(invalidIncludeApprovalRevisionDistribution.status, 400);
+      assert.equal(invalidIncludeApprovalRevisionDistribution.data.error, "invalid_include_approval_revision_distribution");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {

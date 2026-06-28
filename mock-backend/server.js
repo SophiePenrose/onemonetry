@@ -6391,6 +6391,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeApprovalSyncConflictCounts = ["1", "true", "yes", "on"].includes(rawIncludeApprovalSyncConflictCounts);
+  const rawIncludeApprovalRevisionDistribution = String(req.query?.include_approval_revision_distribution || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeApprovalRevisionDistribution)) {
+    return res.status(400).json({
+      error: "invalid_include_approval_revision_distribution",
+      message: "include_approval_revision_distribution must be a boolean flag (true/false)",
+    });
+  }
+  const includeApprovalRevisionDistribution = ["1", "true", "yes", "on"].includes(rawIncludeApprovalRevisionDistribution);
 
   const summary = getGeminiHandoffOperationalSummary({
     recentHours,
@@ -6407,6 +6415,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeQueueLatencyCounts,
     includeApprovalSyncHealthCounts,
     includeApprovalSyncConflictCounts,
+    includeApprovalRevisionDistribution,
   });
 
   return res.json({

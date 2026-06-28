@@ -2261,6 +2261,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeQueueLatencyCounts = options?.includeQueueLatencyCounts === true;
   const includeApprovalSyncHealthCounts = options?.includeApprovalSyncHealthCounts === true;
   const includeApprovalSyncConflictCounts = options?.includeApprovalSyncConflictCounts === true;
+  const includeApprovalRevisionDistribution = options?.includeApprovalRevisionDistribution === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2441,6 +2442,15 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`)
     : [];
 
+  const approvalRevisionRows = includeApprovalRevisionDistribution
+    ? db.prepare(`
+      SELECT approvals_revision, COUNT(*) AS count
+      FROM gemini_handoff_requests
+      WHERE updated_at >= datetime('now', ?)
+      GROUP BY approvals_revision
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2539,6 +2549,20 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const approvalSyncConflictRatePercent = approvalSyncAttempts > 0
     ? Math.round((approvalSyncConflicts / approvalSyncAttempts) * 10000) / 100
     : null;
+
+  const approvalRevisionByValue = {};
+  let approvalRevisionRequestsRecent = 0;
+  let approvalRevisionRequestsWithApprovalsRecent = 0;
+  let approvalRevisionMaxRecent = 0;
+  for (const row of approvalRevisionRows) {
+    const revision = Number.parseInt(String(row.approvals_revision || 0), 10);
+    const normalizedRevision = Number.isInteger(revision) && revision >= 0 ? revision : 0;
+    const count = Number(row.count || 0);
+    approvalRevisionByValue[String(normalizedRevision)] = count;
+    approvalRevisionRequestsRecent += count;
+    if (normalizedRevision > 0) approvalRevisionRequestsWithApprovalsRecent += count;
+    if (normalizedRevision > approvalRevisionMaxRecent) approvalRevisionMaxRecent = normalizedRevision;
+  }
 
   return {
     generated_at: new Date().toISOString(),
@@ -2659,6 +2683,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           sync_successes_recent: approvalSyncSuccesses,
           sync_conflicts_recent: approvalSyncConflicts,
           conflict_rate_percent: approvalSyncConflictRatePercent,
+        },
+      }
+      : {}),
+    ...(includeApprovalRevisionDistribution
+      ? {
+        approval_revision_distribution: {
+          requests_recent: approvalRevisionRequestsRecent,
+          requests_with_approvals_recent: approvalRevisionRequestsWithApprovalsRecent,
+          max_revision_recent: approvalRevisionMaxRecent,
+          by_revision: approvalRevisionByValue,
         },
       }
       : {}),
