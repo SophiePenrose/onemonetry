@@ -1458,6 +1458,22 @@ describe("API endpoints", () => {
       assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.empty_payload_object, "number");
       assert.equal(typeof summaryWithRecentCallbackPayloadQualityCounts.data.recent_callback_payload_quality_counts.by_payload_status, "object");
 
+      const summaryWithRecentCallbackSchemaPresenceCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_callback_schema_presence_counts=true");
+      assert.equal(summaryWithRecentCallbackSchemaPresenceCounts.status, 200);
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts, "object");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.completed_recent, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.parse_errors, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_contract_version, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_request_id, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_sheet_write, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_sequence_outputs, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_nonempty_sequence_outputs, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_errors_array, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_any_yamm_rows, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.has_any_qc_blocks, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.total_sequence_outputs, "number");
+      assert.equal(typeof summaryWithRecentCallbackSchemaPresenceCounts.data.recent_callback_schema_presence_counts.total_yamm_rows, "number");
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1604,6 +1620,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentCallbackPayloadQualityCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_callback_payload_quality_counts=maybe");
       assert.equal(invalidIncludeRecentCallbackPayloadQualityCounts.status, 400);
       assert.equal(invalidIncludeRecentCallbackPayloadQualityCounts.data.error, "invalid_include_recent_callback_payload_quality_counts");
+
+      const invalidIncludeRecentCallbackSchemaPresenceCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_callback_schema_presence_counts=maybe");
+      assert.equal(invalidIncludeRecentCallbackSchemaPresenceCounts.status, 400);
+      assert.equal(invalidIncludeRecentCallbackSchemaPresenceCounts.data.error, "invalid_include_recent_callback_schema_presence_counts");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);

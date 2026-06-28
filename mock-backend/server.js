@@ -6375,6 +6375,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentCallbackPayloadQualityCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentCallbackPayloadQualityCounts);
+  const rawIncludeRecentCallbackSchemaPresenceCounts = String(req.query?.include_recent_callback_schema_presence_counts || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentCallbackSchemaPresenceCounts)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_callback_schema_presence_counts",
+      message: "include_recent_callback_schema_presence_counts must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentCallbackSchemaPresenceCounts = ["1", "true", "yes", "on"].includes(rawIncludeRecentCallbackSchemaPresenceCounts);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6453,6 +6461,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentCallbackLatencyPercentilesByStatus,
     includeRecentCallbackAgingBands,
     includeRecentCallbackPayloadQualityCounts,
+    includeRecentCallbackSchemaPresenceCounts,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,

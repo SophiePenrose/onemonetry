@@ -2259,6 +2259,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentCallbackLatencyPercentilesByStatus = options?.includeRecentCallbackLatencyPercentilesByStatus === true;
   const includeRecentCallbackAgingBands = options?.includeRecentCallbackAgingBands === true;
   const includeRecentCallbackPayloadQualityCounts = options?.includeRecentCallbackPayloadQualityCounts === true;
+  const includeRecentCallbackSchemaPresenceCounts = options?.includeRecentCallbackSchemaPresenceCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2419,7 +2420,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`, `-${recentHours} hours`)
     : [];
 
-  const callbackPayloadQualityRows = includeRecentCallbackPayloadQualityCounts
+  const callbackPayloadQualityRows = (includeRecentCallbackPayloadQualityCounts || includeRecentCallbackSchemaPresenceCounts)
     ? db.prepare(`
       SELECT
         response_payload,
@@ -2738,6 +2739,71 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const callbackSchemaPresenceCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    has_contract_version: 0,
+    has_request_id: 0,
+    has_sheet_write: 0,
+    has_sequence_outputs: 0,
+    has_nonempty_sequence_outputs: 0,
+    has_errors_array: 0,
+    has_any_yamm_rows: 0,
+    has_any_qc_blocks: 0,
+    total_sequence_outputs: 0,
+    total_yamm_rows: 0,
+  };
+
+  if (includeRecentCallbackSchemaPresenceCounts) {
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        callbackSchemaPresenceCounts.parse_errors += 1;
+        continue;
+      }
+
+      const contractVersion = String(parsedPayload?.contract_version || "").trim();
+      if (contractVersion) callbackSchemaPresenceCounts.has_contract_version += 1;
+
+      const requestId = String(parsedPayload?.request_id || "").trim();
+      if (requestId) callbackSchemaPresenceCounts.has_request_id += 1;
+
+      if (parsedPayload?.sheet_write && typeof parsedPayload.sheet_write === "object" && !Array.isArray(parsedPayload.sheet_write)) {
+        callbackSchemaPresenceCounts.has_sheet_write += 1;
+      }
+
+      if (Array.isArray(parsedPayload?.errors)) {
+        callbackSchemaPresenceCounts.has_errors_array += 1;
+      }
+
+      let hasAnyYammRows = false;
+      let hasAnyQcBlocks = false;
+
+      if (Array.isArray(parsedPayload?.sequence_outputs)) {
+        callbackSchemaPresenceCounts.has_sequence_outputs += 1;
+        callbackSchemaPresenceCounts.total_sequence_outputs += parsedPayload.sequence_outputs.length;
+        if (parsedPayload.sequence_outputs.length > 0) {
+          callbackSchemaPresenceCounts.has_nonempty_sequence_outputs += 1;
+        }
+
+        for (const sequenceOutput of parsedPayload.sequence_outputs) {
+          if (sequenceOutput?.qc && typeof sequenceOutput.qc === "object" && !Array.isArray(sequenceOutput.qc)) {
+            hasAnyQcBlocks = true;
+          }
+          if (Array.isArray(sequenceOutput?.yamm_rows)) {
+            callbackSchemaPresenceCounts.total_yamm_rows += sequenceOutput.yamm_rows.length;
+            if (sequenceOutput.yamm_rows.length > 0) {
+              hasAnyYammRows = true;
+            }
+          }
+        }
+      }
+
+      if (hasAnyYammRows) callbackSchemaPresenceCounts.has_any_yamm_rows += 1;
+      if (hasAnyQcBlocks) callbackSchemaPresenceCounts.has_any_qc_blocks += 1;
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2887,6 +2953,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           ...callbackPayloadQualityCounts,
           by_payload_status: callbackPayloadStatusCounts,
         },
+      }
+      : {}),
+    ...(includeRecentCallbackSchemaPresenceCounts
+      ? {
+        recent_callback_schema_presence_counts: callbackSchemaPresenceCounts,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts
