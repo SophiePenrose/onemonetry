@@ -6520,6 +6520,18 @@ app.get("/api/gemini/handoff", (req, res) => {
     }
     retryCount = parsedRetryCount;
   }
+  const rawMinEventCount = String(req.query?.min_event_count || "").trim();
+  let minEventCount = null;
+  if (rawMinEventCount) {
+    const parsedMinEventCount = Number.parseInt(rawMinEventCount, 10);
+    if (!Number.isInteger(parsedMinEventCount) || parsedMinEventCount < 0 || parsedMinEventCount > 10000) {
+      return res.status(400).json({
+        error: "invalid_min_event_count",
+        message: "min_event_count must be an integer between 0 and 10000",
+      });
+    }
+    minEventCount = parsedMinEventCount;
+  }
   const rawMaxEventCount = String(req.query?.max_event_count || "").trim();
   let maxEventCount = null;
   if (rawMaxEventCount) {
@@ -6658,6 +6670,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     minRetryCount,
     maxRetryCount,
     retryCount,
+    minEventCount,
     maxEventCount,
     eventCount,
     minApprovalCount,
@@ -6703,6 +6716,7 @@ app.get("/api/gemini/handoff", (req, res) => {
     minRetryCount,
     maxRetryCount,
     retryCount,
+    minEventCount,
     maxEventCount,
     eventCount,
     minApprovalCount,
@@ -6738,6 +6752,7 @@ app.get("/api/gemini/handoff", (req, res) => {
       min_retry_count: minRetryCount,
       max_retry_count: maxRetryCount,
       retry_count: retryCount,
+      min_event_count: minEventCount,
       max_event_count: maxEventCount,
       event_count: eventCount,
       min_approval_count: minApprovalCount,

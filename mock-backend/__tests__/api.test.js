@@ -1130,6 +1130,12 @@ describe("API endpoints", () => {
       assert.equal(retryCountList.data.items.every((entry) => Number(entry.retry_count || 0) === 0), true);
       assert.equal(retryCountList.data.items.some((entry) => entry.request_id === acceptedOnlyRequestId), true);
 
+      const minEventCountList = await fetchJSON("/api/gemini/handoff?min_event_count=1&limit=100&offset=0");
+      assert.equal(minEventCountList.status, 200);
+      assert.equal(minEventCountList.data.filters.min_event_count, 1);
+      assert.equal(minEventCountList.data.items.length >= 1, true);
+      assert.equal(minEventCountList.data.items.every((entry) => Number(entry.event_count || 0) >= 1), true);
+
       const maxEventCountList = await fetchJSON("/api/gemini/handoff?max_event_count=1&limit=100&offset=0");
       assert.equal(maxEventCountList.status, 200);
       assert.equal(maxEventCountList.data.filters.max_event_count, 1);
@@ -1308,6 +1314,10 @@ describe("API endpoints", () => {
       const invalidRetryCount = await fetchJSON("/api/gemini/handoff?retry_count=abc");
       assert.equal(invalidRetryCount.status, 400);
       assert.equal(invalidRetryCount.data.error, "invalid_retry_count");
+
+      const invalidMinEventCount = await fetchJSON("/api/gemini/handoff?min_event_count=abc");
+      assert.equal(invalidMinEventCount.status, 400);
+      assert.equal(invalidMinEventCount.data.error, "invalid_min_event_count");
 
       const invalidMaxEventCount = await fetchJSON("/api/gemini/handoff?max_event_count=abc");
       assert.equal(invalidMaxEventCount.status, 400);
