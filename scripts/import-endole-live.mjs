@@ -10,15 +10,15 @@ const repoRoot = path.resolve(__dirname, "..");
 
 const SELECTOR_PROFILES = {
   auto: {
-    waitSelectors: ["table tbody tr", "[role='row']"],
-    rowSelectors: ["table tbody tr", "[role='row']"],
+    waitSelectors: [".table .tr", "table tbody tr", "[role='row']"],
+    rowSelectors: [".table .tr", "table tbody tr", "[role='row']"],
     nextSelectors: [
       "button[aria-label='Next']",
       "button[aria-label='Next page']",
       "[data-testid='pagination-next']",
       "a[rel='next']",
     ],
-    cellSelectors: ["th", "td", "[role='gridcell']", "[role='cell']"],
+    cellSelectors: [".td", "th", "td", "[role='gridcell']", "[role='cell']"],
     linkSelectors: ["a[href]"],
   },
   endole_table: {
@@ -29,10 +29,10 @@ const SELECTOR_PROFILES = {
     linkSelectors: ["a[href]"],
   },
   endole_grid: {
-    waitSelectors: ["[role='row']"],
-    rowSelectors: ["[role='row']"],
+    waitSelectors: [".table .tr", "[role='row']"],
+    rowSelectors: [".table .tr", "[role='row']"],
     nextSelectors: ["button[aria-label='Next']", "button[aria-label='Next page']", "a[rel='next']"],
-    cellSelectors: ["[role='gridcell']", "[role='cell']"],
+    cellSelectors: [".td", "[role='gridcell']", "[role='cell']", "th", "td"],
     linkSelectors: ["a[href]"],
   },
   generic_table: {
@@ -56,6 +56,7 @@ function printUsage() {
     "  --out <path>                  Output CSV path (default: exports/endole-live-<timestamp>.csv)",
     "  --headless                    Run browser headless (default: false)",
     "  --selector-profile <name>     Selector profile: auto|endole_table|endole_grid|generic_table",
+    "  --login-provider <name>       Login strategy: auto|email|microsoft (default: auto)",
     "  --row-selector <css>          Optional explicit row selector override",
     "  --storage-state-in <path>     Optional Playwright storage state JSON to reuse login session",
     "  --storage-state-out <path>    Optional path to save updated storage state JSON",
@@ -72,6 +73,10 @@ function printUsage() {
     "  --apply-args <value>          Extra args passed to import-monitor-seed-list script (repeatable)",
     "  --help                        Show this help",
     "",
+    "Environment:",
+    "  ENDOLE_EMAIL                  Optional email for headless auto-login when redirected to sign-in",
+    "  ENDOLE_PASSWORD               Optional password for headless auto-login when redirected to sign-in",
+    "",
     "Examples:",
     "  node scripts/import-endole-live.mjs --url \"https://app.endole.co.uk/company-lists/...\"",
     "  node scripts/import-endole-live.mjs --url \"https://app.endole.co.uk/company-lists/...\" --apply --apply-args --dry-run",
@@ -87,6 +92,7 @@ function parseArgs(argv) {
     headless: false,
     selectorProfile: "auto",
     rowSelector: null,
+    loginProvider: "auto",
     storageStateIn: null,
     storageStateOut: null,
     waitSelector: null,
@@ -126,6 +132,11 @@ function parseArgs(argv) {
     }
     if (arg === "--selector-profile" && argv[i + 1]) {
       options.selectorProfile = String(argv[i + 1] || "").trim().toLowerCase() || "auto";
+      i += 1;
+      continue;
+    }
+    if (arg === "--login-provider" && argv[i + 1]) {
+      options.loginProvider = String(argv[i + 1] || "").trim().toLowerCase() || "auto";
       i += 1;
       continue;
     }
@@ -312,6 +323,356 @@ function waitForEnter(prompt) {
   });
 }
 
+function isEndoleSignInUrl(value) {
+  const url = String(value || "").toLowerCase();
+  return url.includes("app.endole.co.uk/sign-in");
+}
+
+function normalizeLoginProvider(value) {
+  const normalized = String(value || "auto").trim().toLowerCase();
+  if (["auto", "email", "microsoft"].includes(normalized)) {
+    return normalized;
+  }
+  throw new Error("Unsupported --login-provider value. Use: auto, email, microsoft.");
+}
+
+async function findVisibleSelector(page, selectors = []) {
+  for (const selector of selectors) {
+    const normalized = String(selector || "").trim();
+    if (!normalized) continue;
+
+    try {
+      const locator = page.locator(normalized).first();
+      if ((await locator.count()) < 1) continue;
+      if (await locator.isVisible()) {
+        return normalized;
+      }
+    } catch {
+      // Ignore selector evaluation errors and continue fallback chain.
+    }
+  }
+
+  return null;
+}
+
+async function fillVisibleInput(page, selectors = [], value, label) {
+  const selector = await findVisibleSelector(page, selectors);
+  if (!selector) {
+    throw new Error(`Unable to find Endole ${label} field.`);
+  }
+  await page.fill(selector, String(value || ""));
+  return selector;
+}
+
+async function clickVisibleSelector(page, selectors = [], label) {
+  const selector = await findVisibleSelector(page, selectors);
+  if (!selector) {
+    throw new Error(`Unable to find ${label} button.`);
+  }
+  await page.click(selector);
+  return selector;
+}
+
+async function tryEndoleCredentialLogin(page, { email, password, targetUrl }) {
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPassword = String(password || "");
+  if (!normalizedEmail || !normalizedPassword) {
+    throw new Error("ENDOLE_EMAIL and ENDOLE_PASSWORD are required for headless login.");
+  }
+
+  console.log("Detected Endole sign-in page. Attempting credential login with ENDOLE_EMAIL/ENDOLE_PASSWORD.");
+
+  await fillVisibleInput(
+    page,
+    [
+      ".sign-in input[name='email']",
+      "form input[name='email']",
+      "input[type='email'][name='email']",
+      "input[type='email']",
+    ],
+    normalizedEmail,
+    "email"
+  );
+  await fillVisibleInput(
+    page,
+    [
+      ".sign-in input[name='password']",
+      "form input[name='password']",
+      "input[type='password'][name='password']",
+      "input[type='password']",
+    ],
+    normalizedPassword,
+    "password"
+  );
+
+  const submitSelector = await findVisibleSelector(page, [
+    ".sign-in button[type='submit']",
+    "form button[type='submit']",
+    "button.cta[type='submit']",
+    "button[type='submit']",
+  ]);
+
+  if (submitSelector) {
+    await page.click(submitSelector);
+  } else {
+    await page.keyboard.press("Enter");
+  }
+
+  await sleep(1200);
+  try {
+    await page.waitForURL((url) => !isEndoleSignInUrl(String(url || "")), { timeout: 45000 });
+  } catch {
+    // We'll inspect the current page to determine why login did not progress.
+  }
+
+  if (isEndoleSignInUrl(page.url())) {
+    const loginError = await page.evaluate(() => {
+      const errorNode = document.querySelector(".error-msg.-active .error-text, .error-msg .error-text");
+      return String(errorNode?.textContent || "").replace(/\s+/g, " ").trim();
+    });
+    if (loginError) {
+      throw new Error(`Endole login was rejected: ${loginError}`);
+    }
+    throw new Error("Endole login did not complete; still on sign-in page. Check credentials or MFA/challenge requirements.");
+  }
+
+  if (targetUrl) {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+  }
+}
+
+async function tryEndoleMicrosoftLogin(page, { email, password, targetUrl }) {
+  const normalizedEmail = String(email || "").trim();
+  const normalizedPassword = String(password || "");
+  if (!normalizedEmail || !normalizedPassword) {
+    throw new Error("ENDOLE_EMAIL and ENDOLE_PASSWORD are required for Microsoft login.");
+  }
+
+  console.log("Detected Endole sign-in page. Attempting Microsoft SSO login.");
+
+  await clickVisibleSelector(
+    page,
+    [
+      "a[href*='login=MicrosoftGraph']",
+      "a.google-signin-btn[href*='MicrosoftGraph']",
+    ],
+    "Microsoft sign-in"
+  );
+
+  try {
+    await page.waitForURL((url) => {
+      const href = String(url || "").toLowerCase();
+      return href.includes("login.microsoftonline.com") || href.includes("login.live.com");
+    }, { timeout: 45000 });
+  } catch {
+    throw new Error("Microsoft SSO did not open the Microsoft login page.");
+  }
+
+  await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+
+  let emailInputSelector = await findVisibleSelector(page, [
+    "input#i0116",
+    "input[name='loginfmt']",
+    "input[type='email']",
+  ]);
+
+  if (!emailInputSelector) {
+    const otherAccountSelector = await findVisibleSelector(page, [
+      "div#otherTile",
+      "div[data-test-id='otherTile']",
+      "div[role='button'][data-test-id='otherTile']",
+    ]);
+    if (otherAccountSelector) {
+      await page.click(otherAccountSelector);
+      await page.waitForTimeout(800);
+      emailInputSelector = await findVisibleSelector(page, [
+        "input#i0116",
+        "input[name='loginfmt']",
+        "input[type='email']",
+      ]);
+    }
+  }
+
+  if (emailInputSelector) {
+    await page.fill(emailInputSelector, normalizedEmail);
+    await clickVisibleSelector(
+      page,
+      [
+        "input#idSIButton9",
+        "button#idSIButton9",
+        "input[type='submit']",
+        "button[type='submit']",
+      ],
+      "Microsoft next"
+    );
+  }
+
+  const switchToPasswordSelector = await findVisibleSelector(page, [
+    "a#idA_PWD_SwitchToPassword",
+    "a[data-bind*='SwitchToPassword']",
+  ]);
+  if (switchToPasswordSelector) {
+    await page.click(switchToPasswordSelector);
+  }
+
+  try {
+    await page.waitForSelector("input#i0118, input[name='passwd'], input[type='password']", { timeout: 45000 });
+  } catch {
+    throw new Error("Microsoft password prompt did not appear.");
+  }
+
+  await fillVisibleInput(
+    page,
+    [
+      "input#i0118",
+      "input[name='passwd']",
+      "input[type='password']",
+    ],
+    normalizedPassword,
+    "Microsoft password"
+  );
+
+  await clickVisibleSelector(
+    page,
+    [
+      "input#idSIButton9",
+      "button#idSIButton9",
+      "input[type='submit']",
+      "button[type='submit']",
+    ],
+    "Microsoft sign-in"
+  );
+
+  try {
+    await page.waitForTimeout(1200);
+    const staySignedInSelector = await findVisibleSelector(page, [
+      "input#idBtn_Back",
+      "input#idSIButton9",
+    ]);
+    if (staySignedInSelector) {
+      await page.click(staySignedInSelector);
+    }
+  } catch {
+    // This screen is optional and may not appear.
+  }
+
+  try {
+    await page.waitForURL((url) => {
+      const href = String(url || "").toLowerCase();
+      return !href.includes("login.microsoftonline.com") && !href.includes("login.live.com");
+    }, { timeout: 60000 });
+  } catch {
+    const hasOtpChallenge = await page.locator("input[name='otc'], input#idTxtBx_SAOTCC_OTC, div[data-value='PhoneAppOTP']").first().count().catch(() => 0);
+    const debug = await collectAuthDebug(page);
+
+    if (hasOtpChallenge > 0) {
+      throw new Error("Microsoft login requires additional verification (MFA/challenge), which cannot be completed in this headless flow.");
+    }
+    if (debug.error_text) {
+      throw new Error(`Microsoft login failed: ${debug.error_text}`);
+    }
+
+    const hint = [debug.title, debug.heading, debug.url].filter(Boolean).join(" | ");
+    throw new Error(`Microsoft login did not finish; check credentials or tenant access requirements. State: ${hint}`);
+  }
+
+  if (isEndoleSignInUrl(page.url())) {
+    throw new Error("Microsoft login returned to Endole sign-in page without an authenticated session.");
+  }
+
+  if (targetUrl) {
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+  }
+}
+
+async function tryHeadlessEndoleLogin(page, options) {
+  const provider = normalizeLoginProvider(options.loginProvider);
+  const credentials = {
+    email: process.env.ENDOLE_EMAIL,
+    password: process.env.ENDOLE_PASSWORD,
+    targetUrl: options.url,
+  };
+
+  const attempts = provider === "auto" ? ["email", "microsoft"] : [provider];
+  let lastError = null;
+
+  for (const attempt of attempts) {
+    try {
+      if (attempt === "email") {
+        await tryEndoleCredentialLogin(page, credentials);
+      } else if (attempt === "microsoft") {
+        await tryEndoleMicrosoftLogin(page, credentials);
+      }
+
+      if (!isEndoleSignInUrl(page.url())) {
+        return attempt;
+      }
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error || "unknown error");
+      console.log(`Login attempt via ${attempt} failed: ${message}`);
+
+      if (attempt !== attempts[attempts.length - 1]) {
+        try {
+          await page.goto("https://app.endole.co.uk/sign-in/?page=sign-in", { waitUntil: "domcontentloaded", timeout: 60000 });
+        } catch {
+          // Continue to next strategy even if reset navigation is flaky.
+        }
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("No login strategy succeeded.");
+}
+
+async function collectAuthDebug(page) {
+  if (!page) {
+    return null;
+  }
+
+  try {
+    const url = page.url();
+    const details = await page.evaluate(() => {
+      const readText = (selector) => {
+        const node = document.querySelector(selector);
+        return String(node?.textContent || "").replace(/\s+/g, " ").trim();
+      };
+
+      const heading = readText("h1") || readText("h2") || readText("#idDiv_SAOTCS_Title") || readText("#idDiv_SAOTCC_Title");
+      const subtitle = readText("#idDiv_SAOTCS_Description") || readText("#idDiv_SAOTCC_Description") || readText(".text-subtitle");
+
+      const errorText = [
+        readText("#passwordError"),
+        readText("#usernameError"),
+        readText("#idDiv_SAASDS_Description"),
+        readText("#idDiv_SAOTCS_Description"),
+        readText(".error-msg.-active .error-text"),
+        readText(".error-msg .error-text"),
+      ].find(Boolean) || "";
+
+      return {
+        title: String(document.title || "").trim(),
+        heading,
+        subtitle,
+        error_text: errorText,
+      };
+    });
+
+    return {
+      url,
+      ...details,
+    };
+  } catch {
+    return {
+      url: page.url(),
+      error_text: "Unable to capture debug details from current page.",
+    };
+  }
+}
+
 async function loadPlaywright() {
   try {
     return await import("playwright");
@@ -353,6 +714,74 @@ async function autoScrollPage(page, steps, delayMs) {
       target.scrollBy({ top: delta, left: 0, behavior: "instant" });
     });
     await sleep(Math.max(0, Number.parseInt(String(delayMs || 0), 10) || 0));
+  }
+}
+
+async function advanceUsingPaginationSelect(page) {
+  try {
+    const select = page.locator(".pagination select").first();
+    const selectCount = await select.count();
+    if (selectCount < 1) {
+      return { clicked: false };
+    }
+    if (!(await select.isVisible())) {
+      return { clicked: false };
+    }
+
+    const optionValues = await select.locator("option").evaluateAll((options) =>
+      options
+        .map((option) => String(option?.value || "").trim())
+        .filter(Boolean)
+    );
+    if (!optionValues.length) {
+      return { clicked: false };
+    }
+
+    const currentValue = String(await select.inputValue()).trim();
+    const currentIndex = optionValues.indexOf(currentValue);
+    if (currentIndex < 0 || currentIndex >= optionValues.length - 1) {
+      return { clicked: false };
+    }
+
+    const nextValue = optionValues[currentIndex + 1];
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          String(response.url() || "").includes("/open") &&
+          String(response.request()?.method?.() || "").toUpperCase() === "POST",
+        { timeout: 15000 }
+      ).catch(() => null),
+      page.evaluate((targetPage) => {
+        if (typeof window.list_open === "function") {
+          window.list_open("page", String(targetPage));
+          return;
+        }
+
+        const fallbackSelect = document.querySelector(".pagination select");
+        if (fallbackSelect) {
+          fallbackSelect.value = String(targetPage);
+          fallbackSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }, nextValue),
+    ]);
+
+    await page
+      .waitForFunction(
+        (targetPage) => {
+          const selectElement = document.querySelector(".pagination select");
+          return String(selectElement?.value || "") === String(targetPage || "");
+        },
+        nextValue,
+        { timeout: 15000 }
+      )
+      .catch(() => null);
+
+    return {
+      clicked: true,
+      selector: `.pagination select:${currentValue}->${nextValue}`,
+    };
+  } catch {
+    return { clicked: false };
   }
 }
 
@@ -448,7 +877,14 @@ function mapScrapedRows(rows, sourceUrl) {
   for (const row of rows) {
     const rawText = String(row?.raw || "").toUpperCase();
     const numberMatch = rawText.match(companyNumberRegex);
-    const companyNumber = normalizeCompanyNumber(numberMatch?.[0] || "");
+
+    const companyProfileLink = (row?.links || []).find((href) => {
+      const value = String(href || "").toLowerCase();
+      return /\/company\/(?:\d{1,8}|[a-z]{2}\d{6})/.test(value);
+    }) || "";
+    const numberFromLinkMatch = String(companyProfileLink || "").match(/\/company\/([a-z]{2}\d{6}|\d{1,8})/i);
+    const companyNumberFromLink = normalizeCompanyNumber(numberFromLinkMatch?.[1] || "");
+    const companyNumber = normalizeCompanyNumber(numberMatch?.[0] || companyNumberFromLink || "");
 
     let companyName = "";
     for (const cell of (row?.cells || [])) {
@@ -472,7 +908,8 @@ function mapScrapedRows(rows, sourceUrl) {
     const companyWebsite = normalizeWebsite(candidateLinks[0] || websiteFromCells || "");
     const companyDomain = extractDomain(companyWebsite);
 
-    if (!companyNumber && !companyName) continue;
+    // Skip heading/filter rows and keep rows that clearly represent a company entry.
+    if (!companyNumber && !companyProfileLink) continue;
 
     mapped.push({
       company_number: companyNumber,
@@ -500,6 +937,8 @@ async function run() {
     printUsage();
     process.exit(1);
   }
+
+  options.loginProvider = normalizeLoginProvider(options.loginProvider);
 
   const defaultOut = path.join("exports", `endole-live-${toIsoTimestampCompact()}.csv`);
   const outPath = resolvePath(options.out || defaultOut);
@@ -557,9 +996,11 @@ async function run() {
     options: {
       headless: !!options.headless,
       selector_profile: options.selectorProfile,
+      login_provider: options.loginProvider,
       row_selector: options.rowSelector,
       wait_selector: options.waitSelector,
       next_selector: options.nextSelector,
+      credential_login_with_env: Boolean(process.env.ENDOLE_EMAIL && process.env.ENDOLE_PASSWORD),
       max_pages: options.maxPages,
       max_empty_pages: options.maxEmptyPages,
       scroll_steps: options.scrollSteps,
@@ -586,6 +1027,7 @@ async function run() {
 
   const { chromium } = await loadPlaywright();
   const browser = await chromium.launch({ headless: !!options.headless });
+  let page = null;
 
   try {
     const contextOptions = { viewport: { width: 1440, height: 1000 } };
@@ -594,11 +1036,26 @@ async function run() {
       console.log(`Loaded storage state from ${storageStateInPath}`);
     }
 
-    const context = await browser.newContext(contextOptions);
-    const page = await context.newPage();
+  const context = await browser.newContext(contextOptions);
+  page = await context.newPage();
 
     console.log(`Opening ${options.url}`);
     await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 90000 });
+
+    if (isEndoleSignInUrl(page.url())) {
+      const hasCredentialLogin = Boolean(process.env.ENDOLE_EMAIL && process.env.ENDOLE_PASSWORD);
+      if (options.headless && hasCredentialLogin) {
+        const strategyUsed = await tryHeadlessEndoleLogin(page, options);
+        console.log(`Authenticated using ${strategyUsed} login strategy.`);
+      } else if (options.headless) {
+        throw new Error("Reached Endole sign-in in headless mode. Set ENDOLE_EMAIL and ENDOLE_PASSWORD, or provide --storage-state-in with a valid session.");
+      }
+    }
+
+    if (!options.headless) {
+      console.log("Log in and open the table you want to scrape in the launched browser.");
+      await waitForEnter("Press Enter here when the table is visible and fully loaded... ");
+    }
 
     if (waitSelectors.length > 0) {
       let matchedWaitSelector = null;
@@ -616,11 +1073,6 @@ async function run() {
       } else {
         console.log("No wait selector matched quickly; continuing with fallback extraction.");
       }
-    }
-
-    if (!options.headless) {
-      console.log("Log in and open the table you want to scrape in the launched browser.");
-      await waitForEnter("Press Enter here when the table is visible and fully loaded... ");
     }
 
     const aggregatedRows = [];
@@ -671,7 +1123,15 @@ async function run() {
       }
 
       let clickedNext = false;
+
+      const paginationAdvance = await advanceUsingPaginationSelect(page);
+      if (paginationAdvance.clicked) {
+        diagnostics.pages[diagnostics.pages.length - 1].next_selector = paginationAdvance.selector;
+        clickedNext = true;
+      }
+
       for (const selector of nextSelectors) {
+        if (clickedNext) break;
         const nextButton = page.locator(selector).first();
         const nextCount = await nextButton.count();
         if (nextCount < 1) continue;
@@ -761,6 +1221,22 @@ async function run() {
   } catch (error) {
     runSummary.status = "failed";
     runSummary.error = String(error?.message || error);
+
+    if (page) {
+      const authDebug = await collectAuthDebug(page);
+      if (authDebug) {
+        runSummary.auth_debug = authDebug;
+      }
+
+      try {
+        const screenshotPath = `${outPathWithoutExtension}-auth-debug.png`;
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        runSummary.output.auth_debug_screenshot_path = screenshotPath;
+      } catch {
+        // Screenshot capture is best-effort.
+      }
+    }
+
     throw error;
   } finally {
     runSummary.extraction = {

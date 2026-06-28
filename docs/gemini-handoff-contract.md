@@ -309,6 +309,29 @@ Behavior:
 
 This keeps the application-side state transitions, schema validation, and retry handling testable without external dependencies.
 
+## Direct Gemini API Bridge (Local)
+
+If you want a machine-callable Gemini path without hosting a separate webhook, you can use the backend's local bridge endpoint:
+
+- `POST /api/dev/gemini/handoff-google-api`
+
+Recommended local flags:
+
+- `ENABLE_GEMINI_HANDOFF_TRANSPORT=true`
+- `GEMINI_HANDOFF_TRANSPORT_URL=http://127.0.0.1:8000/api/dev/gemini/handoff-google-api`
+- `GEMINI_HANDOFF_TRANSPORT_FAIL_OPEN=false`
+- `ENABLE_GEMINI_HANDOFF_DEV_SIMULATOR=false`
+- `ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE=true`
+- `GEMINI_API_KEY=...` (or `GOOGLE_API_KEY=...`)
+- `GEMINI_API_MODEL=gemini-2.5-flash`
+- `GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS=30000`
+
+Notes:
+
+1. Gemini share links from the web UI are not transport endpoints; they return HTML and are not suitable for backend POST dispatch.
+2. The local bridge generates contract-compliant response payloads and preserves existing app-side validation and retry behavior.
+3. On transient Gemini API failures, the bridge marks response status as `partial` and includes retryable error entries per request scope.
+
 ## Acceptance Criteria
 
 1. App can submit ranked payload and receive structured response.
