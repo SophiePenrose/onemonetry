@@ -2253,6 +2253,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentRetryCounts = options?.includeRecentRetryCounts === true;
   const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
   const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
+  const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2320,6 +2321,17 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`)
     : [];
 
+  const recentTransportDispatchRows = includeRecentTransportDispatchCounts
+    ? db.prepare(`
+      SELECT event_type, COUNT(*) AS count
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+        AND event_stage = 'transport'
+        AND event_type IN ('handoff_completed', 'handoff_retry_requested')
+      GROUP BY event_type
+    `).all(`-${recentHours} hours`)
+    : [];
+
   const statusCounts = {};
   for (const row of statusRows) {
     const key = String(row.status || "").trim().toLowerCase() || "unknown";
@@ -2352,6 +2364,19 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     const key = String(row.event_stage || "").trim().toLowerCase() || "unknown";
     recentEventStageCounts[key] = Number(row.count || 0);
   }
+
+  const transportDispatchByType = {};
+  for (const row of recentTransportDispatchRows) {
+    const key = String(row.event_type || "").trim();
+    if (!key) continue;
+    transportDispatchByType[key] = Number(row.count || 0);
+  }
+  const dispatchCompleted = Number(transportDispatchByType.handoff_completed || 0);
+  const dispatchRetryRequested = Number(transportDispatchByType.handoff_retry_requested || 0);
+  const dispatchAttempted = dispatchCompleted + dispatchRetryRequested;
+  const dispatchSuccessRatePercent = dispatchAttempted > 0
+    ? Math.round((dispatchCompleted / dispatchAttempted) * 10000) / 100
+    : null;
 
   return {
     generated_at: new Date().toISOString(),
@@ -2388,6 +2413,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       : {}),
     ...(includeRecentEventStageCounts
       ? { recent_event_stage_counts: recentEventStageCounts }
+      : {}),
+    ...(includeRecentTransportDispatchCounts
+      ? {
+        recent_transport_dispatch_counts: {
+          attempted: dispatchAttempted,
+          completed: dispatchCompleted,
+          retry_requested: dispatchRetryRequested,
+          success_rate_percent: dispatchSuccessRatePercent,
+        },
+      }
       : {}),
   };
 }
