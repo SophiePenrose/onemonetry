@@ -2254,6 +2254,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
   const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
   const includeRecentEventVolumeCounts = options?.includeRecentEventVolumeCounts === true;
+  const includeRecentEventTypeShare = options?.includeRecentEventTypeShare === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2504,6 +2505,20 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ? Math.round((totalEventsRecent / requestsWithEventsRecent) * 100) / 100
     : null;
 
+  const topRecentEventTypes = Object.entries(recentEventCounts)
+    .map(([eventType, count]) => ({
+      event_type: eventType,
+      count: Number(count || 0),
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5)
+    .map((entry) => ({
+      ...entry,
+      share_percent: totalEventsRecent > 0
+        ? Math.round((entry.count / totalEventsRecent) * 10000) / 100
+        : 0,
+    }));
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2613,6 +2628,14 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           requests_with_events_recent: requestsWithEventsRecent,
           max_events_single_request_recent: maxEventsSingleRequestRecent,
           average_events_per_active_request: averageEventsPerActiveRequest,
+        },
+      }
+      : {}),
+    ...(includeRecentEventTypeShare
+      ? {
+        recent_event_type_share: {
+          total_events_recent: totalEventsRecent,
+          top_event_types: topRecentEventTypes,
         },
       }
       : {}),
