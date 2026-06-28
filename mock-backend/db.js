@@ -1216,12 +1216,17 @@ export function getShortlistCompanies(filters = {}) {
     FROM company_monitor cm
     WHERE cm.status = 'active'
     AND cm.latest_turnover >= ?
+    AND cm.latest_turnover <= ?
   `;
-  const params = [filters.min_turnover || 15000000];
+  const params = [
+    Number.isFinite(Number(filters.min_turnover)) ? Number(filters.min_turnover) : 30_000_000,
+    Number.isFinite(Number(filters.max_turnover)) ? Number(filters.max_turnover) : 200_000_000,
+  ];
 
   if (filters.below_threshold) {
     sql = sql.replace("AND cm.latest_turnover >= ?", "");
-    params.shift();
+    sql = sql.replace("AND cm.latest_turnover <= ?", "");
+    params.length = 0;
     sql += " AND cm.below_threshold = 1";
   }
 
@@ -1232,8 +1237,10 @@ export function getShortlistCompanies(filters = {}) {
   return db.prepare(sql).all(...params);
 }
 
-export function getShortlistCount(minTurnover = 15000000) {
-  return db.prepare("SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ?").get(minTurnover).count;
+export function getShortlistCount(minTurnover = 30_000_000, maxTurnover = 200_000_000) {
+  return db.prepare(
+    "SELECT COUNT(*) as count FROM company_monitor WHERE status = 'active' AND latest_turnover >= ? AND latest_turnover <= ?"
+  ).get(minTurnover, maxTurnover).count;
 }
 
 export function pruneHistoricMonthlyFilingsBefore(cutoffPeriod) {
@@ -1250,6 +1257,146 @@ export function pruneHistoricMonthlyFilingsBefore(cutoffPeriod) {
   `).run();
 
   return { deleted_filings: result.changes, cutoff_period: cutoffPeriod };
+}
+
+function tableExists(tableName) {
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
+  return !!row;
+}
+
+export function purgeOutOfScopeMonitoredCompanies(options = {}) {
+  const minTurnover = Number.isFinite(Number(options.min_turnover)) ? Number(options.min_turnover) : 30_000_000;
+  const maxTurnover = Number.isFinite(Number(options.max_turnover)) ? Number(options.max_turnover) : 200_000_000;
+  const dryRun = options.dry_run !== false;
+  const includeClosedWon = options.include_closed_won === true;
+  const sampleLimit = Number.isFinite(Number(options.sample_limit))
+    ? Math.max(1, Math.min(Number(options.sample_limit), 200))
+    : 50;
+
+  const candidatesSql = includeClosedWon
+    ? `
+      SELECT company_number, company_name, latest_turnover
+      FROM company_monitor
+      WHERE latest_turnover IS NOT NULL
+        AND (latest_turnover < ? OR latest_turnover > ?)
+      ORDER BY latest_turnover DESC
+    `
+    : `
+      SELECT cm.company_number, cm.company_name, cm.latest_turnover
+      FROM company_monitor cm
+      WHERE cm.latest_turnover IS NOT NULL
+        AND (cm.latest_turnover < ? OR cm.latest_turnover > ?)
+        AND cm.company_number NOT IN (SELECT company_number FROM closed_won_registry)
+      ORDER BY cm.latest_turnover DESC
+    `;
+
+  const candidates = db.prepare(candidatesSql).all(minTurnover, maxTurnover);
+  const sample = candidates.slice(0, sampleLimit);
+
+  if (dryRun || candidates.length === 0) {
+    return {
+      dry_run: true,
+      min_turnover: minTurnover,
+      max_turnover: maxTurnover,
+      include_closed_won: includeClosedWon,
+      affected_companies: candidates.length,
+      sample,
+      deleted: {
+        company_monitor: 0,
+        company_filings: 0,
+        company_charge_summary: 0,
+        website_resolution_cache: 0,
+        analysis_queue: 0,
+        workflow_state: 0,
+        workflow_history: 0,
+        cadence_log: 0,
+        company_group_members: 0,
+        import_log: 0,
+        settings: 0,
+        email_sequences: 0,
+        email_steps: 0,
+      },
+    };
+  }
+
+  const hasEmailSequences = tableExists("email_sequences");
+  const hasEmailSteps = tableExists("email_steps");
+
+  const tx = db.transaction((rows) => {
+    const deleted = {
+      company_monitor: 0,
+      company_filings: 0,
+      company_charge_summary: 0,
+      website_resolution_cache: 0,
+      analysis_queue: 0,
+      workflow_state: 0,
+      workflow_history: 0,
+      cadence_log: 0,
+      company_group_members: 0,
+      import_log: 0,
+      settings: 0,
+      email_sequences: 0,
+      email_steps: 0,
+    };
+
+    for (const row of rows) {
+      const number = row.company_number;
+      const profileId = `CH-${number}`;
+
+      deleted.company_filings += db.prepare("DELETE FROM company_filings WHERE company_number = ?").run(number).changes;
+      deleted.company_charge_summary += db.prepare("DELETE FROM company_charge_summary WHERE company_number = ?").run(number).changes;
+      deleted.website_resolution_cache += db.prepare("DELETE FROM website_resolution_cache WHERE company_number = ?").run(number).changes;
+      deleted.analysis_queue += db.prepare("DELETE FROM analysis_queue WHERE company_number = ?").run(number).changes;
+      deleted.company_group_members += db.prepare("DELETE FROM company_group_members WHERE company_number = ?").run(number).changes;
+      deleted.import_log += db.prepare("DELETE FROM import_log WHERE company_number = ?").run(number).changes;
+      deleted.workflow_history += db.prepare("DELETE FROM workflow_history WHERE company_id IN (?, ?)").run(number, profileId).changes;
+      deleted.workflow_state += db.prepare("DELETE FROM workflow_state WHERE company_id IN (?, ?)").run(number, profileId).changes;
+      deleted.cadence_log += db.prepare("DELETE FROM cadence_log WHERE company_id IN (?, ?)").run(number, profileId).changes;
+
+      deleted.settings += db.prepare(`
+        DELETE FROM settings
+        WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `analysis_${number}`,
+        `score_${number}`,
+        `tech_stack_${number}`,
+        `marketing_intelligence_${number}`,
+        `hiring_signals_${number}`,
+        `reputation_${number}`,
+        `ownership_${number}`,
+        `website_resolution_${number}`,
+        `charge_summary_${number}`
+      ).changes;
+
+      if (hasEmailSequences) {
+        if (hasEmailSteps) {
+          deleted.email_steps += db.prepare(`
+            DELETE FROM email_steps
+            WHERE sequence_id IN (
+              SELECT id FROM email_sequences WHERE company_id IN (?, ?)
+            )
+          `).run(number, profileId).changes;
+        }
+        deleted.email_sequences += db.prepare("DELETE FROM email_sequences WHERE company_id IN (?, ?)").run(number, profileId).changes;
+      }
+
+      deleted.company_monitor += db.prepare("DELETE FROM company_monitor WHERE company_number = ?").run(number).changes;
+    }
+
+    return deleted;
+  });
+
+  const deleted = tx(candidates);
+
+  return {
+    dry_run: false,
+    min_turnover: minTurnover,
+    max_turnover: maxTurnover,
+    include_closed_won: includeClosedWon,
+    affected_companies: candidates.length,
+    sample,
+    deleted,
+  };
 }
 
 // --- Company Groups ---

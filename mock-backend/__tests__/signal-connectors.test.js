@@ -222,6 +222,67 @@ describe("external signal connectors", () => {
     assert.equal(tech.signal_count >= 3, true);
   });
 
+  it("syncs configured Cursor connector payload into hiring, marketing, and tech envelopes", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.CURSOR_API_KEY = "test-cursor-key";
+    process.env.CURSOR_URL_TEMPLATE = "https://signals.example.test/cursor/{company_number}";
+    process.env.CURSOR_AUTH_SCHEME = "none";
+    process.env.CURSOR_AUTH_HEADER = "x-cursor-key";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://signals.example.test/cursor/99111118");
+      assert.equal(String(options?.headers?.["x-cursor-key"] || ""), "test-cursor-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            open_roles: 4,
+            jobs: [
+              { title: "Treasury Operations Analyst" },
+              { title: "Payments Product Lead" },
+            ],
+            monthly_web_traffic: 510000,
+            technologies: ["Stripe", "Salesforce", "HubSpot"],
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111118",
+      companyName: "Example Cursor Co",
+      companyDomain: "example-cursor.co.uk",
+      connectors: ["cursor"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    assert.equal(result.attempted, 1);
+    assert.equal(result.succeeded, 1);
+    assert.deepEqual(result.requested_connectors, ["cursor"]);
+
+    const connector = (result.connectors || []).find((entry) => entry.id === "cursor");
+    assert.ok(connector);
+
+    const hiring = db.getSetting("hiring_signals_99111118", null);
+    const marketing = db.getSetting("marketing_intelligence_99111118", null);
+    const tech = db.getSetting("tech_stack_99111118", null);
+
+    assert.equal(hiring.total_open_roles >= 2, true);
+    assert.equal(marketing.monthly_web_traffic >= 510000, true);
+    assert.equal(tech.signal_count >= 3, true);
+  });
+
   it("syncs configured connector payload into ownership and hiring envelopes", async () => {
     process.env.ENDOLE_API_KEY = "test-endole-key";
     process.env.ENDOLE_URL_TEMPLATE = "https://signals.example.test/company/{company_number}";

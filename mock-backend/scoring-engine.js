@@ -3,7 +3,8 @@ import { analyseCompany } from "./llm.js";
 import { getOutreachReadiness, scoreAllStakeholders } from "./stakeholder-scoring.js";
 import { SCORING_ENGINE_FIT_WEIGHTS as SCORING_WEIGHTS } from "./scoring-weights.js";
 
-const TURNOVER_THRESHOLD = 15_000_000;
+const TURNOVER_THRESHOLD = 30_000_000;
+const TURNOVER_MAX_THRESHOLD = 200_000_000;
 
 // --- Product GP priority (relative, based on internal strategy docs) ---
 const PRODUCT_GP_WEIGHTS = {
@@ -2747,11 +2748,11 @@ function detectQualificationSignals(text) {
 
 function scoreCommercialValue(turnover) {
   if (!turnover || turnover < TURNOVER_THRESHOLD) return 0;
-  if (turnover >= 500_000_000) return 1.0;
-  if (turnover >= 250_000_000) return 0.9;
-  if (turnover >= 100_000_000) return 0.8;
+  if (turnover > TURNOVER_MAX_THRESHOLD) return 0;
+  if (turnover >= 150_000_000) return 1.0;
+  if (turnover >= 100_000_000) return 0.85;
   if (turnover >= 50_000_000) return 0.65;
-  if (turnover >= 25_000_000) return 0.5;
+  if (turnover >= 30_000_000) return 0.5;
   return 0.35;
 }
 

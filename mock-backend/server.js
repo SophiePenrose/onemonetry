@@ -55,7 +55,7 @@ import {
   startAnalysisQueueWorker,
   getAnalysisQueueWorkerStatus,
 } from "./analysis-queue.js";
-import { processZipInChunks, getTurnoverThreshold } from "./stream-processor.js";
+import { processZipInChunks, getTurnoverThreshold, getTurnoverMaxThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
 import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences } from "./email-sequences.js";
 import { generateFullSequence, getEmailLlmRuntimeInfo } from "./email-generator.js";
@@ -107,6 +107,7 @@ import {
   getCadenceLog,
   addCadenceEntry,
   pruneHistoricMonthlyFilingsBefore,
+  purgeOutOfScopeMonitoredCompanies,
   getAnalysisQueueItemsByCompanyNumbers,
   getAnalysisQueueCounts,
   reconcileAnalysisQueueWithStoredAnalyses,
@@ -894,7 +895,7 @@ export function computePriorityBreakdown(companyRow, score, analysisStatus, segm
   const productFit = clamp01(Number(score?.layers?.product_fit?.score || 0));
   const commercialValue = clamp01(Number(score?.layers?.commercial_value?.score || 0));
   const bestMotionWeighted = clamp01(Number(score?.layers?.product_fit?.best_score || 0));
-  const turnoverSignal = clamp01(turnover / 500_000_000);
+  const turnoverSignal = clamp01(turnover / getTurnoverMaxThreshold());
   const velocitySignal = clamp01(Number(score?.velocity?.score || 0.5));
   const confidencePlusMinus = clamp01(Number(score?.confidence_interval?.plus_minus || 0) * 1.5);
   const confidenceLevel = String(score?.confidence_interval?.confidence_level || "medium");
@@ -2861,7 +2862,7 @@ app.post("/api/closed-won/import", (req, res) => {
 
 app.get("/api/dashboard", (_req, res) => {
   const stats = getMonitorStats();
-  const totalCompanies = getShortlistCount(getTurnoverThreshold());
+  const totalCompanies = getShortlistCount(getTurnoverThreshold(), getTurnoverMaxThreshold());
 
   const pipeline = {};
   for (const s of WORKFLOW_STATES) {
@@ -2870,14 +2871,12 @@ app.get("/api/dashboard", (_req, res) => {
   pipeline.new_candidate.count = totalCompanies;
 
   const turnoverBuckets = {
-    "£500M+": { min: 500_000_000, count: 0 },
-    "£100M-£500M": { min: 100_000_000, max: 500_000_000, count: 0 },
+    "£100M-£200M": { min: 100_000_000, max: 200_000_000, count: 0 },
     "£50M-£100M": { min: 50_000_000, max: 100_000_000, count: 0 },
-    "£25M-£50M": { min: 25_000_000, max: 50_000_000, count: 0 },
-    "£15M-£25M": { min: 15_000_000, max: 25_000_000, count: 0 },
+    "£30M-£50M": { min: 30_000_000, max: 50_000_000, count: 0 },
   };
 
-  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: 500 })
+  const topCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: 500 })
     .filter((c) => !isSuppressed(`ch-${c.company_number}`, c.company_number).suppressed);
   const motionSummary = Object.fromEntries(VALID_MOTIONS.map((motion) => [motion, { count: 0, top_score: 0 }]));
 
@@ -2913,17 +2912,17 @@ app.get("/api/dashboard", (_req, res) => {
     turnover_distribution: turnoverBuckets,
     top_companies: top10,
     monitor_stats: stats,
+    threshold_min: getTurnoverThreshold(),
+    threshold_max: getTurnoverMaxThreshold(),
     threshold: getTurnoverThreshold(),
   });
 });
 
 const SHORTLIST_TURNOVER_BANDS = {
   all: null,
-  "15-25": { min: 15_000_000, max: 25_000_000 },
-  "25-50": { min: 25_000_000, max: 50_000_000 },
+  "30-50": { min: 30_000_000, max: 50_000_000 },
   "50-100": { min: 50_000_000, max: 100_000_000 },
-  "100-500": { min: 100_000_000, max: 500_000_000 },
-  "500+": { min: 500_000_000, max: null },
+  "100-200": { min: 100_000_000, max: 200_000_000 },
 };
 
 const SHORTLIST_SORT_FIELDS = new Set([
@@ -3197,7 +3196,8 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
   const topN = Number.isFinite(requestedTopN) ? Math.max(10, Math.min(requestedTopN, 500)) : 50;
 
   const threshold = getTurnoverThreshold();
-  const allCompanies = getShortlistCompanies({ min_turnover: threshold, limit: sampleLimit });
+  const thresholdMax = getTurnoverMaxThreshold();
+  const allCompanies = getShortlistCompanies({ min_turnover: threshold, max_turnover: thresholdMax, limit: sampleLimit });
   const companies = allCompanies.filter((c) => turnoverMatchesBand(c.latest_turnover, turnoverBand));
   const companyNumbers = companies.map((c) => c.company_number);
   const queueRows = getAnalysisQueueItemsByCompanyNumbers(companyNumbers);
@@ -3274,6 +3274,7 @@ app.get("/api/unified-shortlist/distribution", (req, res) => {
     },
     meta: {
       threshold,
+      threshold_max: thresholdMax,
       sample_limit: sampleLimit,
       turnover_band: turnoverBand,
       sort_by: sortBy,
@@ -3296,7 +3297,8 @@ app.get("/api/unified-shortlist", (req, res) => {
   const turnoverBand = parseShortlistTurnoverBand(req.query.turnover_band);
 
   const threshold = getTurnoverThreshold();
-  const allCompanies = getShortlistCompanies({ min_turnover: threshold });
+  const thresholdMax = getTurnoverMaxThreshold();
+  const allCompanies = getShortlistCompanies({ min_turnover: threshold, max_turnover: thresholdMax });
   const companies = allCompanies.filter((c) => turnoverMatchesBand(c.latest_turnover, turnoverBand));
 
   const companyNumbers = companies.map((c) => c.company_number);
@@ -3411,6 +3413,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       limit: pageLimit,
       offset: pageOffset,
       threshold,
+      threshold_max: thresholdMax,
       turnover_band: turnoverBand,
       sort_by: sortBy,
       sort_dir: sortDir,
@@ -3539,7 +3542,7 @@ app.get("/api/company/:id", async (req, res) => {
       const cadenceHistory = getCadenceLog(profileId);
       const ownershipStructure = getSetting(`ownership_${companyNumber}`, null);
       const sicCodes = getStoredSicCodes(companyNumber);
-      const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / 500_000_000, 1) * 0.7 + 0.3) * 100) / 100 : 0);
+      const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / getTurnoverMaxThreshold(), 1) * 0.7 + 0.3) * 100) / 100 : 0);
 
       return res.json({
         company: {
@@ -3740,7 +3743,7 @@ function getHistoricBackfillCutoffPeriod(now = new Date()) {
 }
 
 async function buildMonitorReportEntries(topN = 20) {
-  const monitoredCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: topN * 3 });
+  const monitoredCompanies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: topN * 3 });
   const entries = [];
 
   for (const company of monitoredCompanies) {
@@ -4626,8 +4629,8 @@ function mapSICToIndustry(sicCodes) {
 
 function guessTurnoverSegment(turnover) {
   if (!turnover) return "Mid-Market";
-  if (turnover >= 250_000_000) return "Enterprise";
-  if (turnover >= 10_000_000) return "Mid-Market";
+  if (turnover >= 200_000_000) return "Enterprise";
+  if (turnover >= 30_000_000) return "Mid-Market";
   return "SMB";
 }
 
@@ -5184,7 +5187,7 @@ app.post("/api/score/company", (req, res) => {
 
 app.post("/api/score/batch", (req, res) => {
   const { limit } = req.body;
-  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 100 });
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: limit || 100 });
   const results = batchScoreCompanies(companies);
   res.json({
     scored: results.length,
@@ -5335,6 +5338,8 @@ app.get("/api/monitor/status", (_req, res) => {
       running: isOwnershipStaleMonitorRunning(),
       progress: getOwnershipStaleMonitorProgress(),
     },
+    threshold_min: getTurnoverThreshold(),
+    threshold_max: getTurnoverMaxThreshold(),
     threshold: getTurnoverThreshold(),
     filing_count: getFilingCount(),
   });
@@ -5355,6 +5360,35 @@ app.get("/api/monitor/companies", (req, res) => {
 app.get("/api/monitor/companies/:number/filings", (req, res) => {
   const filings = getFilingsForCompany(req.params.number);
   res.json({ filings });
+});
+
+app.post("/api/monitor/cleanup-turnover-scope", (req, res) => {
+  try {
+    const {
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    } = req.body || {};
+
+    const result = purgeOutOfScopeMonitoredCompanies({
+      min_turnover,
+      max_turnover,
+      dry_run,
+      include_closed_won,
+      sample_limit,
+    });
+
+    res.json({
+      message: result.dry_run
+        ? "Dry run complete. No records were removed."
+        : "Cleanup complete. Out-of-scope company data removed.",
+      ...result,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "cleanup_failed" });
+  }
 });
 
 app.post("/api/monitor/import-list", async (req, res) => {
@@ -8642,7 +8676,7 @@ app.post("/api/enrichment/tech-stack/batch", async (req, res) => {
       targets.push(context);
     }
   } else {
-    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit });
+    const shortlist = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit });
     for (const company of shortlist) {
       targets.push({
         canonical_id: `ch-${company.company_number}`,
@@ -9198,7 +9232,7 @@ app.post("/api/score/company-llm", async (req, res) => {
 
 app.post("/api/score/batch-llm", async (req, res) => {
   const { limit, concurrency } = req.body;
-  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), limit: limit || 20 });
+  const companies = getShortlistCompanies({ min_turnover: getTurnoverThreshold(), max_turnover: getTurnoverMaxThreshold(), limit: limit || 20 });
 
   try {
     const results = await batchScoreWithLLM(companies, concurrency || 2);
