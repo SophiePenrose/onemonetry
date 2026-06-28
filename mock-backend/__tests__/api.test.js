@@ -332,6 +332,44 @@ describe("API endpoints", () => {
     });
   });
 
+  describe("POST /api/closed-won/import", () => {
+    it("accepts raw export text containing Companies Registry Office numbers", async () => {
+      const before = await fetchJSON("/api/closed-won/registry?limit=1");
+      assert.equal(before.status, 200);
+      const initialTotal = Number(before.data.total || 0);
+
+      const rawText = [
+        "Select Item 1",
+        "ACME ONE LTD",
+        "COMPANIES REGISTRY OFFICE Number (GB): 07139565",
+        "Select Item 2",
+        "ACME TWO LTD",
+        "COMPANIES REGISTRY OFFICE Number (GB): 02598164",
+      ].join("\n");
+
+      const imported = await fetchJSON("/api/closed-won/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "api_test_raw_text",
+          csv_content: rawText,
+          dry_run: false,
+          mark_existing_closed_won: false,
+        }),
+      });
+
+      assert.equal(imported.status, 200);
+      assert.equal(imported.data.skipped_invalid, 0);
+      assert.equal(imported.data.total_registry_count, initialTotal + 2);
+
+      const after = await fetchJSON("/api/closed-won/registry?limit=5000");
+      assert.equal(after.status, 200);
+      const numbers = new Set((after.data.rows || []).map((row) => row.company_number));
+      assert.equal(numbers.has("07139565"), true);
+      assert.equal(numbers.has("02598164"), true);
+    });
+  });
+
   describe("GET /api/unified-shortlist", () => {
     it("returns companies array with meta", async () => {
       const { status, data } = await fetchJSON("/api/unified-shortlist");

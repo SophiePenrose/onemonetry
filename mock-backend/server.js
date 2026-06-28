@@ -2286,6 +2286,44 @@ function parseClosedWonRowsFromCsv(csvContent) {
   const text = String(csvContent || "").replace(/\r/g, "").trim();
   if (!text) return [];
 
+  const normalizeClosedWonCompanyNumber = (value) => {
+    const raw = String(value || "").trim().toUpperCase();
+    if (!raw) return null;
+
+    const stripped = raw.replace(/^CH-/, "").replace(/\s+/g, "");
+    if (!stripped) return null;
+
+    // Accept plain UK numeric registration numbers (1-8 digits) with left-zero normalization.
+    if (/^\d{1,8}$/.test(stripped)) {
+      return normalizeCompanyNumber(stripped);
+    }
+
+    // Accept alphanumeric registration numbers only when they contain enough digits
+    // to avoid false positives from prose tokens like "SELECTITEM1".
+    if (/^[A-Z0-9]{2,12}$/.test(stripped)) {
+      const digitCount = (stripped.match(/\d/g) || []).length;
+      if (digitCount >= 4) return normalizeCompanyNumber(stripped);
+    }
+
+    return null;
+  };
+
+  const parseFromRawText = () => {
+    const rows = [];
+    const seen = new Set();
+    const pattern = /COMPANIES\s+REGISTRY\s+OFFICE\s+Number\s*\(GB\):\s*([A-Z0-9]{1,12})/gi;
+
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const normalizedNumber = normalizeClosedWonCompanyNumber(match[1]);
+      if (!normalizedNumber || seen.has(normalizedNumber)) continue;
+      seen.add(normalizedNumber);
+      rows.push({ company_number: normalizedNumber, company_name: null });
+    }
+
+    return rows;
+  };
+
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) return [];
 
@@ -2328,15 +2366,15 @@ function parseClosedWonRowsFromCsv(csvContent) {
 
     let candidateNumber = numberIdx >= 0 ? cells[numberIdx] : null;
     if (!candidateNumber) {
-      candidateNumber = cells.find((cell) => !!normalizeCompanyNumber(cell)) || null;
+      candidateNumber = cells.find((cell) => !!normalizeClosedWonCompanyNumber(cell)) || null;
     }
 
-    const normalizedNumber = normalizeCompanyNumber(candidateNumber);
+    const normalizedNumber = normalizeClosedWonCompanyNumber(candidateNumber);
     if (!normalizedNumber) continue;
 
     const candidateName = nameIdx >= 0
       ? cells[nameIdx]
-      : cells.find((cell, idx) => idx !== numberIdx && idx !== -1 && cell && !normalizeCompanyNumber(cell));
+      : cells.find((cell, idx) => idx !== numberIdx && idx !== -1 && cell && !normalizeClosedWonCompanyNumber(cell));
 
     rows.push({
       company_number: normalizedNumber,
@@ -2344,7 +2382,8 @@ function parseClosedWonRowsFromCsv(csvContent) {
     });
   }
 
-  return rows;
+  if (rows.length > 0) return rows;
+  return parseFromRawText();
 }
 
 function parseSuppressionRowsFromCsv(csvContent) {
