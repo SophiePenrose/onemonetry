@@ -2258,6 +2258,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
   const includeQueueBacklogCounts = options?.includeQueueBacklogCounts === true;
   const includeQueueThroughputCounts = options?.includeQueueThroughputCounts === true;
+  const includeQueueLatencyCounts = options?.includeQueueLatencyCounts === true;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) AS count
@@ -2388,6 +2389,23 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       WHERE created_at >= datetime('now', ?)
         AND event_type = 'handoff_retry_requested'
     `).get(`-${recentHours} hours`)
+    : null;
+
+  const queueOldestOpenRow = includeQueueLatencyCounts
+    ? db.prepare(`
+      SELECT
+        request_id,
+        status,
+        accepted_at,
+        updated_at,
+        CAST((julianday('now') - julianday(COALESCE(accepted_at, updated_at))) * 24 * 60 AS INTEGER) AS age_minutes
+      FROM gemini_handoff_requests
+      WHERE completed_at IS NULL
+        AND response_payload IS NULL
+        AND status IN ('accepted', 'retry_requested')
+      ORDER BY datetime(COALESCE(accepted_at, updated_at)) ASC
+      LIMIT 1
+    `).get()
     : null;
 
   const statusCounts = {};
@@ -2561,6 +2579,19 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
           net_completed_minus_retries: throughputNetCompletedMinusRetries,
           completed_per_hour: completionsPerHour,
           retry_requested_per_hour: retriesPerHour,
+        },
+      }
+      : {}),
+    ...(includeQueueLatencyCounts
+      ? {
+        queue_latency_counts: {
+          oldest_open_age_minutes: Number.isFinite(Number(queueOldestOpenRow?.age_minutes))
+            ? Number(queueOldestOpenRow.age_minutes)
+            : null,
+          oldest_open_request_id: queueOldestOpenRow?.request_id || null,
+          oldest_open_status: queueOldestOpenRow?.status || null,
+          oldest_open_accepted_at: queueOldestOpenRow?.accepted_at || null,
+          oldest_open_updated_at: queueOldestOpenRow?.updated_at || null,
         },
       }
       : {}),
