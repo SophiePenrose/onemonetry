@@ -1383,6 +1383,17 @@ describe("API endpoints", () => {
           || typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts.success_rate_percent === "number",
         true
       );
+
+      const summaryWithRecentTransportErrorCodeCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_error_code_counts=true");
+      assert.equal(summaryWithRecentTransportErrorCodeCounts.status, 200);
+      assert.equal(typeof summaryWithRecentTransportErrorCodeCounts.data.recent_transport_error_code_counts, "object");
+      assert.equal(typeof summaryWithRecentTransportErrorCodeCounts.data.recent_transport_error_code_counts.total_failures, "number");
+      assert.equal(typeof summaryWithRecentTransportErrorCodeCounts.data.recent_transport_error_code_counts.by_code, "object");
+      assert.equal(
+        Object.values(summaryWithRecentTransportErrorCodeCounts.data.recent_transport_error_code_counts.by_code)
+          .every((value) => typeof value === "number"),
+        true
+      );
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1409,6 +1420,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
       assert.equal(invalidIncludeRecentTransportDispatchCounts.data.error, "invalid_include_recent_transport_dispatch_counts");
+
+      const invalidIncludeRecentTransportErrorCodeCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_error_code_counts=maybe");
+      assert.equal(invalidIncludeRecentTransportErrorCodeCounts.status, 400);
+      assert.equal(invalidIncludeRecentTransportErrorCodeCounts.data.error, "invalid_include_recent_transport_error_code_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
