@@ -2260,6 +2260,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentCallbackAgingBands = options?.includeRecentCallbackAgingBands === true;
   const includeRecentCallbackPayloadQualityCounts = options?.includeRecentCallbackPayloadQualityCounts === true;
   const includeRecentCallbackSchemaPresenceCounts = options?.includeRecentCallbackSchemaPresenceCounts === true;
+  const includeRecentCallbackPayloadConsistencyCounts = options?.includeRecentCallbackPayloadConsistencyCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2420,7 +2421,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     `).all(`-${recentHours} hours`, `-${recentHours} hours`)
     : [];
 
-  const callbackPayloadQualityRows = (includeRecentCallbackPayloadQualityCounts || includeRecentCallbackSchemaPresenceCounts)
+  const callbackPayloadQualityRows = (
+    includeRecentCallbackPayloadQualityCounts
+    || includeRecentCallbackSchemaPresenceCounts
+    || includeRecentCallbackPayloadConsistencyCounts
+  )
     ? db.prepare(`
       SELECT
         response_payload,
@@ -2804,6 +2809,59 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     }
   }
 
+  const callbackPayloadConsistencyCounts = {
+    completed_recent: callbackPayloadQualityRows.length,
+    parse_errors: 0,
+    status_ok_with_errors: 0,
+    status_non_ok_without_errors: 0,
+    status_missing_with_errors: 0,
+    status_missing_with_nonempty_sequence_outputs: 0,
+    status_ok_with_qc_failures: 0,
+    status_ok_without_sheet_write: 0,
+  };
+
+  if (includeRecentCallbackPayloadConsistencyCounts) {
+    for (const row of callbackPayloadQualityRows) {
+      const parsedPayload = parseJsonText(row?.response_payload, null);
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        callbackPayloadConsistencyCounts.parse_errors += 1;
+        continue;
+      }
+
+      const statusKey = String(parsedPayload?.status || "").trim().toLowerCase();
+      const errorsArray = Array.isArray(parsedPayload?.errors) ? parsedPayload.errors : [];
+      const hasErrors = errorsArray.length > 0;
+      const sequenceOutputs = Array.isArray(parsedPayload?.sequence_outputs) ? parsedPayload.sequence_outputs : [];
+      const hasNonemptySequenceOutputs = sequenceOutputs.length > 0;
+      const hasQcFailures = sequenceOutputs.some((sequenceOutput) => {
+        return sequenceOutput?.qc
+          && typeof sequenceOutput.qc === "object"
+          && !Array.isArray(sequenceOutput.qc)
+          && sequenceOutput.qc.passed === false;
+      });
+      const hasSheetWrite = parsedPayload?.sheet_write
+        && typeof parsedPayload.sheet_write === "object"
+        && !Array.isArray(parsedPayload.sheet_write);
+
+      if (!statusKey) {
+        if (hasErrors) callbackPayloadConsistencyCounts.status_missing_with_errors += 1;
+        if (hasNonemptySequenceOutputs) callbackPayloadConsistencyCounts.status_missing_with_nonempty_sequence_outputs += 1;
+        continue;
+      }
+
+      if (statusKey === "ok") {
+        if (hasErrors) callbackPayloadConsistencyCounts.status_ok_with_errors += 1;
+        if (hasQcFailures) callbackPayloadConsistencyCounts.status_ok_with_qc_failures += 1;
+        if (!hasSheetWrite) callbackPayloadConsistencyCounts.status_ok_without_sheet_write += 1;
+        continue;
+      }
+
+      if (!hasErrors) {
+        callbackPayloadConsistencyCounts.status_non_ok_without_errors += 1;
+      }
+    }
+  }
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2958,6 +3016,11 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     ...(includeRecentCallbackSchemaPresenceCounts
       ? {
         recent_callback_schema_presence_counts: callbackSchemaPresenceCounts,
+      }
+      : {}),
+    ...(includeRecentCallbackPayloadConsistencyCounts
+      ? {
+        recent_callback_payload_consistency_counts: callbackPayloadConsistencyCounts,
       }
       : {}),
     ...(includeRecentTransportDispatchCounts
