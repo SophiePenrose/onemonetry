@@ -2253,6 +2253,7 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
   const includeRecentRetryCounts = options?.includeRecentRetryCounts === true;
   const includeRecentApprovalCounts = options?.includeRecentApprovalCounts === true;
   const includeRecentEventStageCounts = options?.includeRecentEventStageCounts === true;
+  const includeRecentEventVolumeCounts = options?.includeRecentEventVolumeCounts === true;
   const includeRecentTransportDispatchCounts = options?.includeRecentTransportDispatchCounts === true;
   const includeRecentTransportErrorCodeCounts = options?.includeRecentTransportErrorCodeCounts === true;
   const includeRecentTransportOutcomeCounts = options?.includeRecentTransportOutcomeCounts === true;
@@ -2327,6 +2328,28 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       GROUP BY event_stage
     `).all(`-${recentHours} hours`)
     : [];
+
+  const recentEventVolumeRow = includeRecentEventVolumeCounts
+    ? db.prepare(`
+      SELECT
+        COUNT(*) AS total_events_recent,
+        COUNT(DISTINCT request_id) AS requests_with_events_recent
+      FROM gemini_handoff_events
+      WHERE created_at >= datetime('now', ?)
+    `).get(`-${recentHours} hours`)
+    : null;
+
+  const recentEventVolumeMaxRow = includeRecentEventVolumeCounts
+    ? db.prepare(`
+      SELECT MAX(event_count) AS max_events_single_request_recent
+      FROM (
+        SELECT request_id, COUNT(*) AS event_count
+        FROM gemini_handoff_events
+        WHERE created_at >= datetime('now', ?)
+        GROUP BY request_id
+      )
+    `).get(`-${recentHours} hours`)
+    : null;
 
   const recentTransportDispatchRows = includeRecentTransportDispatchCounts
     ? db.prepare(`
@@ -2474,6 +2497,13 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
     recentEventStageCounts[key] = Number(row.count || 0);
   }
 
+  const totalEventsRecent = Number(recentEventVolumeRow?.total_events_recent || 0);
+  const requestsWithEventsRecent = Number(recentEventVolumeRow?.requests_with_events_recent || 0);
+  const maxEventsSingleRequestRecent = Number(recentEventVolumeMaxRow?.max_events_single_request_recent || 0);
+  const averageEventsPerActiveRequest = requestsWithEventsRecent > 0
+    ? Math.round((totalEventsRecent / requestsWithEventsRecent) * 100) / 100
+    : null;
+
   const transportDispatchByType = {};
   for (const row of recentTransportDispatchRows) {
     const key = String(row.event_type || "").trim();
@@ -2575,6 +2605,16 @@ export function getGeminiHandoffOperationalSummary(options = {}) {
       : {}),
     ...(includeRecentEventStageCounts
       ? { recent_event_stage_counts: recentEventStageCounts }
+      : {}),
+    ...(includeRecentEventVolumeCounts
+      ? {
+        recent_event_volume_counts: {
+          total_events_recent: totalEventsRecent,
+          requests_with_events_recent: requestsWithEventsRecent,
+          max_events_single_request_recent: maxEventsSingleRequestRecent,
+          average_events_per_active_request: averageEventsPerActiveRequest,
+        },
+      }
       : {}),
     ...(includeRecentTransportDispatchCounts
       ? {

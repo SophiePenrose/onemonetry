@@ -1372,6 +1372,18 @@ describe("API endpoints", () => {
       assert.equal(recentEventStageValues.length >= 1, true);
       assert.equal(recentEventStageValues.every((value) => typeof value === "number"), true);
 
+      const summaryWithRecentEventVolumeCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_event_volume_counts=true");
+      assert.equal(summaryWithRecentEventVolumeCounts.status, 200);
+      assert.equal(typeof summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts, "object");
+      assert.equal(typeof summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts.total_events_recent, "number");
+      assert.equal(typeof summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts.requests_with_events_recent, "number");
+      assert.equal(typeof summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts.max_events_single_request_recent, "number");
+      assert.equal(
+        summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts.average_events_per_active_request === null
+          || typeof summaryWithRecentEventVolumeCounts.data.recent_event_volume_counts.average_events_per_active_request === "number",
+        true
+      );
+
       const summaryWithRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_dispatch_counts=true");
       assert.equal(summaryWithRecentTransportDispatchCounts.status, 200);
       assert.equal(typeof summaryWithRecentTransportDispatchCounts.data.recent_transport_dispatch_counts, "object");
@@ -1494,6 +1506,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentEventStageCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_event_stage_counts=maybe");
       assert.equal(invalidIncludeRecentEventStageCounts.status, 400);
       assert.equal(invalidIncludeRecentEventStageCounts.data.error, "invalid_include_recent_event_stage_counts");
+
+      const invalidIncludeRecentEventVolumeCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_event_volume_counts=maybe");
+      assert.equal(invalidIncludeRecentEventVolumeCounts.status, 400);
+      assert.equal(invalidIncludeRecentEventVolumeCounts.data.error, "invalid_include_recent_event_volume_counts");
 
       const invalidIncludeRecentTransportDispatchCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_dispatch_counts=maybe");
       assert.equal(invalidIncludeRecentTransportDispatchCounts.status, 400);
