@@ -1394,6 +1394,14 @@ describe("API endpoints", () => {
           .every((value) => typeof value === "number"),
         true
       );
+
+      const summaryWithRecentTransportOutcomeCounts = await fetchJSON("/api/gemini/handoff/summary?recent_hours=24&include_recent_transport_outcome_counts=true");
+      assert.equal(summaryWithRecentTransportOutcomeCounts.status, 200);
+      assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts, "object");
+      assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.total_retries, "number");
+      assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.fail_open, "number");
+      assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.fail_closed, "number");
+      assert.equal(typeof summaryWithRecentTransportOutcomeCounts.data.recent_transport_outcome_counts.unknown, "number");
     });
 
     it("validates Gemini handoff summary query parameters", async () => {
@@ -1424,6 +1432,10 @@ describe("API endpoints", () => {
       const invalidIncludeRecentTransportErrorCodeCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_error_code_counts=maybe");
       assert.equal(invalidIncludeRecentTransportErrorCodeCounts.status, 400);
       assert.equal(invalidIncludeRecentTransportErrorCodeCounts.data.error, "invalid_include_recent_transport_error_code_counts");
+
+      const invalidIncludeRecentTransportOutcomeCounts = await fetchJSON("/api/gemini/handoff/summary?include_recent_transport_outcome_counts=maybe");
+      assert.equal(invalidIncludeRecentTransportOutcomeCounts.status, 400);
+      assert.equal(invalidIncludeRecentTransportOutcomeCounts.data.error, "invalid_include_recent_transport_outcome_counts");
     });
 
     it("rejects invalid handoff payloads via schema validation", async () => {
