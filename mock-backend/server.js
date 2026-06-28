@@ -6343,6 +6343,14 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     });
   }
   const includeRecentEventTypeShare = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventTypeShare);
+  const rawIncludeRecentEventRequestOutliers = String(req.query?.include_recent_event_request_outliers || "false").trim().toLowerCase();
+  if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentEventRequestOutliers)) {
+    return res.status(400).json({
+      error: "invalid_include_recent_event_request_outliers",
+      message: "include_recent_event_request_outliers must be a boolean flag (true/false)",
+    });
+  }
+  const includeRecentEventRequestOutliers = ["1", "true", "yes", "on"].includes(rawIncludeRecentEventRequestOutliers);
   const rawIncludeRecentTransportDispatchCounts = String(req.query?.include_recent_transport_dispatch_counts || "false").trim().toLowerCase();
   if (!["", "0", "1", "false", "true", "no", "yes", "off", "on"].includes(rawIncludeRecentTransportDispatchCounts)) {
     return res.status(400).json({
@@ -6417,6 +6425,7 @@ app.get("/api/gemini/handoff/summary", (req, res) => {
     includeRecentEventStageCounts,
     includeRecentEventVolumeCounts,
     includeRecentEventTypeShare,
+    includeRecentEventRequestOutliers,
     includeRecentTransportDispatchCounts,
     includeRecentTransportErrorCodeCounts,
     includeRecentTransportOutcomeCounts,
