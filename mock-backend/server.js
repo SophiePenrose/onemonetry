@@ -195,6 +195,11 @@ const parsedGeminiHandoffMaxRetryCount = Number.parseInt(
 const GEMINI_HANDOFF_MAX_RETRY_COUNT = Number.isFinite(parsedGeminiHandoffMaxRetryCount)
   ? Math.max(1, Math.min(parsedGeminiHandoffMaxRetryCount, 50))
   : 5;
+const GEMINI_WEEKLY_CARRYOVER_ACTIVE_STATES = new Set([
+  "new_candidate",
+  "shortlisted",
+  "selected_for_outreach",
+]);
 
 function loadLocalJsonSchema(fileName) {
   const filePath = path.join(__dirname, "schemas", fileName);
@@ -241,6 +246,33 @@ const parsedGeminiHandoffGoogleApiTimeoutMs = Number.parseInt(
 const GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS = Number.isFinite(parsedGeminiHandoffGoogleApiTimeoutMs)
   ? Math.max(3000, Math.min(parsedGeminiHandoffGoogleApiTimeoutMs, 120000))
   : 30000;
+const GEMINI_WEEKLY_AUTORUN_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(process.env.ENABLE_GEMINI_WEEKLY_AUTORUN || "true").trim().toLowerCase()
+);
+const GEMINI_WEEKLY_DEFAULT_FOCUS = ["all", "new", "carryover"].includes(
+  String(process.env.GEMINI_WEEKLY_FOCUS || "all").trim().toLowerCase()
+)
+  ? String(process.env.GEMINI_WEEKLY_FOCUS || "all").trim().toLowerCase()
+  : "all";
+const parsedGeminiWeeklyDefaultLimit = Number.parseInt(
+  String(process.env.GEMINI_WEEKLY_LIMIT || "20"),
+  10
+);
+const GEMINI_WEEKLY_DEFAULT_LIMIT = Number.isFinite(parsedGeminiWeeklyDefaultLimit)
+  ? Math.max(1, Math.min(parsedGeminiWeeklyDefaultLimit, 100))
+  : 20;
+const GEMINI_HANDOFF_WORKSPACE_ORG = String(process.env.GEMINI_HANDOFF_WORKSPACE_ORG || "Revolut Business").trim() || "Revolut Business";
+const GEMINI_HANDOFF_WORKSPACE_SHEET_ID = String(process.env.GEMINI_HANDOFF_WORKSPACE_SHEET_ID || "weekly_workspace").trim() || "weekly_workspace";
+const GEMINI_HANDOFF_WORKSPACE_SHEET_TAB_PREFIX = String(process.env.GEMINI_HANDOFF_WORKSPACE_SHEET_TAB_PREFIX || "queue_week").trim() || "queue_week";
+const GEMINI_HANDOFF_WORKSPACE_TIMEZONE = String(process.env.GEMINI_HANDOFF_WORKSPACE_TIMEZONE || UK_TIMEZONE).trim() || UK_TIMEZONE;
+const GEMINI_HANDOFF_CAMPAIGN_ID_PREFIX = String(process.env.GEMINI_HANDOFF_CAMPAIGN_ID_PREFIX || "cmp_weekly").trim() || "cmp_weekly";
+const GEMINI_HANDOFF_CAMPAIGN_NAME_PREFIX = String(process.env.GEMINI_HANDOFF_CAMPAIGN_NAME_PREFIX || "Weekly Mid-Market Outreach").trim() || "Weekly Mid-Market Outreach";
+const GEMINI_HANDOFF_SEQUENCE_TEMPLATE = String(process.env.GEMINI_HANDOFF_SEQUENCE_TEMPLATE || "v7").trim() || "v7";
+const GEMINI_HANDOFF_VOICE_PROFILE = String(process.env.GEMINI_HANDOFF_VOICE_PROFILE || "sophie_v7").trim() || "sophie_v7";
+const parsedGeminiHandoffDefaultMaxTouches = Number.parseInt(String(process.env.GEMINI_HANDOFF_MAX_TOUCHES || "6"), 10);
+const GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES = Number.isFinite(parsedGeminiHandoffDefaultMaxTouches)
+  ? Math.max(1, Math.min(parsedGeminiHandoffDefaultMaxTouches, 12))
+  : 6;
 
 function formatSchemaErrors(errors) {
   return (errors || []).map((entry) => `${entry.path}: ${entry.message}`);
@@ -851,6 +883,875 @@ function summarizeGeminiYammRows(rows = []) {
       do_not_send: doNotSendCount,
     },
     by_approval_status: byApprovalStatus,
+  };
+}
+
+function clampGeminiWeeklyLimit(value, fallback = GEMINI_WEEKLY_DEFAULT_LIMIT) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(parsed, 100));
+}
+
+function parseGeminiBooleanFlag(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  const token = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(token)) return true;
+  if (["0", "false", "no", "off"].includes(token)) return false;
+  return fallback;
+}
+
+function normalizeGeminiWeeklyFocus(value, fallback = GEMINI_WEEKLY_DEFAULT_FOCUS) {
+  const token = String(value || fallback || "all").trim().toLowerCase();
+  if (token === "new" || token === "carryover" || token === "all") return token;
+  return fallback;
+}
+
+function toGeminiIsoDate(value) {
+  const parsed = Date.parse(String(value || "").trim());
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function toGeminiWeekLabel(dateLike) {
+  const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  if (Number.isNaN(date.getTime())) return null;
+  return getWeekLabel(date);
+}
+
+function normalizeGeminiWeekLabel(value, fallbackDate = new Date()) {
+  const token = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return token;
+  return toGeminiWeekLabel(fallbackDate);
+}
+
+function extractGeminiRequestInsights(entry = {}) {
+  const reasons = [];
+  if (entry.priority_reason) reasons.push(String(entry.priority_reason));
+  if (entry.filter_reason && entry.filter_reason !== "eligible") {
+    reasons.push(`Pipeline reason: ${String(entry.filter_reason).replaceAll("_", " ")}`);
+  }
+  if (entry.growth_trend && entry.growth_trend !== "unknown") {
+    reasons.push(`Growth trend: ${entry.growth_trend}`);
+  }
+  if (entry.source_type) {
+    reasons.push(`Source type: ${entry.source_type}`);
+  }
+
+  return {
+    top_reasons: reasons.slice(0, 4),
+    connector_evidence: {
+      source_type: entry.source_type || null,
+      source_family: entry.source_family || null,
+      filter_reason: entry.filter_reason || null,
+      filing_count: Number(entry.filing_count || 0),
+      latest_filing_date: entry.latest_filing_date || null,
+      analysis_status: entry.analysis_status || null,
+    },
+  };
+}
+
+function normalizeGeminiPersonaBucket(value) {
+  const role = String(value || "").trim().toLowerCase();
+  if (!role) return "finance_operator";
+  if (role.includes("cfo") || role.includes("chief financial") || role.includes("finance director")) {
+    return "finance_director";
+  }
+  if (role.includes("treasury") || role.includes("treasurer")) {
+    return "treasury_lead";
+  }
+  if (role.includes("founder") || role.includes("ceo") || role.includes("chief executive")) {
+    return "executive_sponsor";
+  }
+  if (role.includes("payments") || role.includes("ecommerce") || role.includes("procurement")) {
+    return "operations_lead";
+  }
+  return "finance_operator";
+}
+
+function scoreTier(entry = {}) {
+  const score = Number(entry?.combined_score ?? entry?.composite_score ?? 0);
+  if (score >= 0.78) return "A";
+  if (score >= 0.62) return "B";
+  return "C";
+}
+
+function buildGeminiStakeholderFromScored(entry, scoredStakeholder, rank) {
+  const fallbackCompanyNumber = normalizeCompanyNumber(entry?.company_number);
+  const personName = String(scoredStakeholder?.name || "").trim();
+  const role = String(scoredStakeholder?.role || "").trim();
+  const personSeed = personName || role || `stakeholder_${rank}`;
+  const companySeed = fallbackCompanyNumber || "company";
+  const personId = `st_${companySeed}_${personSeed}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64) || `st_${companySeed}_${rank}`;
+  const emailGuess = String(scoredStakeholder?.email_guess?.patterns?.[0] || "").trim();
+  const confidence = String(scoredStakeholder?.confidence_level || "medium").trim().toLowerCase() || "medium";
+
+  return {
+    person_id: personId,
+    full_name: personName || "Unknown Stakeholder",
+    role: role || "Finance stakeholder",
+    email: emailGuess,
+    email_status: emailGuess ? "guessed" : "missing",
+    persona_bucket: normalizeGeminiPersonaBucket(role || scoredStakeholder?.buying_role),
+    confidence,
+  };
+}
+
+function buildGeminiRequestFromWeeklyEntries({
+  weekLabel,
+  weekStart,
+  weekEnd,
+  focus,
+  selectedEntries,
+  maxTouches,
+  requestPrefix,
+}) {
+  const safeWeekLabel = String(weekLabel || "").trim();
+  const weekToken = safeWeekLabel.replace(/[^0-9]/g, "") || "current";
+  const focusToken = String(focus || "all").trim().toLowerCase() || "all";
+  const prefixToken = String(requestPrefix || "weekly")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "weekly";
+  const requestId = `${prefixToken}_req_${weekToken}_${focusToken}`
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 120);
+
+  const rankedCompanies = [];
+  let skippedMissingStakeholders = 0;
+
+  for (let idx = 0; idx < selectedEntries.length; idx += 1) {
+    const item = selectedEntries[idx];
+    const stakeholders = Array.isArray(item?.stakeholders) ? item.stakeholders : [];
+    if (stakeholders.length < 1) {
+      skippedMissingStakeholders += 1;
+      continue;
+    }
+
+    const bestStakeholder = stakeholders[0];
+    const companyNumber = normalizeCompanyNumber(item.company_number);
+    if (!companyNumber) continue;
+
+    const fitLayers = item?.score?.layers || {};
+    const ranked = {
+      rank: rankedCompanies.length + 1,
+      company_number: companyNumber,
+      company_name: String(item.name || item.company_name || `Company ${companyNumber}`).trim(),
+      segment: item.segment || guessTurnoverSegment(item.turnover || item.latest_turnover || 0),
+      composite_score: Number(item.combined_score || item.composite_score || 0),
+      priority_band: item.score_tier || scoreTier(item),
+      score_breakdown: {
+        product_fit: Number(fitLayers.product_fit?.score || 0),
+        commercial_value: Number(fitLayers.commercial_value?.score || 0),
+        pain_strength: Number(fitLayers.pain_strength?.score || 0),
+        urgency: Number(fitLayers.urgency?.score || 0),
+        competitor_context: Number(fitLayers.competitor_context?.score || 0),
+      },
+      insights: extractGeminiRequestInsights(item),
+      stakeholders: [buildGeminiStakeholderFromScored(item, bestStakeholder, idx + 1)],
+    };
+
+    rankedCompanies.push(ranked);
+  }
+
+  const sheetTabWeek = safeWeekLabel.replace(/-/g, "_");
+  const payload = {
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    generated_at: new Date().toISOString(),
+    workspace: {
+      org: GEMINI_HANDOFF_WORKSPACE_ORG,
+      sheet_id: GEMINI_HANDOFF_WORKSPACE_SHEET_ID,
+      sheet_tab: `${GEMINI_HANDOFF_WORKSPACE_SHEET_TAB_PREFIX}_${sheetTabWeek}`,
+      timezone: GEMINI_HANDOFF_WORKSPACE_TIMEZONE,
+    },
+    campaign: {
+      campaign_id: `${GEMINI_HANDOFF_CAMPAIGN_ID_PREFIX}_${sheetTabWeek}`,
+      campaign_name: `${GEMINI_HANDOFF_CAMPAIGN_NAME_PREFIX} (${safeWeekLabel})`,
+      sequence_template: GEMINI_HANDOFF_SEQUENCE_TEMPLATE,
+      max_touches: maxTouches,
+      approval_required: true,
+    },
+    ranked_companies: rankedCompanies,
+    generation_policy: {
+      provider: "gemini",
+      voice_profile: GEMINI_HANDOFF_VOICE_PROFILE,
+      forbidden_phrases_enforced: true,
+      max_steps_per_sequence: maxTouches,
+      require_citations: true,
+      fail_closed_on_qc: true,
+    },
+  };
+
+  return {
+    payload,
+    request_id: requestId,
+    selected_count: selectedEntries.length,
+    ranked_count: rankedCompanies.length,
+    skipped_missing_stakeholders: skippedMissingStakeholders,
+    week_start: weekStart,
+    week_end: weekEnd,
+    week_label: safeWeekLabel,
+    focus,
+  };
+}
+
+function deriveGeminiLocalSequenceId(output = {}, requestId = "") {
+  const fromPayload = String(output.sequence_id || "").trim();
+  if (fromPayload) {
+    return `gemini_${fromPayload}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
+  }
+  const companyNumber = normalizeCompanyNumber(output.company_number) || "company";
+  const personId = String(output.person_id || "person").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "person";
+  const requestSeed = String(requestId || "handoff").replace(/[^a-zA-Z0-9_-]/g, "_").slice(-40) || "handoff";
+  return `gemini_${requestSeed}_${companyNumber}_${personId}`.slice(0, 120);
+}
+
+function buildLocalSequenceStepsFromGeminiOutput(output = {}) {
+  const sourceSteps = Array.isArray(output.steps) ? output.steps : [];
+  const mapped = sourceSteps
+    .map((step, idx) => {
+      const stepNumber = Number.parseInt(String(step?.step_number || idx + 1), 10);
+      const dayOffset = Number.parseInt(String(step?.day_offset || 0), 10);
+      const subject = String(step?.subject || "").trim();
+      const body = String(step?.body || "").trim();
+      const stepType = String(step?.step_type || "depth").trim() || "depth";
+      if (!Number.isFinite(stepNumber) || stepNumber <= 0 || !subject || !body) return null;
+      return {
+        step_number: stepNumber,
+        step_type: stepType,
+        subject,
+        body,
+        send_delay_days: Number.isFinite(dayOffset) && dayOffset >= 0 ? dayOffset : 0,
+        status: "pending",
+        send_condition: "always",
+        requires_manual_review: true,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.step_number - b.step_number);
+
+  return mapped;
+}
+
+function selectGeminiPrimaryRow(output = {}) {
+  const rows = Array.isArray(output.yamm_rows) ? output.yamm_rows : [];
+  if (rows.length < 1) return null;
+  return rows[0] || null;
+}
+
+function persistGeminiResponseSequences(record, options = {}) {
+  if (!record || typeof record !== "object") {
+    return {
+      imported: 0,
+      skipped: 0,
+      details: [],
+    };
+  }
+
+  const responsePayload = record.response;
+  const requestPayload = record.request;
+  if (!responsePayload || typeof responsePayload !== "object") {
+    return {
+      imported: 0,
+      skipped: 0,
+      details: [],
+    };
+  }
+
+  const rankedCompanies = Array.isArray(requestPayload?.ranked_companies) ? requestPayload.ranked_companies : [];
+  const rankedByCompanyNumber = new Map();
+  for (const company of rankedCompanies) {
+    const normalized = normalizeCompanyNumber(company?.company_number);
+    if (!normalized) continue;
+    rankedByCompanyNumber.set(normalized, company);
+  }
+
+  const outputs = Array.isArray(responsePayload.sequence_outputs) ? responsePayload.sequence_outputs : [];
+  const dryRun = options?.dryRun === true;
+
+  const summary = {
+    imported: 0,
+    skipped: 0,
+    details: [],
+  };
+
+  for (const output of outputs) {
+    const companyNumber = normalizeCompanyNumber(output?.company_number);
+    if (!companyNumber) {
+      summary.skipped += 1;
+      summary.details.push({
+        company_number: null,
+        sequence_id: String(output?.sequence_id || ""),
+        imported: false,
+        reason: "missing_company_number",
+      });
+      continue;
+    }
+
+    const companyId = canonicalCompanyId(companyNumber);
+    const mappedSteps = buildLocalSequenceStepsFromGeminiOutput(output);
+    if (mappedSteps.length < 1) {
+      summary.skipped += 1;
+      summary.details.push({
+        company_number: companyNumber,
+        company_id: companyId,
+        sequence_id: String(output?.sequence_id || ""),
+        imported: false,
+        reason: "no_valid_steps",
+      });
+      continue;
+    }
+
+    const requestCompany = rankedByCompanyNumber.get(companyNumber);
+    const primaryStakeholder = Array.isArray(requestCompany?.stakeholders) ? requestCompany.stakeholders[0] : null;
+    const primaryRow = selectGeminiPrimaryRow(output);
+    const stakeholderName = String(
+      primaryStakeholder?.full_name
+        || primaryRow?.FirstName
+        || primaryRow?.Stakeholder
+        || `Stakeholder ${companyNumber}`
+    ).trim() || `Stakeholder ${companyNumber}`;
+    const stakeholderRole = String(primaryStakeholder?.role || "").trim() || null;
+    const stakeholderEmail = String(primaryStakeholder?.email || primaryRow?.To || "").trim() || null;
+    const motion = GEMINI_HANDOFF_SEQUENCE_TEMPLATE || "Holistic Narrative";
+    const localSequenceId = deriveGeminiLocalSequenceId(output, record.request_id);
+
+    if (dryRun) {
+      summary.imported += 1;
+      summary.details.push({
+        company_number: companyNumber,
+        company_id: companyId,
+        sequence_id: localSequenceId,
+        imported: true,
+        dry_run: true,
+        step_count: mappedSteps.length,
+      });
+      continue;
+    }
+
+    deleteSequence(localSequenceId);
+    const saved = saveGeneratedSequence({
+      id: localSequenceId,
+      companyId,
+      companyName: String(requestCompany?.company_name || primaryRow?.Company || `Company ${companyNumber}`).trim(),
+      stakeholderName,
+      stakeholderRole,
+      stakeholderEmail,
+      motion,
+      steps: mappedSteps,
+      sequenceStatus: "draft",
+      preserveSubject: true,
+    });
+
+    if (!saved) {
+      summary.skipped += 1;
+      summary.details.push({
+        company_number: companyNumber,
+        company_id: companyId,
+        sequence_id: localSequenceId,
+        imported: false,
+        reason: "save_failed",
+      });
+      continue;
+    }
+
+    summary.imported += 1;
+    summary.details.push({
+      company_number: companyNumber,
+      company_id: companyId,
+      sequence_id: localSequenceId,
+      imported: true,
+      step_count: mappedSteps.length,
+    });
+  }
+
+  return summary;
+}
+
+async function processGeminiHandoffRequestPayload(payload) {
+  const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
+
+  if (!validation.valid) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "invalid_payload",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        details: formatSchemaErrors(validation.errors),
+      },
+      requestRecord: null,
+      sequenceImportSummary: null,
+    };
+  }
+
+  const { created, record } = createOrGetGeminiHandoffRequest(payload);
+  if (!created && record) {
+    addGeminiHandoffEvent(payload.request_id, "handoff_duplicate", "ingress", {
+      status: record.status,
+    });
+
+    let sequenceImportSummary = null;
+    if (record.response && typeof record.response === "object") {
+      sequenceImportSummary = persistGeminiResponseSequences(record);
+    }
+
+    return {
+      ok: true,
+      statusCode: 200,
+      body: {
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: payload.request_id,
+        status: record.status,
+        accepted_at: record.accepted_at,
+        duplicate: true,
+        sequence_import: sequenceImportSummary,
+      },
+      requestRecord: record,
+      sequenceImportSummary,
+    };
+  }
+
+  const acceptedAt = record?.accepted_at || new Date().toISOString();
+  addGeminiHandoffEvent(payload.request_id, "handoff_accepted", "ingress", {
+    accepted_at: acceptedAt,
+  });
+
+  const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
+  const dispatchResult = await dispatchGeminiHandoffRequest(payload);
+
+  if (dispatchResult?.success && dispatchResult.response_payload && typeof dispatchResult.response_payload === "object") {
+    const responseValidation = validateJsonSchema(
+      GEMINI_HANDOFF_RESPONSE_SCHEMA,
+      dispatchResult.response_payload
+    );
+    const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
+
+    if (responseValidation.valid && responseRequestId === String(payload.request_id)) {
+      const updated = completeGeminiHandoffRequest(payload.request_id, dispatchResult.response_payload);
+      addGeminiHandoffEvent(payload.request_id, "handoff_completed", "transport", {
+        response_id: dispatchResult.response_payload.response_id || null,
+        status: updated?.status || "partial",
+      });
+
+      const sequenceImportSummary = persistGeminiResponseSequences(updated);
+
+      return {
+        ok: true,
+        statusCode: 202,
+        body: {
+          contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+          request_id: payload.request_id,
+          status: updated?.status || "partial",
+          accepted_at: acceptedAt,
+          response_id: dispatchResult.response_payload.response_id || null,
+          completed_at: dispatchResult.response_payload.completed_at || null,
+          transport: {
+            attempted: true,
+            success: true,
+            status_code: dispatchResult.status_code,
+          },
+          next_action: "request_completed",
+          sequence_import: sequenceImportSummary,
+        },
+        requestRecord: updated,
+        sequenceImportSummary,
+      };
+    }
+  }
+
+  if (dispatchResult?.attempted && !dispatchResult.success) {
+    const updated = incrementGeminiHandoffRetry(payload.request_id);
+    addGeminiHandoffEvent(payload.request_id, "handoff_retry_requested", "transport", {
+      reason: dispatchResult.error_code || "transport_error",
+      retry_count: updated?.retry_count || 1,
+      fail_open: transportRuntime.fail_open === true,
+    });
+
+    if (!transportRuntime.fail_open) {
+      return {
+        ok: false,
+        statusCode: 502,
+        body: {
+          error: "transport_dispatch_failed",
+          contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+          request_id: payload.request_id,
+          status: updated?.status || "retry_requested",
+          retry_count: updated?.retry_count || 1,
+          transport: {
+            attempted: true,
+            success: false,
+            status_code: dispatchResult.status_code || null,
+            code: dispatchResult.error_code || "transport_error",
+            message: dispatchResult.error_message || "Gemini transport request failed",
+          },
+        },
+        requestRecord: updated,
+        sequenceImportSummary: null,
+      };
+    }
+
+    return {
+      ok: true,
+      statusCode: 202,
+      body: {
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: payload.request_id,
+        status: updated?.status || "retry_requested",
+        accepted_at: acceptedAt,
+        retry_count: updated?.retry_count || 1,
+        transport: {
+          attempted: true,
+          success: false,
+          status_code: dispatchResult.status_code || null,
+          code: dispatchResult.error_code || "transport_error",
+        },
+        next_action: "retry_requested",
+      },
+      requestRecord: updated,
+      sequenceImportSummary: null,
+    };
+  }
+
+  return {
+    ok: true,
+    statusCode: 202,
+    body: {
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: payload.request_id,
+      status: "accepted",
+      accepted_at: acceptedAt,
+      transport: {
+        attempted: !!dispatchResult?.attempted,
+        success: !!dispatchResult?.success,
+        skipped: !!dispatchResult?.skipped,
+        reason: dispatchResult?.reason || null,
+      },
+      next_action: "awaiting_gemini_response",
+    },
+    requestRecord: record,
+    sequenceImportSummary: null,
+  };
+}
+
+function getGeminiWeeklySelectionCandidates({
+  focus = GEMINI_WEEKLY_DEFAULT_FOCUS,
+  limit = GEMINI_WEEKLY_DEFAULT_LIMIT,
+  weekStart,
+  weekEnd,
+}) {
+  const safeLimit = clampGeminiWeeklyLimit(limit, GEMINI_WEEKLY_DEFAULT_LIMIT);
+  const threshold = getTurnoverThreshold();
+  const thresholdMax = getTurnoverMaxThreshold();
+  const turnoverBand = parseShortlistTurnoverBand("all");
+  const sortBy = "priority_score";
+  const sortDir = "desc";
+
+  const allCompanies = getShortlistCompanies({ min_turnover: threshold, max_turnover: thresholdMax });
+  const companies = allCompanies.filter((c) => turnoverMatchesBand(c.latest_turnover, turnoverBand));
+  const companyNumbers = companies.map((c) => c.company_number);
+  const queueRows = getAnalysisQueueItemsByCompanyNumbers(companyNumbers);
+
+  const entries = companies
+    .map((c) => {
+      const ws = getCompanyState(`ch-${c.company_number}`);
+      const segment = guessTurnoverSegment(c.latest_turnover);
+      const stored = getOrBuildMonitorScore(c.company_number);
+      const supp = isSuppressed(`ch-${c.company_number}`, c.company_number);
+      const queue = queueRows[c.company_number] || null;
+      const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
+
+      const analysisStatus = deriveAnalysisStatus(queue, storedAnalysis);
+      const priority = computePriorityBreakdown(c, stored, analysisStatus, segment);
+      const sourceType = deriveShortlistSourceType(c.source, c.latest_filing_date);
+      const sourceFamily = deriveShortlistSourceFamily(sourceType);
+      const filterReason = deriveShortlistFilterReason(c, supp, analysisStatus, sourceType);
+
+      return {
+        id: `ch-${c.company_number}`,
+        company_number: c.company_number,
+        name: formatMonitorName(c.company_name, c.company_number),
+        turnover: c.latest_turnover,
+        latest_filing_date: c.latest_filing_date,
+        segment,
+        combined_score: stored?.composite_score ?? 0,
+        composite_score: stored?.composite_score ?? 0,
+        score: stored,
+        score_tier: scoreTier({ composite_score: stored?.composite_score ?? 0 }),
+        workflow_state: ws.state,
+        source: c.source,
+        source_type: sourceType,
+        source_family: sourceFamily,
+        filter_reason: filterReason,
+        analysis_status: analysisStatus,
+        priority_score: priority.priority_score,
+        priority_reason: priority.reason,
+        suppressed: supp.suppressed,
+      };
+    })
+    .filter((entry) => !entry.suppressed)
+    .sort((a, b) => compareShortlistEntries(a, b, sortBy, sortDir));
+
+  const byWeek = entries.map((entry) => {
+    const filingDate = parseDateToUtc(entry.latest_filing_date);
+    const normalizedFilingDate = filingDate ? new Date(filingDate) : null;
+    if (normalizedFilingDate) {
+      normalizedFilingDate.setHours(0, 0, 0, 0);
+    }
+
+    const isNewThisWeek = normalizedFilingDate
+      ? normalizedFilingDate.getTime() >= weekStart.getTime() && normalizedFilingDate.getTime() <= weekEnd.getTime()
+      : false;
+    const isCarryover = !isNewThisWeek && GEMINI_WEEKLY_CARRYOVER_ACTIVE_STATES.has(entry.workflow_state);
+
+    return {
+      ...entry,
+      is_new_this_week: isNewThisWeek,
+      is_carryover: isCarryover,
+    };
+  });
+
+  const focused = focus === "new"
+    ? byWeek.filter((entry) => entry.is_new_this_week)
+    : focus === "carryover"
+      ? byWeek.filter((entry) => entry.is_carryover)
+      : byWeek;
+
+  const readyOnly = focused.filter((entry) => entry.analysis_status === "ready");
+
+  const enriched = [];
+  for (const entry of readyOnly.slice(0, safeLimit)) {
+    const analysis = getSetting(`analysis_${entry.company_number}`, null);
+    if (!analysis?.key_people || !Array.isArray(analysis.key_people) || analysis.key_people.length < 1) {
+      continue;
+    }
+    const companyContext = {
+      id: entry.id,
+      name: entry.name,
+      company_number: entry.company_number,
+      turnover: entry.turnover,
+      segment: entry.segment,
+    };
+    const scoredStakeholders = scoreAllStakeholders(analysis.key_people, {
+      company: companyContext,
+      analysis,
+      motion: entry.score?.layers?.product_fit?.best_motion || "FX",
+      filingDate: analysis.analysed_at || analysis.scored_at || null,
+    });
+
+    if (!Array.isArray(scoredStakeholders) || scoredStakeholders.length < 1) {
+      continue;
+    }
+
+    enriched.push({
+      ...entry,
+      analysis,
+      stakeholders: scoredStakeholders,
+    });
+  }
+
+  return {
+    focus,
+    limit: safeLimit,
+    candidates_total: entries.length,
+    focused_total: focused.length,
+    ready_total: readyOnly.length,
+    selected_total: enriched.length,
+    entries: enriched,
+  };
+}
+
+async function runGeminiWeeklyHandoff(options = {}) {
+  const weekLabel = normalizeGeminiWeekLabel(options.week_label, new Date());
+  if (!weekLabel) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "invalid_week_label",
+        message: "week_label must be in YYYY-MM-DD format",
+      },
+    };
+  }
+
+  const defaultWeekStartDate = new Date(`${weekLabel}T00:00:00.000Z`);
+  const fallbackWeekStartDate = Number.isNaN(defaultWeekStartDate.getTime()) ? new Date() : defaultWeekStartDate;
+  fallbackWeekStartDate.setUTCHours(0, 0, 0, 0);
+
+  const fallbackWeekEndDate = new Date(fallbackWeekStartDate);
+  fallbackWeekEndDate.setUTCDate(fallbackWeekEndDate.getUTCDate() + 6);
+  fallbackWeekEndDate.setUTCHours(23, 59, 59, 999);
+
+  const weekStart = toGeminiIsoDate(options.week_start) || fallbackWeekStartDate.toISOString();
+  const weekEnd = toGeminiIsoDate(options.week_end) || fallbackWeekEndDate.toISOString();
+  const focus = normalizeGeminiWeeklyFocus(options.focus, GEMINI_WEEKLY_DEFAULT_FOCUS);
+  const limit = clampGeminiWeeklyLimit(options.limit, GEMINI_WEEKLY_DEFAULT_LIMIT);
+  const maxTouches = clampGeminiWeeklyLimit(options.max_touches, GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES);
+  const dryRun = parseGeminiBooleanFlag(options.dry_run, false);
+  const requestPrefix = String(options.request_prefix || "weekly").trim() || "weekly";
+
+  const weekStartDate = new Date(weekStart);
+  const weekEndDate = new Date(weekEnd);
+  if (Number.isNaN(weekStartDate.getTime()) || Number.isNaN(weekEndDate.getTime())) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "invalid_week_window",
+        message: "week_start and week_end must be valid ISO datetimes",
+      },
+    };
+  }
+
+  const selection = getGeminiWeeklySelectionCandidates({
+    focus,
+    limit,
+    weekStart: weekStartDate,
+    weekEnd: weekEndDate,
+  });
+
+  if (selection.entries.length < 1) {
+    return {
+      ok: true,
+      statusCode: 200,
+      body: {
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        week_label: weekLabel,
+        week_start: weekStartDate.toISOString(),
+        week_end: weekEndDate.toISOString(),
+        focus,
+        limit,
+        selected_count: 0,
+        skipped: true,
+        reason: "no_ready_companies_with_stakeholders",
+        selection,
+      },
+    };
+  }
+
+  const requestEnvelope = buildGeminiRequestFromWeeklyEntries({
+    weekLabel,
+    weekStart: weekStartDate.toISOString(),
+    weekEnd: weekEndDate.toISOString(),
+    focus,
+    selectedEntries: selection.entries,
+    maxTouches,
+    requestPrefix,
+  });
+
+  if (requestEnvelope.ranked_count < 1) {
+    return {
+      ok: true,
+      statusCode: 200,
+      body: {
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        week_label: weekLabel,
+        week_start: weekStartDate.toISOString(),
+        week_end: weekEndDate.toISOString(),
+        focus,
+        limit,
+        selected_count: requestEnvelope.selected_count,
+        ranked_count: 0,
+        skipped: true,
+        reason: "ranked_payload_empty",
+        selection,
+      },
+    };
+  }
+
+  if (dryRun) {
+    return {
+      ok: true,
+      statusCode: 200,
+      body: {
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        dry_run: true,
+        week_label: weekLabel,
+        week_start: weekStartDate.toISOString(),
+        week_end: weekEndDate.toISOString(),
+        focus,
+        limit,
+        request_id: requestEnvelope.request_id,
+        selected_count: requestEnvelope.selected_count,
+        ranked_count: requestEnvelope.ranked_count,
+        skipped_missing_stakeholders: requestEnvelope.skipped_missing_stakeholders,
+        payload: requestEnvelope.payload,
+        selection,
+      },
+    };
+  }
+
+  const handoffResult = await processGeminiHandoffRequestPayload(requestEnvelope.payload);
+  return {
+    ...handoffResult,
+    body: {
+      ...(handoffResult.body || {}),
+      week_label: weekLabel,
+      week_start: weekStartDate.toISOString(),
+      week_end: weekEndDate.toISOString(),
+      focus,
+      limit,
+      selected_count: requestEnvelope.selected_count,
+      ranked_count: requestEnvelope.ranked_count,
+      skipped_missing_stakeholders: requestEnvelope.skipped_missing_stakeholders,
+      selection,
+    },
+  };
+}
+
+function summarizeGeminiWeeklyHandoffResult(result = {}) {
+  const body = result?.body && typeof result.body === "object" ? result.body : {};
+  return {
+    ok: result?.ok !== false,
+    status_code: Number(result?.statusCode || 200),
+    request_id: body.request_id || null,
+    status: body.status || null,
+    week_label: body.week_label || null,
+    focus: body.focus || null,
+    limit: Number(body.limit || 0),
+    selected_count: Number(body.selected_count || 0),
+    ranked_count: Number(body.ranked_count || 0),
+    skipped: body.skipped === true,
+    reason: body.reason || null,
+    duplicate: body.duplicate === true,
+    transport: body.transport || null,
+    sequence_import: body.sequence_import || null,
+  };
+}
+
+async function maybeRunGeminiWeeklyHandoffForWeek(weekLabel, options = {}) {
+  if (!GEMINI_WEEKLY_AUTORUN_ENABLED) {
+    return {
+      enabled: false,
+      triggered: false,
+      summary: {
+        skipped: true,
+        reason: "gemini_weekly_autorun_disabled",
+      },
+      result: null,
+    };
+  }
+
+  const result = await runGeminiWeeklyHandoff({
+    week_label: weekLabel,
+    focus: options.focus ?? GEMINI_WEEKLY_DEFAULT_FOCUS,
+    limit: options.limit ?? GEMINI_WEEKLY_DEFAULT_LIMIT,
+    max_touches: options.max_touches ?? GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES,
+    request_prefix: options.request_prefix || "weekly",
+    dry_run: options.dry_run === true,
+  });
+
+  return {
+    enabled: true,
+    triggered: true,
+    summary: summarizeGeminiWeeklyHandoffResult(result),
+    result,
   };
 }
 
@@ -4304,7 +5205,28 @@ app.post("/api/reports/generate", async (_req, res) => {
 
   dbSaveReport(report);
 
-  res.status(201).json({ report_id: report.id, week_label: weekLabel, company_count: snapshot.length });
+  let geminiWeeklyHandoff;
+  try {
+    const autorun = await maybeRunGeminiWeeklyHandoffForWeek(weekLabel, {
+      request_prefix: "weekly",
+    });
+    geminiWeeklyHandoff = autorun.summary;
+  } catch (err) {
+    geminiWeeklyHandoff = {
+      ok: false,
+      status_code: 500,
+      skipped: true,
+      reason: "gemini_weekly_autorun_failed",
+      message: String(err?.message || "unknown_error"),
+    };
+  }
+
+  res.status(201).json({
+    report_id: report.id,
+    week_label: weekLabel,
+    company_count: snapshot.length,
+    gemini_weekly_handoff: geminiWeeklyHandoff,
+  });
 });
 
 // --- Search and Add Companies ---
@@ -6199,121 +7121,42 @@ app.post("/api/dev/gemini/handoff-google-api", async (req, res) => {
 
 app.post("/api/gemini/handoff", async (req, res) => {
   const payload = req.body && typeof req.body === "object" ? req.body : {};
-  const validation = validateJsonSchema(GEMINI_HANDOFF_REQUEST_SCHEMA, payload);
-
-  if (!validation.valid) {
-    return res.status(400).json({
-      error: "invalid_payload",
+  try {
+    const result = await processGeminiHandoffRequestPayload(payload);
+    return res.status(result.statusCode || 200).json(result.body || {});
+  } catch (err) {
+    return res.status(500).json({
+      error: "handoff_processing_failed",
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-      details: formatSchemaErrors(validation.errors),
+      message: String(err?.message || "unknown_error"),
     });
   }
+});
 
-  const { created, record } = createOrGetGeminiHandoffRequest(payload);
-  if (!created && record) {
-    addGeminiHandoffEvent(payload.request_id, "handoff_duplicate", "ingress", {
-      status: record.status,
+app.post("/api/gemini/weekly/handoff", async (req, res) => {
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const query = req.query || {};
+
+  try {
+    const result = await runGeminiWeeklyHandoff({
+      week_label: payload.week_label ?? query.week_label,
+      week_start: payload.week_start ?? query.week_start,
+      week_end: payload.week_end ?? query.week_end,
+      focus: payload.focus ?? query.focus,
+      limit: payload.limit ?? query.limit,
+      max_touches: payload.max_touches ?? query.max_touches,
+      request_prefix: payload.request_prefix ?? query.request_prefix,
+      dry_run: payload.dry_run ?? query.dry_run,
     });
-    return res.status(200).json({
+
+    return res.status(result.statusCode || 200).json(result.body || {});
+  } catch (err) {
+    return res.status(500).json({
+      error: "weekly_handoff_failed",
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-      request_id: payload.request_id,
-      status: record.status,
-      accepted_at: record.accepted_at,
-      duplicate: true,
+      message: String(err?.message || "unknown_error"),
     });
   }
-
-  const acceptedAt = record?.accepted_at || new Date().toISOString();
-  addGeminiHandoffEvent(payload.request_id, "handoff_accepted", "ingress", {
-    accepted_at: acceptedAt,
-  });
-  const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
-  const dispatchResult = await dispatchGeminiHandoffRequest(payload);
-
-  if (dispatchResult?.success && dispatchResult.response_payload && typeof dispatchResult.response_payload === "object") {
-    const responseValidation = validateJsonSchema(
-      GEMINI_HANDOFF_RESPONSE_SCHEMA,
-      dispatchResult.response_payload
-    );
-    const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
-
-    if (responseValidation.valid && responseRequestId === String(payload.request_id)) {
-      const updated = completeGeminiHandoffRequest(payload.request_id, dispatchResult.response_payload);
-      addGeminiHandoffEvent(payload.request_id, "handoff_completed", "transport", {
-        response_id: dispatchResult.response_payload.response_id || null,
-        status: updated?.status || "partial",
-      });
-      return res.status(202).json({
-        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-        request_id: payload.request_id,
-        status: updated?.status || "partial",
-        accepted_at: acceptedAt,
-        response_id: dispatchResult.response_payload.response_id || null,
-        completed_at: dispatchResult.response_payload.completed_at || null,
-        transport: {
-          attempted: true,
-          success: true,
-          status_code: dispatchResult.status_code,
-        },
-        next_action: "request_completed",
-      });
-    }
-  }
-
-  if (dispatchResult?.attempted && !dispatchResult.success) {
-    const updated = incrementGeminiHandoffRetry(payload.request_id);
-    addGeminiHandoffEvent(payload.request_id, "handoff_retry_requested", "transport", {
-      reason: dispatchResult.error_code || "transport_error",
-      retry_count: updated?.retry_count || 1,
-      fail_open: transportRuntime.fail_open === true,
-    });
-
-    if (!transportRuntime.fail_open) {
-      return res.status(502).json({
-        error: "transport_dispatch_failed",
-        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-        request_id: payload.request_id,
-        status: updated?.status || "retry_requested",
-        retry_count: updated?.retry_count || 1,
-        transport: {
-          attempted: true,
-          success: false,
-          status_code: dispatchResult.status_code || null,
-          code: dispatchResult.error_code || "transport_error",
-          message: dispatchResult.error_message || "Gemini transport request failed",
-        },
-      });
-    }
-
-    return res.status(202).json({
-      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-      request_id: payload.request_id,
-      status: updated?.status || "retry_requested",
-      accepted_at: acceptedAt,
-      retry_count: updated?.retry_count || 1,
-      transport: {
-        attempted: true,
-        success: false,
-        status_code: dispatchResult.status_code || null,
-        code: dispatchResult.error_code || "transport_error",
-      },
-      next_action: "retry_requested",
-    });
-  }
-
-  return res.status(202).json({
-    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
-    request_id: payload.request_id,
-    status: "accepted",
-    accepted_at: acceptedAt,
-    transport: {
-      attempted: !!dispatchResult?.attempted,
-      success: !!dispatchResult?.success,
-      skipped: !!dispatchResult?.skipped,
-      reason: dispatchResult?.reason || null,
-    },
-    next_action: "awaiting_gemini_response",
-  });
 });
 
 app.get("/api/gemini/handoff", (req, res) => {
@@ -7231,6 +8074,16 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     addGeminiHandoffEvent(requestId, "completion_duplicate", "callback", {
       response_id: getStoredGeminiResponseId(record),
     });
+    const sequenceImportSummary = record.response && typeof record.response === "object"
+      ? persistGeminiResponseSequences(record)
+      : null;
+    if (sequenceImportSummary) {
+      addGeminiHandoffEvent(requestId, "local_sequences_synced", "callback", {
+        imported_sequences: Number(sequenceImportSummary.imported || 0),
+        skipped_sequences: Number(sequenceImportSummary.skipped || 0),
+        duplicate_response: true,
+      });
+    }
     return res.status(200).json({
       contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
       request_id: requestId,
@@ -7238,6 +8091,7 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
       response_id: getStoredGeminiResponseId(record),
       response_payload_sha256: record.response_payload_sha256 || null,
       completed_at: record.completed_at || record.response?.completed_at || null,
+      sequence_import: sequenceImportSummary,
       duplicate: true,
     });
   }
@@ -7261,6 +8115,12 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     response_id: payload.response_id || null,
     status: updated?.status || "partial",
   });
+  const sequenceImportSummary = persistGeminiResponseSequences(updated);
+  addGeminiHandoffEvent(requestId, "local_sequences_synced", "callback", {
+    imported_sequences: Number(sequenceImportSummary.imported || 0),
+    skipped_sequences: Number(sequenceImportSummary.skipped || 0),
+    duplicate_response: false,
+  });
 
   return res.json({
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -7269,6 +8129,7 @@ app.post("/api/gemini/handoff/:requestId/complete", (req, res) => {
     response_id: payload.response_id,
     response_payload_sha256: updated?.response_payload_sha256 || null,
     completed_at: payload.completed_at,
+    sequence_import: sequenceImportSummary,
     duplicate: false,
   });
 });
@@ -7361,10 +8222,13 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
               ? record.response
               : dispatchResult.response_payload
           );
+          const sequenceImportSummary = persistGeminiResponseSequences(restored);
 
           addGeminiHandoffEvent(requestId, "retry_duplicate_response", "transport", {
             response_id: getStoredGeminiResponseId(restored),
             retry_count: restored?.retry_count || updated?.retry_count || 1,
+            imported_sequences: Number(sequenceImportSummary.imported || 0),
+            skipped_sequences: Number(sequenceImportSummary.skipped || 0),
           });
           return res.status(202).json({
             contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -7378,6 +8242,7 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
               success: true,
               status_code: dispatchResult.status_code,
             },
+            sequence_import: sequenceImportSummary,
             next_action: "request_completed",
             duplicate: true,
           });
@@ -7405,9 +8270,12 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
         }
 
         const completed = completeGeminiHandoffRequest(requestId, dispatchResult.response_payload);
+        const sequenceImportSummary = persistGeminiResponseSequences(completed);
         addGeminiHandoffEvent(requestId, "retry_completed", "transport", {
           response_id: dispatchResult.response_payload.response_id || null,
           retry_count: completed?.retry_count || updated?.retry_count || 1,
+          imported_sequences: Number(sequenceImportSummary.imported || 0),
+          skipped_sequences: Number(sequenceImportSummary.skipped || 0),
         });
         return res.status(202).json({
           contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -7421,6 +8289,7 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
             success: true,
             status_code: dispatchResult.status_code,
           },
+          sequence_import: sequenceImportSummary,
           next_action: "request_completed",
           duplicate: false,
         });
@@ -9766,9 +10635,28 @@ async function generateAndSaveWeeklyReport() {
     const now = new Date();
     const weekLabel = getWeekLabel(now);
 
+    const runGeminiWeeklyAutorun = async (originLabel) => {
+      try {
+        const autorun = await maybeRunGeminiWeeklyHandoffForWeek(weekLabel, {
+          request_prefix: "weekly",
+        });
+        const summary = autorun.summary || {};
+        if (summary.skipped) {
+          console.log(`[gemini-weekly] ${originLabel}: skipped (${summary.reason || "no_reason"})`);
+          return;
+        }
+        console.log(
+          `[gemini-weekly] ${originLabel}: request=${summary.request_id || "n/a"}, status=${summary.status || "unknown"}, selected=${summary.selected_count || 0}, ranked=${summary.ranked_count || 0}, imported=${Number(summary.sequence_import?.imported || 0)}, skipped=${Number(summary.sequence_import?.skipped || 0)}`
+        );
+      } catch (err) {
+        console.error(`[gemini-weekly] ${originLabel} failed:`, String(err?.message || "unknown_error"));
+      }
+    };
+
     const existing = getReportByWeek(weekLabel);
     if (existing) {
       console.log(`Weekly report for ${weekLabel} already exists, skipping.`);
+      await runGeminiWeeklyAutorun("existing_report");
       return;
     }
 
@@ -9783,6 +10671,7 @@ async function generateAndSaveWeeklyReport() {
 
     dbSaveReport(report);
     console.log(`Weekly report generated: ${report.id} (${snapshot.length} companies)`);
+    await runGeminiWeeklyAutorun("new_report");
   } catch (err) {
     console.error("Failed to auto-generate weekly report:", err.message);
   }
