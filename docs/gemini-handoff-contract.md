@@ -20,11 +20,12 @@ Design goals:
 ## High-Level Flow
 
 1. App computes ranked companies and stakeholder targets.
-2. App sends `handoff_request` payload to Gemini.
+2. App can either send a direct `handoff_request` payload, or call the weekly orchestrator endpoint to build one from shortlist candidates.
 3. Gemini returns draft sequence content and YAMM rows.
-4. Gemini writes rows to Google Sheet tab.
-5. Human reviews and marks rows approved in Sheet.
-6. Approved rows become send-eligible for YAMM.
+4. App persists generated drafts locally so existing approval and YAMM export flows continue to work.
+5. Gemini (or callback path) writes/returns rows for the Google Sheet tab.
+6. Human reviews and marks rows approved in Sheet.
+7. Approved rows become send-eligible for YAMM.
 
 ## Request Schema (App -> Gemini)
 
@@ -164,6 +165,78 @@ Design goals:
 }
 ```
 
+## Weekly Orchestration Endpoint (App-local)
+
+`POST /api/gemini/weekly/handoff`
+
+Purpose:
+
+1. Select weekly candidates from shortlist state.
+2. Build a contract-compliant handoff payload.
+3. Optionally dry-run payload generation without dispatch.
+4. Dispatch to the same Gemini handoff processor used by `POST /api/gemini/handoff`.
+
+Accepted inputs (body or query params):
+
+- `week_label` (`YYYY-MM-DD`, Monday label)
+- `week_start` (ISO datetime, optional override)
+- `week_end` (ISO datetime, optional override)
+- `focus` (`all|new|carryover`)
+- `limit` (candidate cap)
+- `max_touches` (campaign max touches)
+- `request_prefix` (request id prefix, default `weekly`)
+- `dry_run` (`true|false`)
+
+Response behavior:
+
+1. Returns `200` + `skipped: true` with reason when no eligible ready companies are found.
+2. Returns `200` + `dry_run: true` and generated payload preview when `dry_run=true`.
+3. Returns `202` when a new handoff request is accepted/processed.
+4. Returns `200` + `duplicate: true` when the deterministic weekly `request_id` already exists.
+
+Important fields included in weekly responses:
+
+- `week_label`, `week_start`, `week_end`
+- `focus`, `limit`
+- `selected_count`, `ranked_count`, `skipped_missing_stakeholders`
+- `selection` (candidate-selection debug context)
+- `sequence_import` (when response payload already exists and local drafts are synced)
+
+## Weekly Report Integration
+
+`POST /api/reports/generate` returns a weekly Gemini autorun summary under `gemini_weekly_handoff`.
+
+Success response shape includes:
+
+```json
+{
+  "report_id": "report-2026-06-29",
+  "week_label": "2026-06-29",
+  "company_count": 27,
+  "gemini_weekly_handoff": {
+    "ok": true,
+    "status_code": 202,
+    "request_id": "weekly_req_20260629_all",
+    "status": "accepted",
+    "week_label": "2026-06-29",
+    "focus": "all",
+    "limit": 20,
+    "selected_count": 20,
+    "ranked_count": 20,
+    "skipped": false,
+    "reason": null,
+    "duplicate": false,
+    "transport": { "attempted": true, "success": true, "skipped": false, "reason": null },
+    "sequence_import": { "imported": 20, "skipped": 0 }
+  }
+}
+```
+
+Failure-safe behavior:
+
+1. Report generation still returns `201` even if weekly autorun throws.
+2. In that case `gemini_weekly_handoff` is populated with `ok: false`, `skipped: true`, and `reason: "gemini_weekly_autorun_failed"`.
+
 ## Required YAMM/Sheet Columns
 
 Minimum required columns for interoperability:
@@ -265,6 +338,7 @@ Rules:
 7. Repeating completion with the same `response_id` but different payload content is rejected as `response_payload_mismatch`.
 8. Retries are bounded by `GEMINI_HANDOFF_MAX_RETRY_COUNT` (default `5`); additional retries are rejected as `retry_limit_reached`.
 9. Approval sync can use `expected_revision` for optimistic concurrency; stale revisions are rejected as `approval_sync_conflict`.
+10. Weekly orchestration uses deterministic request ids (`request_prefix + week + focus`) so repeated calls for the same weekly slice are idempotent.
 
 ## Security and Compliance
 
@@ -277,9 +351,11 @@ Rules:
 ## Suggested API Endpoints
 
 - `POST /api/gemini/handoff`
+- `POST /api/gemini/weekly/handoff`
 - `GET /api/gemini/handoff` (supports `status`, `has_response`, `has_retries`, `has_approvals`, `has_events`, `has_completed`, `has_completed_at`, `has_last_retry_requested`, `before_accepted_at`, `after_accepted_at`, `before_updated_at`, `after_updated_at`, `before_completed_at`, `after_completed_at`, `after_last_retry_requested_at`, `before_last_retry_requested_at`, `min_retry_count`, `max_retry_count`, `retry_count`, `min_event_count`, `max_event_count`, `event_count`, `min_approval_count`, `max_approval_count`, `approval_count`, `sort`, `limit`, `offset`, `include_yamm_summary`, `include_status_counts`, `include_retry_counts`, `include_queue_metrics` query params)
 - `GET /api/gemini/handoff/summary` (supports `recent_hours`, `include_recent_status_counts`, `include_recent_retry_counts`, `include_recent_approval_counts`, `include_recent_event_stage_counts`, `include_recent_event_volume_counts`, `include_recent_event_type_share`, `include_recent_event_request_outliers`, `include_recent_callback_latency_percentiles_by_status`, `include_recent_callback_aging_bands`, `include_recent_callback_payload_quality_counts`, `include_recent_callback_schema_presence_counts`, `include_recent_callback_payload_consistency_counts`, `include_recent_yamm_row_readiness_counts`, `include_recent_yamm_row_gap_counts`, `include_recent_yamm_row_stuck_counts`, `include_recent_transport_dispatch_counts`, `include_recent_transport_error_code_counts`, `include_recent_transport_outcome_counts`, `include_queue_backlog_counts`, `include_queue_throughput_counts`, `include_queue_latency_counts`, `include_approval_sync_health_counts`, `include_approval_sync_conflict_counts`, `include_approval_revision_distribution` query params)
 - `GET /api/gemini/handoff/:requestId`
+- `POST /api/gemini/handoff/:requestId/complete`
 - `GET /api/gemini/handoff/:requestId/yamm-rows` (optional `approval_status` query param, `format=json|csv`, `send_eligible=true|false`)
 - `GET /api/gemini/handoff/:requestId/yamm-rows/summary`
 - `GET /api/gemini/handoff/:requestId/events` (supports `limit`, `before_id`, `event_type`, `event_stage` query params)

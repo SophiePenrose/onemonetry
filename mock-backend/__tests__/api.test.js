@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "path";
 import { fileURLToPath } from "url";
+import Database from "better-sqlite3";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_PORT = Number.parseInt(process.env.API_TEST_PORT || "", 10)
@@ -885,6 +886,67 @@ describe("API endpoints", () => {
   });
 
   describe("Gemini handoff API stubs", () => {
+    async function seedWeeklyReadyCompany() {
+      const timestampToken = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+      const companyNumber = `91${timestampToken.slice(-6)}`;
+      const companyName = `Gemini Weekly Seed ${timestampToken.slice(-4)}`;
+
+      const db = new Database(testDatabasePath);
+      db.prepare(`
+        INSERT INTO company_monitor (
+          company_number,
+          company_name,
+          latest_turnover,
+          status,
+          source,
+          updated_at,
+          created_at
+        )
+        VALUES (?, ?, ?, 'active', 'api_test_weekly', datetime('now'), datetime('now'))
+        ON CONFLICT(company_number) DO UPDATE SET
+          company_name = excluded.company_name,
+          latest_turnover = excluded.latest_turnover,
+          status = 'active',
+          source = excluded.source,
+          updated_at = datetime('now')
+      `).run(companyNumber, companyName, 55_000_000);
+
+      db.prepare(`
+        INSERT INTO company_filings (
+          company_number,
+          filing_date,
+          description,
+          filing_type,
+          barcode,
+          turnover,
+          source,
+          source_file,
+          raw_data
+        )
+        VALUES (?, date('now'), 'accounts made up', 'AA', ?, ?, 'api_test_weekly', 'fixture', '{}')
+        ON CONFLICT(company_number, barcode) DO UPDATE SET
+          filing_date = excluded.filing_date,
+          turnover = excluded.turnover
+      `).run(companyNumber, `fixture-${companyNumber}`, 55_000_000);
+
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      ).run(`analysis_${companyNumber}`, JSON.stringify({
+        analysed_at: new Date().toISOString(),
+        scored_at: new Date().toISOString(),
+        key_people: [
+          {
+            name: "Morgan Lee",
+            role: "Finance Director",
+            confidence: "high",
+          },
+        ],
+      }));
+      db.close();
+
+      return companyNumber;
+    }
+
     it("accepts a valid handoff payload and returns status", async () => {
       const payload = buildGeminiHandoffRequestPayload({
         request_id: "req_api_test_accepted_001",
@@ -2397,6 +2459,97 @@ describe("API endpoints", () => {
       const invalidBefore = await fetchJSON(`/api/gemini/handoff/${requestId}/events?before_id=abc`);
       assert.equal(invalidBefore.status, 400);
       assert.equal(invalidBefore.data.error, "invalid_before_id");
+    });
+
+    it("returns no-candidate summary for weekly handoff when nothing is eligible", async () => {
+      const weekly = await fetchJSON("/api/gemini/weekly/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_label: "2099-12-28",
+          focus: "new",
+          limit: 20,
+        }),
+      });
+
+      assert.equal(weekly.status, 200);
+      assert.equal(weekly.data.week_label, "2099-12-28");
+      assert.equal(weekly.data.skipped, true);
+      assert.equal(weekly.data.reason, "no_ready_companies_with_stakeholders");
+      assert.equal(weekly.data.selected_count, 0);
+    });
+
+    it("supports weekly handoff dry-run payload previews", async () => {
+      await seedWeeklyReadyCompany();
+
+      const weekLabel = new Date().toISOString().slice(0, 10);
+      const weekly = await fetchJSON("/api/gemini/weekly/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_label: weekLabel,
+          focus: "all",
+          limit: 1,
+          request_prefix: `api_weekly_dry_run_${Date.now()}`,
+          dry_run: true,
+        }),
+      });
+
+      assert.equal(weekly.status, 200);
+      assert.equal(weekly.data.contract_version, "gemini-handoff-v1");
+      assert.equal(weekly.data.dry_run, true);
+      assert.equal(typeof weekly.data.request_id, "string");
+      assert.equal(weekly.data.request_id.length > 0, true);
+      assert.equal(Number(weekly.data.ranked_count) >= 1, true);
+      assert.ok(Array.isArray(weekly.data.payload?.ranked_companies));
+      assert.equal(weekly.data.payload.ranked_companies.length >= 1, true);
+    });
+
+    it("treats duplicate weekly handoff requests as idempotent", async () => {
+      await seedWeeklyReadyCompany();
+
+      const weekLabel = new Date().toISOString().slice(0, 10);
+      const requestPrefix = `api_weekly_duplicate_${Date.now()}`;
+      const payload = {
+        week_label: weekLabel,
+        focus: "all",
+        limit: 1,
+        request_prefix: requestPrefix,
+      };
+
+      const first = await fetchJSON("/api/gemini/weekly/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(first.status, 202);
+      assert.equal(typeof first.data.request_id, "string");
+      assert.equal(first.data.request_id.length > 0, true);
+
+      const second = await fetchJSON("/api/gemini/weekly/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(second.status, 200);
+      assert.equal(second.data.duplicate, true);
+      assert.equal(second.data.request_id, first.data.request_id);
+    });
+  });
+
+  describe("POST /api/reports/generate", () => {
+    it("includes gemini weekly handoff summary in generation response", async () => {
+      const generated = await fetchJSON("/api/reports/generate", {
+        method: "POST",
+      });
+
+      assert.equal(generated.status, 201);
+      assert.equal(typeof generated.data.report_id, "string");
+      assert.equal(typeof generated.data.week_label, "string");
+      assert.equal(typeof generated.data.company_count, "number");
+      assert.equal(typeof generated.data.gemini_weekly_handoff, "object");
+      assert.equal(typeof generated.data.gemini_weekly_handoff.status_code, "number");
+      assert.equal(typeof generated.data.gemini_weekly_handoff.skipped, "boolean");
     });
   });
 

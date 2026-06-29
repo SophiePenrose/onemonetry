@@ -695,13 +695,23 @@ export function saveGeneratedSequence(params) {
     motion,
     steps,
     sequenceStatus,
+    preserveSubject,
   } = params;
 
   const fixedSubject = companyName ? buildResearchHeaderSubject(companyName) : null;
-  const normalizedSteps = normalizeSteps(steps, { companyName, stakeholderName }).map((step) => ({
-    ...step,
-    subject: fixedSubject || step.subject,
-  }));
+  const normalizedSteps = normalizeSteps(steps, { companyName, stakeholderName }).map((step) => {
+    if (preserveSubject === true) {
+      return {
+        ...step,
+        subject: String(step.subject || "").trim() || fixedSubject || `Step ${step.step_number}`,
+      };
+    }
+
+    return {
+      ...step,
+      subject: fixedSubject || step.subject,
+    };
+  });
   const qcSteps = normalizedSteps.map((step) => {
     const qcResult = validateEmail(
       {
@@ -812,7 +822,6 @@ export function generateSequence(params) {
   });
 
   const sequenceId = `seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const fixedSubject = buildResearchHeaderSubject(companyName || "Company");
 
   return saveGeneratedSequence({
     id: sequenceId,
