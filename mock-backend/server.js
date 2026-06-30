@@ -313,6 +313,10 @@ const parsedGeminiHandoffDefaultMaxTouches = Number.parseInt(String(process.env.
 const GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES = Number.isFinite(parsedGeminiHandoffDefaultMaxTouches)
   ? Math.max(1, Math.min(parsedGeminiHandoffDefaultMaxTouches, 12))
   : 6;
+const parsedGeminiHandoffMaxStakeholders = Number.parseInt(String(process.env.GEMINI_HANDOFF_MAX_STAKEHOLDERS || "3"), 10);
+const GEMINI_HANDOFF_MAX_STAKEHOLDERS = Number.isFinite(parsedGeminiHandoffMaxStakeholders)
+  ? Math.max(1, Math.min(parsedGeminiHandoffMaxStakeholders, 6))
+  : 3;
 const DEFAULT_GEMINI_GEM_INSTRUCTIONS_PATH = path.join(REPO_ROOT, "prompts", "gemini-gem-instructions.txt");
 const configuredGemInstructionsPath = String(
   process.env.GEMINI_GEM_INSTRUCTIONS_PATH || DEFAULT_GEMINI_GEM_INSTRUCTIONS_PATH
@@ -1320,8 +1324,8 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
 
   for (let index = 0; index < rankedCompanies.length; index += 1) {
     const company = rankedCompanies[index];
-    const stakeholders = Array.isArray(company?.stakeholders) ? company.stakeholders : [];
-    const stakeholder = stakeholders[0] || null;
+    const stakeholders = normalizeGeminiRequestStakeholders(company?.stakeholders, company?.company_number);
+    const stakeholder = selectPrimaryGeminiStakeholder(stakeholders);
     if (!stakeholder) {
       errors.push({
         code: "missing_stakeholder",
@@ -1353,6 +1357,12 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
     const sequenceId = `seq_${companyNumber}_${personId}`;
     const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
     const priorityBand = String(company?.priority_band || "").trim() || null;
+    const firstName = extractStakeholderFirstName(stakeholder?.full_name);
+    const relevantIndividualsList = buildGeminiRelevantIndividualsList(stakeholders);
+    const relevantIndividualsSummary = buildGeminiRelevantIndividualsSummary(stakeholders);
+    const relevantIndividualsJson = relevantIndividualsList.length > 0
+      ? JSON.stringify(relevantIndividualsList)
+      : null;
 
     const steps = [];
     const yammRows = [];
@@ -1406,13 +1416,23 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
       steps.push(stepRecord);
       yammRows.push({
         To: String(stakeholder?.email || ""),
+        FirstName: firstName !== "there" ? firstName : "",
         Subject: stepRecord.subject,
         Body: stepRecord.body,
         Company: companyName,
         CompanyNumber: companyNumber,
+        Stakeholder: String(stakeholder?.full_name || ""),
+        StakeholderFullName: String(stakeholder?.full_name || ""),
+        StakeholderRole: String(stakeholder?.role || ""),
+        StakeholderEmailStatus: String(stakeholder?.email_status || ""),
+        StakeholderConfidence: String(stakeholder?.confidence || ""),
+        StakeholderPersonaBucket: String(stakeholder?.persona_bucket || ""),
+        RelevantIndividuals: relevantIndividualsSummary || null,
+        RelevantIndividualsJSON: relevantIndividualsJson,
         PriorityRank: rank,
         PriorityBand: priorityBand,
         SequenceId: sequenceId,
+        PersonId: personId,
         StepNumber: stepRecord.step_number,
         StepType: stepRecord.step_type,
         DayOffset: stepRecord.day_offset,
@@ -1484,8 +1504,8 @@ function buildDevGeminiHandoffResponse(payload) {
 
   const sequenceOutputs = rankedCompanies
     .map((company, index) => {
-      const stakeholders = Array.isArray(company?.stakeholders) ? company.stakeholders : [];
-      const stakeholder = stakeholders[0] || null;
+      const stakeholders = normalizeGeminiRequestStakeholders(company?.stakeholders, company?.company_number);
+      const stakeholder = selectPrimaryGeminiStakeholder(stakeholders);
       if (!stakeholder) return null;
 
       const companyNumber = String(company?.company_number || "").trim();
@@ -1497,6 +1517,11 @@ function buildDevGeminiHandoffResponse(payload) {
       const sequenceId = `seq_${companyNumber}_${personId}`;
       const priorityRank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
       const priorityBand = String(company?.priority_band || "").trim() || null;
+      const relevantIndividualsList = buildGeminiRelevantIndividualsList(stakeholders);
+      const relevantIndividualsSummary = buildGeminiRelevantIndividualsSummary(stakeholders);
+      const relevantIndividualsJson = relevantIndividualsList.length > 0
+        ? JSON.stringify(relevantIndividualsList)
+        : null;
 
       const steps = stepPlan.map((step) => {
         const stepLabel = slugToTitle(step.step_type);
@@ -1532,13 +1557,23 @@ function buildDevGeminiHandoffResponse(payload) {
 
       const yammRows = steps.map((step) => ({
         To: String(stakeholder?.email || ""),
+        FirstName: firstName !== "there" ? firstName : "",
         Subject: step.subject,
         Body: step.body,
         Company: companyName,
         CompanyNumber: companyNumber,
+        Stakeholder: String(stakeholder?.full_name || ""),
+        StakeholderFullName: String(stakeholder?.full_name || ""),
+        StakeholderRole: String(stakeholder?.role || ""),
+        StakeholderEmailStatus: String(stakeholder?.email_status || ""),
+        StakeholderConfidence: String(stakeholder?.confidence || ""),
+        StakeholderPersonaBucket: String(stakeholder?.persona_bucket || ""),
+        RelevantIndividuals: relevantIndividualsSummary || null,
+        RelevantIndividualsJSON: relevantIndividualsJson,
         PriorityRank: priorityRank,
         PriorityBand: priorityBand,
         SequenceId: sequenceId,
+        PersonId: personId,
         StepNumber: step.step_number,
         StepType: step.step_type,
         DayOffset: step.day_offset,
@@ -1636,11 +1671,12 @@ function overlayGeminiYammRowApprovals(rows = [], approvalRows = []) {
   });
 }
 
-function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
+function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestPayload = {}) {
   const requestId = String(responsePayload?.request_id || "").trim() || null;
   const responseId = String(responsePayload?.response_id || "").trim() || null;
   const contractVersion = String(responsePayload?.contract_version || GEMINI_HANDOFF_CONTRACT_VERSION).trim();
   const outputs = Array.isArray(responsePayload?.sequence_outputs) ? responsePayload.sequence_outputs : [];
+  const stakeholderLookup = buildGeminiRequestStakeholderLookup(requestPayload);
 
   const flattened = [];
   for (const output of outputs) {
@@ -1658,6 +1694,25 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
       const approvalStatus = String(row.ApprovalStatus ?? row.approval_status ?? "").trim().toLowerCase() || null;
       const stepNumber = parseGeminiRowStepNumber(row.StepNumber ?? row.step_number);
       const stepDetails = stepNumber ? stepsByNumber.get(stepNumber) : null;
+      const resolvedCompanyNumber = normalizeCompanyNumber(row.CompanyNumber ?? output?.company_number);
+      const resolvedPersonId = String(row.PersonId ?? output?.person_id ?? "").trim() || null;
+      const stakeholderContext = resolveGeminiStakeholderContext(stakeholderLookup, resolvedCompanyNumber, resolvedPersonId);
+      const primaryStakeholder = stakeholderContext.primary;
+      const relevantIndividualsList = buildGeminiRelevantIndividualsList(stakeholderContext.all);
+      const relevantIndividualsSummary = buildGeminiRelevantIndividualsSummary(stakeholderContext.all);
+      const relevantIndividualsJson = relevantIndividualsList.length > 0
+        ? JSON.stringify(relevantIndividualsList)
+        : null;
+      const derivedFirstName = primaryStakeholder
+        ? extractStakeholderFirstName(primaryStakeholder.full_name)
+        : "there";
+      const normalizedFirstName = derivedFirstName !== "there" ? derivedFirstName : "";
+      const toAddress = String(row.To || "").trim();
+      const stakeholderName = String(row.Stakeholder || "").trim() || String(primaryStakeholder?.full_name || "").trim() || null;
+      const stakeholderRole = String(row.StakeholderRole || "").trim() || String(primaryStakeholder?.role || "").trim() || null;
+      const stakeholderEmailStatus = String(row.StakeholderEmailStatus || "").trim() || String(primaryStakeholder?.email_status || "").trim() || null;
+      const stakeholderConfidence = String(row.StakeholderConfidence || "").trim() || String(primaryStakeholder?.confidence || "").trim() || null;
+      const stakeholderPersonaBucket = String(row.StakeholderPersonaBucket || "").trim() || String(primaryStakeholder?.persona_bucket || "").trim() || null;
       const rawCompanyName = String(row.Company ?? output?.company_name ?? "").trim();
       const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName) || rawCompanyName || null;
       const companyNameReview = evaluateGeminiCompanyNameReview(rawCompanyName);
@@ -1671,6 +1726,16 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
       });
       flattened.push({
         ...row,
+        To: toAddress,
+        FirstName: String(row.FirstName || "").trim() || normalizedFirstName,
+        Stakeholder: stakeholderName,
+        StakeholderFullName: String(row.StakeholderFullName || "").trim() || stakeholderName,
+        StakeholderRole: stakeholderRole,
+        StakeholderEmailStatus: stakeholderEmailStatus,
+        StakeholderConfidence: stakeholderConfidence,
+        StakeholderPersonaBucket: stakeholderPersonaBucket,
+        RelevantIndividuals: row.RelevantIndividuals ?? (relevantIndividualsSummary || null),
+        RelevantIndividualsJSON: row.RelevantIndividualsJSON ?? relevantIndividualsJson,
         Subject: normalizedSubject || String(row.Subject ?? ""),
         Body: normalizedBody || String(row.Body ?? ""),
         Company: normalizedCompanyName,
@@ -1680,8 +1745,8 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
         ResponseId: row.ResponseId ?? responseId,
         ContractVersion: row.ContractVersion ?? contractVersion,
         SequenceId: row.SequenceId ?? output?.sequence_id ?? null,
-        CompanyNumber: row.CompanyNumber ?? output?.company_number ?? null,
-        PersonId: row.PersonId ?? output?.person_id ?? null,
+        CompanyNumber: row.CompanyNumber ?? output?.company_number ?? stakeholderContext.company_number ?? null,
+        PersonId: row.PersonId ?? output?.person_id ?? primaryStakeholder?.person_id ?? null,
         StepNumber: stepNumber ?? parseGeminiRowStepNumber(row.StepNumber),
         StepType: row.StepType ?? row.step_type ?? stepDetails?.step_type ?? null,
         DayOffset: row.DayOffset ?? row.day_offset ?? stepDetails?.day_offset ?? 0,
@@ -1728,6 +1793,15 @@ function buildGeminiYammRowsCsv(rows = []) {
     "RequestId",
     "ResponseId",
     "ContractVersion",
+    "FirstName",
+    "Stakeholder",
+    "StakeholderFullName",
+    "StakeholderRole",
+    "StakeholderEmailStatus",
+    "StakeholderConfidence",
+    "StakeholderPersonaBucket",
+    "RelevantIndividuals",
+    "RelevantIndividualsJSON",
     "CompanyNameNeedsReview",
     "CompanyNameReviewReason",
     "QCScore",
@@ -1899,6 +1973,10 @@ function extractGeminiRequestInsights(entry = {}) {
 
 function normalizeGeminiPersonaBucket(value) {
   const role = String(value || "").trim().toLowerCase();
+  const canonicalBucket = role.replace(/[-\s]+/g, "_");
+  if (["finance_director", "treasury_lead", "executive_sponsor", "operations_lead", "finance_operator"].includes(canonicalBucket)) {
+    return canonicalBucket;
+  }
   if (!role) return "finance_operator";
   if (role.includes("cfo") || role.includes("chief financial") || role.includes("finance director")) {
     return "finance_director";
@@ -1987,6 +2065,142 @@ function buildGeminiStakeholderFromScored(entry, scoredStakeholder, rank) {
   };
 }
 
+function dedupeGeminiStakeholders(stakeholders = []) {
+  const seen = new Set();
+  const deduped = [];
+
+  for (const stakeholder of stakeholders || []) {
+    if (!stakeholder || typeof stakeholder !== "object") continue;
+    const personId = String(stakeholder.person_id || "").trim();
+    const fullName = String(stakeholder.full_name || "").trim().toLowerCase();
+    const role = String(stakeholder.role || "").trim().toLowerCase();
+    const dedupeKey = personId || `${fullName}::${role}`;
+    if (!dedupeKey || seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    deduped.push(stakeholder);
+  }
+
+  return deduped;
+}
+
+function normalizeGeminiRequestStakeholders(stakeholders = [], fallbackCompanyNumber = "") {
+  const fallbackCompanySeed = normalizeCompanyNumber(fallbackCompanyNumber) || "company";
+  const normalized = [];
+
+  for (const [index, rawStakeholder] of (Array.isArray(stakeholders) ? stakeholders : []).entries()) {
+    if (!rawStakeholder || typeof rawStakeholder !== "object") continue;
+
+    const rawName = String(rawStakeholder.full_name || rawStakeholder.name || "").trim();
+    const normalizedName = normalizeGeminiStakeholderName(rawName);
+    const role = String(rawStakeholder.role || "Finance stakeholder").trim() || "Finance stakeholder";
+    const rawPersonId = String(rawStakeholder.person_id || "").trim();
+    const seed = normalizedName !== "there" ? normalizedName : (role || `stakeholder_${index + 1}`);
+    const personId = rawPersonId || `st_${fallbackCompanySeed}_${seed}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 64)
+      || `st_${fallbackCompanySeed}_${index + 1}`;
+    const email = String(rawStakeholder.email || "").trim();
+    const emailStatus = String(rawStakeholder.email_status || (email ? "provided" : "missing"))
+      .trim()
+      .toLowerCase() || (email ? "provided" : "missing");
+    const confidence = String(rawStakeholder.confidence || "medium").trim().toLowerCase() || "medium";
+    const personaBucket = normalizeGeminiPersonaBucket(rawStakeholder.persona_bucket || role);
+
+    normalized.push({
+      person_id: personId,
+      full_name: normalizedName,
+      role,
+      email,
+      email_status: emailStatus,
+      persona_bucket: personaBucket,
+      confidence,
+    });
+  }
+
+  return dedupeGeminiStakeholders(normalized);
+}
+
+function selectPrimaryGeminiStakeholder(stakeholders = []) {
+  const rows = Array.isArray(stakeholders) ? stakeholders : [];
+  const withEmail = rows.find((stakeholder) => String(stakeholder?.email || "").trim().length > 0);
+  return withEmail || rows[0] || null;
+}
+
+function buildGeminiRelevantIndividualsList(stakeholders = []) {
+  return (Array.isArray(stakeholders) ? stakeholders : [])
+    .map((stakeholder) => ({
+      person_id: String(stakeholder?.person_id || "").trim() || null,
+      full_name: String(stakeholder?.full_name || "").trim() || null,
+      role: String(stakeholder?.role || "").trim() || null,
+      email: String(stakeholder?.email || "").trim() || null,
+      email_status: String(stakeholder?.email_status || "").trim() || null,
+      confidence: String(stakeholder?.confidence || "").trim() || null,
+      persona_bucket: String(stakeholder?.persona_bucket || "").trim() || null,
+    }))
+    .filter((entry) => entry.full_name || entry.role || entry.email || entry.person_id)
+    .slice(0, 10);
+}
+
+function buildGeminiRelevantIndividualsSummary(stakeholders = []) {
+  const rows = buildGeminiRelevantIndividualsList(stakeholders);
+  return rows
+    .map((entry) => {
+      const name = entry.full_name || "Unknown";
+      const roleSuffix = entry.role ? ` (${entry.role})` : "";
+      const emailStatusSuffix = entry.email_status ? ` [${entry.email_status}]` : "";
+      return `${name}${roleSuffix}${emailStatusSuffix}`;
+    })
+    .join(" | ");
+}
+
+function buildGeminiRequestStakeholderLookup(requestPayload = {}) {
+  const byScope = new Map();
+  const byCompany = new Map();
+  const companies = Array.isArray(requestPayload?.ranked_companies) ? requestPayload.ranked_companies : [];
+
+  for (const company of companies) {
+    const companyNumber = normalizeCompanyNumber(company?.company_number);
+    if (!companyNumber) continue;
+
+    const normalizedStakeholders = normalizeGeminiRequestStakeholders(company?.stakeholders, companyNumber);
+    if (normalizedStakeholders.length < 1) continue;
+
+    byCompany.set(companyNumber, normalizedStakeholders);
+    for (const stakeholder of normalizedStakeholders) {
+      const personId = String(stakeholder?.person_id || "").trim();
+      if (!personId) continue;
+      byScope.set(`${companyNumber}::${personId}`, stakeholder);
+    }
+  }
+
+  return { byScope, byCompany };
+}
+
+function resolveGeminiStakeholderContext(lookup, companyNumber, personId) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  const normalizedPersonId = String(personId || "").trim();
+  const byCompany = lookup?.byCompany instanceof Map ? lookup.byCompany : new Map();
+  const byScope = lookup?.byScope instanceof Map ? lookup.byScope : new Map();
+  const all = normalizedCompanyNumber ? (byCompany.get(normalizedCompanyNumber) || []) : [];
+
+  let primary = null;
+  if (normalizedCompanyNumber && normalizedPersonId) {
+    primary = byScope.get(`${normalizedCompanyNumber}::${normalizedPersonId}`) || null;
+  }
+  if (!primary) {
+    primary = selectPrimaryGeminiStakeholder(all);
+  }
+
+  return {
+    company_number: normalizedCompanyNumber || null,
+    person_id: normalizedPersonId || null,
+    primary,
+    all,
+  };
+}
+
 function buildGeminiRequestFromWeeklyEntries({
   weekLabel,
   weekStart,
@@ -2024,10 +2238,19 @@ function buildGeminiRequestFromWeeklyEntries({
       skippedMissingStakeholders += 1;
       continue;
     }
-
-    const bestStakeholder = stakeholders[0];
     const companyNumber = normalizeCompanyNumber(item.company_number);
     if (!companyNumber) continue;
+
+    const mappedStakeholders = dedupeGeminiStakeholders(
+      stakeholders
+        .slice(0, GEMINI_HANDOFF_MAX_STAKEHOLDERS)
+        .map((stakeholder, stakeholderIndex) => buildGeminiStakeholderFromScored(item, stakeholder, stakeholderIndex + 1))
+        .filter(Boolean)
+    );
+    if (mappedStakeholders.length < 1) {
+      skippedMissingStakeholders += 1;
+      continue;
+    }
 
     const fitLayers = item?.score?.layers || {};
     const ranked = {
@@ -2045,7 +2268,7 @@ function buildGeminiRequestFromWeeklyEntries({
         competitor_context: Number(fitLayers.competitor_context?.score || 0),
       },
       insights: extractGeminiRequestInsights(item),
-      stakeholders: [buildGeminiStakeholderFromScored(item, bestStakeholder, idx + 1)],
+      stakeholders: mappedStakeholders,
     };
 
     rankedCompanies.push(ranked);
@@ -9230,7 +9453,7 @@ app.get("/api/gemini/handoff", (req, res) => {
         };
       }
       const approvals = listGeminiHandoffApprovals(item.request_id);
-      const rows = extractGeminiYammRows(record.response, approvals);
+      const rows = extractGeminiYammRows(record.response, approvals, record.request);
       return {
         ...item,
         yamm_summary: summarizeGeminiYammRows(rows),
@@ -9617,7 +9840,7 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
   }
 
   const approvals = listGeminiHandoffApprovals(requestId);
-  const allRows = extractGeminiYammRows(record.response, approvals);
+  const allRows = extractGeminiYammRows(record.response, approvals, record.request);
   const approvalFilteredRows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
@@ -9662,7 +9885,7 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows/summary", (req, res) => {
   }
 
   const approvals = listGeminiHandoffApprovals(requestId);
-  const rows = extractGeminiYammRows(record.response, approvals);
+  const rows = extractGeminiYammRows(record.response, approvals, record.request);
   const summary = summarizeGeminiYammRows(rows);
 
   return res.json({

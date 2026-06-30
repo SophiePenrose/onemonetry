@@ -190,8 +190,19 @@ function buildGeminiHandoffRequestPayload(overrides = {}) {
             person_id: "st_001",
             full_name: "Jane Doe",
             role: "Finance Director",
+            email: "jane@example.co.uk",
+            email_status: "verified",
             persona_bucket: "finance_director",
             confidence: "medium",
+          },
+          {
+            person_id: "st_002",
+            full_name: "Alex Roe",
+            role: "Head of Treasury",
+            email: "alex@example.co.uk",
+            email_status: "guessed",
+            persona_bucket: "treasury",
+            confidence: "high",
           },
         ],
       },
@@ -2557,6 +2568,16 @@ describe("API endpoints", () => {
       assert.equal(typeof allRows.data.rows[0]?.ResponseId, "string");
       assert.equal(allRows.data.rows[0]?.ApprovalStatus, "pending");
       assert.equal(allRows.data.rows[0]?.Company, "Example Co");
+      assert.equal(allRows.data.rows[0]?.FirstName, "Jane");
+      assert.equal(allRows.data.rows[0]?.Stakeholder, "Jane Doe");
+      assert.equal(allRows.data.rows[0]?.StakeholderRole, "Finance Director");
+      assert.equal(allRows.data.rows[0]?.StakeholderEmailStatus, "verified");
+      assert.equal(allRows.data.rows[0]?.StakeholderPersonaBucket, "finance_director");
+      assert.equal(typeof allRows.data.rows[0]?.RelevantIndividuals, "string");
+      assert.equal(String(allRows.data.rows[0]?.RelevantIndividuals || "").includes("Jane Doe"), true);
+      assert.equal(String(allRows.data.rows[0]?.RelevantIndividuals || "").includes("Alex Roe"), true);
+      assert.equal(typeof allRows.data.rows[0]?.RelevantIndividualsJSON, "string");
+      assert.equal(JSON.parse(allRows.data.rows[0]?.RelevantIndividualsJSON || "[]").length >= 2, true);
       assert.equal(allRows.data.rows[0]?.Subject.includes("Example Co"), true);
       assert.equal(allRows.data.rows[0]?.Body.includes("Example Co"), true);
       assert.equal(/\b(?:limited|ltd)\b/i.test(allRows.data.rows[0]?.Subject || ""), false);
@@ -2584,6 +2605,10 @@ describe("API endpoints", () => {
       assert.equal(csvBody.includes("Director priorities at Example Co"), true);
       assert.equal(csvBody.includes("EXAMPLE CO LTD"), false);
       assert.equal(csvBody.includes("Example Co"), true);
+      assert.equal(csvBody.includes("FirstName"), true);
+      assert.equal(csvBody.includes("StakeholderRole"), true);
+      assert.equal(csvBody.includes("RelevantIndividuals"), true);
+      assert.equal(csvBody.includes("RelevantIndividualsJSON"), true);
       assert.equal(csvBody.includes("CompanyNameNeedsReview"), true);
       assert.equal(csvBody.includes("CompanyNameReviewReason"), true);
 

@@ -511,6 +511,54 @@ function buildConnectorHeaders(definition) {
   return { [header]: `${scheme} ${token}` };
 }
 
+function isProspeoBulkCompanyEndpoint(url) {
+  return /https?:\/\/api\.prospeo\.io\/bulk-enrich-company(?:$|[/?#])/i.test(String(url || ""));
+}
+
+function buildProspeoBulkCompanyPayload(context = {}) {
+  const companyDomain = normalizeCompanyDomain(context?.company_domain);
+  const companyWebsite = companyDomain || "";
+  const companyLinkedinUrl = String(
+    context?.company_linkedin_url
+      || context?.linkedin_url
+      || ""
+  ).trim();
+  const identifier = String(
+    context?.company_number
+      || context?.company_name
+      || companyDomain
+      || "unknown"
+  ).trim() || "unknown";
+
+  const row = { identifier };
+  if (companyWebsite) row.company_website = companyWebsite;
+  if (companyLinkedinUrl) row.company_linkedin_url = companyLinkedinUrl;
+
+  return { data: [row] };
+}
+
+function buildConnectorRequestOptions(definition, context, url) {
+  const headers = {
+    Accept: String(definition.acceptHeader || "application/json"),
+    ...buildConnectorHeaders(definition),
+  };
+
+  let method = "GET";
+  let body;
+
+  if (definition.id === "prospeo" && isProspeoBulkCompanyEndpoint(url)) {
+    method = "POST";
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(buildProspeoBulkCompanyPayload(context));
+  }
+
+  return {
+    method,
+    headers,
+    body,
+  };
+}
+
 function buildConnectorStatus(definition) {
   const keysOptional = definition.keysOptional === true;
   const keyStatus = keysOptional || (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]));
@@ -563,7 +611,7 @@ function classifyConnectorFailure(status, error) {
   return "unknown";
 }
 
-async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
+async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context = {}) {
   const urls = Array.isArray(requestUrls) ? requestUrls.filter(Boolean) : [];
   const startedAt = Date.now();
   const attempts = [];
@@ -595,14 +643,11 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const requestOptions = buildConnectorRequestOptions(definition, context, url);
 
     try {
       const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: String(definition.acceptHeader || "application/json"),
-          ...buildConnectorHeaders(definition),
-        },
+        ...requestOptions,
         signal: controller.signal,
       });
 
@@ -623,6 +668,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
 
         attempts.push({
           url,
+          method: requestOptions.method,
           ok: false,
           status: response.status,
           error,
@@ -635,6 +681,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
           status: response.status,
           error,
           request_url: url,
+          request_method: requestOptions.method,
           payload,
           attempted_urls: attemptedUrls,
           attempts,
@@ -649,6 +696,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
       const durationMs = Math.max(0, Date.now() - attemptStartedAt);
       attempts.push({
         url,
+        method: requestOptions.method,
         ok: true,
         status: response.status,
         error: null,
@@ -662,6 +710,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
         ok: true,
         status: response.status,
         request_url: url,
+        request_method: requestOptions.method,
         attempted_urls: attemptedUrls,
         payload,
         attempts,
@@ -676,6 +725,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
 
       attempts.push({
         url,
+        method: requestOptions.method,
         ok: false,
         status: null,
         error,
@@ -688,6 +738,7 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs) {
         status: null,
         error,
         request_url: url,
+        request_method: requestOptions.method,
         attempted_urls: attemptedUrls,
         attempts,
         attempt_count: attempts.length,
@@ -1542,13 +1593,24 @@ function extractRoleTitleFromRecord(record) {
 
 function parseProspeoSpecificEnvelopes(payload, sourceId) {
   const root = normalizeConnectorPayloadRoot(payload);
+  const matchedCompanies = asObjectArray(
+    collectArraysFromPaths(root, [
+      "matched",
+      "data.matched",
+      "result.matched",
+    ]).map((row) => (row && typeof row === "object" ? row.company : null))
+  );
+
   const companyNode = getFirstByPaths(root, [
     "company",
     "organization",
     "data.company",
     "data.organization",
     "result.company",
-  ]) || {};
+    "matched.0.company",
+    "data.matched.0.company",
+    "result.matched.0.company",
+  ]) || matchedCompanies[0] || {};
 
   const contactRows = asObjectArray(collectArraysFromPaths(root, [
     "people",
@@ -1580,12 +1642,28 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     "organization.roles",
     "data.jobs",
   ]));
+  const matchedJobRows = matchedCompanies.flatMap((company) => {
+    const titles = getByPath(company, "job_postings.active_titles");
+    if (!Array.isArray(titles)) return [];
 
-  const jobs = [...contactRows, ...explicitJobRows]
+    return titles
+      .map((title) => ({ title: String(title || "").trim() }))
+      .filter((row) => row.title);
+  });
+
+  const jobs = [...contactRows, ...explicitJobRows, ...matchedJobRows]
     .map((row) => ({ title: extractRoleTitleFromRecord(row) }))
     .filter((row) => row.title);
 
-  const roleCountFromCompany = getFirstNumericByPaths(companyNode, ["open_roles", "jobs_open", "vacancies"]);
+  const roleCountFromCompany = getFirstNumericByPaths(companyNode, [
+    "open_roles",
+    "jobs_open",
+    "vacancies",
+    "job_postings.active_count",
+  ]);
+  const roleCountFromMatchedCompanies = matchedCompanies
+    .map((company) => Number(getByPath(company, "job_postings.active_count")))
+    .find((value) => Number.isFinite(value));
 
   const technologies = uniqueStrings([
     ...splitDelimitedTextValues(getFirstArrayByPaths(root, [
@@ -1606,8 +1684,17 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
         "organization.technology",
       ]),
       getFirstByPaths(companyNode, ["technology", "tech", "primary_technology"]),
+      getByPath(companyNode, "technology.technology_names"),
+      getByPath(companyNode, "technology.technology_list"),
     ]),
     ...splitDelimitedTextValues(getFirstArrayByPaths(companyNode, ["technologies", "tech_stack", "stack"])),
+    ...matchedCompanies.flatMap((company) => splitDelimitedTextValues([
+      getByPath(company, "technology.technology_names"),
+      getByPath(company, "technology.technology_list"),
+      getByPath(company, "technology_list"),
+      getByPath(company, "technologies"),
+      getByPath(company, "tech_stack"),
+    ])),
     ...contactRows.flatMap((row) => splitDelimitedTextValues([
       row?.technologies,
       row?.technology,
@@ -1626,7 +1713,10 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "active_jobs",
       "results_count",
       "meta.total_results",
-    ]) ?? roleCountFromCompany ?? (jobs.length > 0 ? jobs.length : null),
+    ])
+      ?? roleCountFromCompany
+      ?? roleCountFromMatchedCompanies
+      ?? (jobs.length > 0 ? jobs.length : null),
     technologies,
     monthly_web_traffic: getFirstNumericByPaths(root, [
       "monthly_web_traffic",
@@ -2699,7 +2789,7 @@ export async function syncExternalSignals(input = {}) {
     const definition = connectorDefinitionById.get(status.id);
     if (!definition) continue;
 
-    const fetched = await fetchConnectorPayload(definition, status.request_urls, timeoutMs);
+    const fetched = await fetchConnectorPayload(definition, status.request_urls, timeoutMs, context);
     const requestAttempts = Math.max(0, Number(fetched?.attempt_count || 0));
     const retryAttempts = Math.max(0, Number(fetched?.retry_count || 0));
 
@@ -2723,6 +2813,7 @@ export async function syncExternalSignals(input = {}) {
         error: fetched.error,
         failure_category: failureCategory,
         request_url: fetched.request_url || null,
+        request_method: fetched.request_method || null,
         attempted_urls: fetched.attempted_urls || [],
         request_attempts: requestAttempts,
         retry_attempts: retryAttempts,
@@ -2739,6 +2830,7 @@ export async function syncExternalSignals(input = {}) {
       updated_at: new Date().toISOString(),
       source: `${status.id}_api_raw`,
       request_url: fetched.request_url || null,
+      request_method: fetched.request_method || null,
       attempted_urls: fetched.attempted_urls || [],
       payload,
     });
@@ -2773,6 +2865,7 @@ export async function syncExternalSignals(input = {}) {
       auto_discovery_active: status.auto_discovery_active === true,
       status: fetched.status,
       request_url: fetched.request_url || null,
+      request_method: fetched.request_method || null,
       attempted_urls: fetched.attempted_urls || [],
       request_attempts: requestAttempts,
       retry_attempts: retryAttempts,

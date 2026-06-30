@@ -271,6 +271,78 @@ describe("external signal connectors", () => {
     assert.ok((tech.technologies || []).includes("HubSpot"));
   });
 
+  it("uses Prospeo bulk POST payload with identifier and parses matched company signals", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/bulk-enrich-company";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://api.prospeo.io/bulk-enrich-company");
+      assert.equal(String(options?.method || ""), "POST");
+      assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
+      assert.equal(String(options?.headers?.["Content-Type"] || ""), "application/json");
+
+      const parsedBody = JSON.parse(String(options?.body || "{}"));
+      assert.equal(Array.isArray(parsedBody?.data), true);
+      assert.equal(parsedBody.data.length, 1);
+      assert.equal(parsedBody.data[0]?.identifier, "99111123");
+      assert.equal(parsedBody.data[0]?.company_website, "bulk-prospeo.example");
+      assert.equal(Object.hasOwn(parsedBody.data[0] || {}, "company_number"), false);
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            error: false,
+            not_matched: [],
+            invalid_datapoints: [],
+            matched: [
+              {
+                identifier: "99111123",
+                company: {
+                  technology: {
+                    technology_names: ["Stripe", "HubSpot"],
+                  },
+                  job_postings: {
+                    active_count: 2,
+                    active_titles: ["Treasury Operations Manager", "Finance Analyst"],
+                  },
+                },
+              },
+            ],
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111123",
+      companyName: "Example Prospeo Bulk Co",
+      companyDomain: "bulk-prospeo.example",
+      connectors: ["prospeo"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+
+    const hiring = db.getSetting("hiring_signals_99111123", null);
+    const tech = db.getSetting("tech_stack_99111123", null);
+
+    assert.equal(hiring.total_open_roles >= 2, true);
+    assert.ok((tech.technologies || []).includes("Stripe"));
+  });
+
   it("maps nested PhantomBuster export payload using provider-specific parser", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;

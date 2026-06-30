@@ -159,15 +159,32 @@ Configuration note:
 - PROSPEO_URL_TEMPLATE is required
 - PROSPEO_API_KEY is optional (used when provided)
 
+Observed endpoint behavior (bulk company enrichment):
+
+- Method: `POST`
+- Path: `/bulk-enrich-company`
+- Header auth commonly uses `X-KEY`
+- `data[]` rows require an `identifier` plus one or more company resolvers (`company_website`, `company_linkedin_url`)
+
 Expected source structures accepted:
 
-- jobs[] / open_roles (when provided)
-- technologies[] / tech_stack[]
-- monthly_web_traffic / traffic_geography
+- matched[].company.job_postings.active_count
+- matched[].company.job_postings.active_titles[]
+- matched[].company.technology.count
+- matched[].company.technology.technology_names[]
+- matched[].company.technology.technology_list[].name
+- matched[].company.technology.technology_list[].category
+- matched[].company.employee_count / employee_range
+- matched[].company.funding.*
+- matched[].company.location.*
 
 Primary envelope targets:
 
 - hiring_signals, marketing_intelligence, tech_stack
+
+Operational note:
+
+- The app currently parses Prospeo `matched[].company` responses and maps job/tech signals into enrichment envelopes.
 
 ### PhantomBuster
 
@@ -175,6 +192,16 @@ Configuration note:
 
 - PHANTOMBUSTER_URL_TEMPLATE is required
 - PHANTOMBUSTER_API_KEY is optional (used when provided)
+
+Documented endpoint families worth supporting:
+
+- `/agents/launch`
+- `/agents/launch-sync`
+- `/agents/fetch`
+- `/agents/fetch-output`
+- `/agent/{id}/output`
+- `/containers/fetch-output`
+- `/containers/fetch-result-object`
 
 Expected source structures accepted:
 
@@ -185,6 +212,16 @@ Expected source structures accepted:
 Primary envelope targets:
 
 - hiring_signals, marketing_intelligence, tech_stack
+
+Operational note:
+
+- PhantomBuster outputs are agent-specific. Normalize by extraction intent (person, hiring, tech, traffic) rather than assuming one fixed payload schema.
+
+## Field Catalog Reference
+
+For outreach-focused connector fields and YAMM mapping guidance, see:
+
+- docs/connector-field-catalog.md
 
 ### Similarweb
 

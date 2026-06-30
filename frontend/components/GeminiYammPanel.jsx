@@ -130,6 +130,13 @@ function RowPreview({ title, row }) {
   const fields = [
     ["To", row.To || ""],
     ["FirstName", row.FirstName || ""],
+    ["Stakeholder", row.Stakeholder || row.StakeholderFullName || ""],
+    ["StakeholderRole", row.StakeholderRole || ""],
+    ["StakeholderEmailStatus", row.StakeholderEmailStatus || ""],
+    ["StakeholderConfidence", row.StakeholderConfidence || ""],
+    ["StakeholderPersonaBucket", row.StakeholderPersonaBucket || ""],
+    ["PersonId", row.PersonId || ""],
+    ["RelevantIndividuals", row.RelevantIndividuals || ""],
     ["Company", row.Company || ""],
     ["CompanyNumber", row.CompanyNumber || ""],
     ["SequenceId", row.SequenceId || ""],

@@ -436,6 +436,11 @@ describe("Gemini handoff persistence across server restart", () => {
       assert.equal(rowsByStep.get(1)?.ApprovalStatus, "approved");
       assert.equal(rowsByStep.get(1)?.ApprovedBy, "Sophie");
       assert.equal(typeof rowsByStep.get(1)?.ApprovedAt, "string");
+      assert.equal(typeof rowsByStep.get(1)?.FirstName, "string");
+      assert.equal(typeof rowsByStep.get(1)?.Stakeholder, "string");
+      assert.equal(typeof rowsByStep.get(1)?.StakeholderRole, "string");
+      assert.equal(typeof rowsByStep.get(1)?.RelevantIndividuals, "string");
+      assert.equal(typeof rowsByStep.get(1)?.RelevantIndividualsJSON, "string");
       assert.equal(rowsByStep.get(2)?.ApprovalStatus, "paused");
       assert.equal(rowsByStep.get(2)?.ReviewNotes, "waiting_manager_review");
 
