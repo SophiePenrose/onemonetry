@@ -42,6 +42,82 @@ function normalizeApprovalStatus(value) {
   return "pending";
 }
 
+function parseRelevantIndividualsFromValue(value) {
+  if (!value) return [];
+
+  let parsed = value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({
+      person_id: String(entry.person_id || "").trim() || null,
+      full_name: String(entry.full_name || "").trim() || null,
+      role: String(entry.role || "").trim() || null,
+      email: String(entry.email || "").trim() || null,
+      email_status: String(entry.email_status || "").trim() || null,
+      confidence: String(entry.confidence || "").trim() || null,
+      persona_bucket: String(entry.persona_bucket || "").trim() || null,
+    }))
+    .filter((entry) => entry.full_name || entry.role || entry.email || entry.person_id);
+}
+
+function collectIdentifiedIndividuals(rows = []) {
+  const list = [];
+  const seen = new Set();
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const fromJson = parseRelevantIndividualsFromValue(row?.RelevantIndividualsJSON);
+    for (const candidate of fromJson) {
+      const dedupeKey = String(candidate.person_id || `${candidate.full_name || ""}::${candidate.role || ""}`)
+        .trim()
+        .toLowerCase();
+      if (!dedupeKey || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      list.push(candidate);
+    }
+
+    if (fromJson.length > 0) continue;
+
+    const fallbackName = String(row?.Stakeholder || row?.StakeholderFullName || "").trim();
+    const fallbackRole = String(row?.StakeholderRole || "").trim();
+    const fallbackPersonId = String(row?.PersonId || "").trim();
+    const fallbackEmail = String(row?.To || "").trim();
+    const fallbackEmailStatus = String(row?.StakeholderEmailStatus || "").trim();
+    const fallbackConfidence = String(row?.StakeholderConfidence || "").trim();
+    const fallbackPersonaBucket = String(row?.StakeholderPersonaBucket || "").trim();
+
+    if (!fallbackName && !fallbackRole && !fallbackPersonId && !fallbackEmail) continue;
+
+    const fallbackEntry = {
+      person_id: fallbackPersonId || null,
+      full_name: fallbackName || null,
+      role: fallbackRole || null,
+      email: fallbackEmail || null,
+      email_status: fallbackEmailStatus || null,
+      confidence: fallbackConfidence || null,
+      persona_bucket: fallbackPersonaBucket || null,
+    };
+    const dedupeKey = String(fallbackEntry.person_id || `${fallbackEntry.full_name || ""}::${fallbackEntry.role || ""}`)
+      .trim()
+      .toLowerCase();
+    if (!dedupeKey || seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    list.push(fallbackEntry);
+  }
+
+  return list.slice(0, 50);
+}
+
 function buildRowApprovalKey(row) {
   const sequenceId = String(row?.SequenceId || "").trim();
   const stepNumber = parseStepNumber(row?.StepNumber);
@@ -137,6 +213,7 @@ function RowPreview({ title, row }) {
     ["StakeholderPersonaBucket", row.StakeholderPersonaBucket || ""],
     ["PersonId", row.PersonId || ""],
     ["RelevantIndividuals", row.RelevantIndividuals || ""],
+    ["RelevantIndividualsJSON", row.RelevantIndividualsJSON || ""],
     ["Company", row.Company || ""],
     ["CompanyNumber", row.CompanyNumber || ""],
     ["SequenceId", row.SequenceId || ""],
@@ -372,6 +449,11 @@ export default function GeminiYammPanel({ companyId, companyNumber }) {
     return rows.slice(0, 8);
   }, [companyRows, rows]);
 
+  const identifiedIndividuals = useMemo(() => {
+    const sourceRows = companyRows.length > 0 ? companyRows : rows;
+    return collectIdentifiedIndividuals(sourceRows);
+  }, [companyRows, rows]);
+
   const handleSetRowApproval = useCallback((row, nextStatus) => {
     const rowKey = buildRowApprovalKey(row);
     if (!rowKey) {
@@ -526,6 +608,7 @@ export default function GeminiYammPanel({ companyId, companyNumber }) {
             <div style={{ fontSize: 12 }}>approved: <strong>{byApproval.approved ?? 0}</strong></div>
             <div style={{ fontSize: 12 }}>company-name review: <strong>{totals.company_name_needs_review ?? 0}</strong></div>
             <div style={{ fontSize: 12 }}>missing recipient: <strong>{totals.missing_recipient ?? 0}</strong></div>
+            <div style={{ fontSize: 12 }}>identified individuals: <strong>{identifiedIndividuals.length}</strong></div>
           </div>
           {Object.keys(reasons).length > 0 && (
             <div style={{ fontSize: 12, marginTop: 6, color: "#374151" }}>
@@ -534,6 +617,38 @@ export default function GeminiYammPanel({ companyId, companyNumber }) {
           )}
         </div>
       )}
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 12, background: "#fff" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginBottom: 6 }}>
+          Identified individuals ({identifiedIndividuals.length})
+        </div>
+        <div style={{ fontSize: 12, color: "#475569", marginBottom: 8 }}>
+          These people are read from <strong>RelevantIndividualsJSON</strong> (or stakeholder fallbacks) and are what flow into the YAMM export fields.
+        </div>
+
+        {identifiedIndividuals.length < 1 ? (
+          <div style={{ fontSize: 12, color: "#64748b" }}>No identified individuals found for this request/company yet.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 8 }}>
+            {identifiedIndividuals.map((person, idx) => {
+              const key = person.person_id || `${person.full_name || "person"}_${person.role || "role"}_${idx}`;
+              return (
+                <div key={key} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
+                    {person.full_name || "Unknown"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Role:</strong> {person.role || "n/a"}</div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Persona bucket:</strong> {person.persona_bucket || "n/a"}</div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Email:</strong> {person.email || "n/a"}</div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Email status:</strong> {person.email_status || "n/a"}</div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Confidence:</strong> {person.confidence || "n/a"}</div>
+                  <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Person ID:</strong> {person.person_id || "n/a"}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 12, background: "#fff" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
