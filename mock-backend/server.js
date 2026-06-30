@@ -129,6 +129,7 @@ import {
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
   getGeminiHandoffApprovalCounts,
+  listGeminiHandoffApprovals,
   addGeminiHandoffEvent,
   listGeminiHandoffEvents,
   addStakeholderAlertEvent,
@@ -992,20 +993,105 @@ function normalizeGeneratedDraftPayload(generatedObject) {
   };
 }
 
-function buildGeminiApiFallbackDraft({ companyName, stakeholderName, roleName }) {
+const GEMINI_SEQUENCE_STEP_BLUEPRINT = [
+  {
+    step_type: "proof",
+    day_offset: 0,
+    objective: "Lead with one specific observation and the operational implication.",
+  },
+  {
+    step_type: "nudge_1",
+    day_offset: 2,
+    objective: "Keep this short; reinforce relevance with one precise angle and a low-friction CTA.",
+  },
+  {
+    step_type: "depth",
+    day_offset: 5,
+    objective: "Add depth with a second concrete signal and a connected-stack recommendation.",
+  },
+  {
+    step_type: "nudge_2",
+    day_offset: 8,
+    objective: "Send a concise follow-up with one sharpened commercial implication.",
+  },
+  {
+    step_type: "provocation",
+    day_offset: 11,
+    objective: "Use a thoughtful challenge question grounded in known constraints.",
+  },
+  {
+    step_type: "close",
+    day_offset: 14,
+    objective: "Close politely with optional next step and clear respect for timing.",
+  },
+];
+
+function clampGeminiSequenceStepCount(value, fallback = GEMINI_SEQUENCE_STEP_BLUEPRINT.length) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(3, Math.min(fallback, GEMINI_SEQUENCE_STEP_BLUEPRINT.length));
+  }
+  return Math.max(3, Math.min(parsed, GEMINI_SEQUENCE_STEP_BLUEPRINT.length));
+}
+
+function resolveGeminiSequenceStepPlan(campaign = {}, generationPolicy = {}) {
+  const requested = Number.parseInt(
+    String(generationPolicy?.max_steps_per_sequence || campaign?.max_touches || GEMINI_SEQUENCE_STEP_BLUEPRINT.length),
+    10
+  );
+  const stepCount = clampGeminiSequenceStepCount(requested, GEMINI_SEQUENCE_STEP_BLUEPRINT.length);
+  return GEMINI_SEQUENCE_STEP_BLUEPRINT
+    .slice(0, stepCount)
+    .map((step, idx) => ({
+      ...step,
+      step_number: idx + 1,
+    }));
+}
+
+function formatGeminiPreviousStepHints(previousDrafts = []) {
+  if (!Array.isArray(previousDrafts) || previousDrafts.length < 1) return [];
+  return previousDrafts
+    .slice(-3)
+    .map((entry) => {
+      const stepNumber = Number.parseInt(String(entry?.step_number || ""), 10);
+      const stepType = sanitizeSingleLine(entry?.step_type || "", 40);
+      const subject = sanitizeSingleLine(entry?.subject || "", 120);
+      const bodyPreview = sanitizeSingleLine(String(entry?.body || "").split("\n")[0] || "", 120);
+      if (!subject && !bodyPreview) return null;
+      return `- prior_step_${Number.isInteger(stepNumber) ? stepNumber : "x"} (${stepType || "n/a"}) subject: ${subject || "n/a"}; opener: ${bodyPreview || "n/a"}`;
+    })
+    .filter(Boolean);
+}
+
+function buildGeminiApiFallbackDraft({ companyName, stakeholderName, roleName, stepContext = {} }) {
   const safeCompanyName = sanitizeSingleLine(companyName || "Unknown Company", 120) || "Unknown Company";
   const safeStakeholderName = extractStakeholderFirstName(stakeholderName);
   const safeRoleName = sanitizeSingleLine(roleName || "stakeholder", 60) || "stakeholder";
-  const subject = `Question about ${safeRoleName} priorities at ${safeCompanyName}`;
-  const body = `Hi ${safeStakeholderName},\n\nGiven how quickly priorities can shift for ${safeRoleName} teams at ${safeCompanyName}, one useful starting point is usually where payment collection, FX and day-to-day spend controls sit in separate systems. That split often creates avoidable reconciliation and cash-visibility friction, especially where international suppliers or online revenue are growing.\n\nIf helpful, I can share a short practical view of how teams in a similar position simplify this without forcing a full banking switch.\n\nSophie`;
+  const stepType = String(stepContext?.step_type || "proof").trim().toLowerCase() || "proof";
+  const stepNumber = Number.parseInt(String(stepContext?.step_number || 1), 10) || 1;
+
+  let subject = `Question about ${safeRoleName} priorities at ${safeCompanyName}`;
+  let body = `Hi ${safeStakeholderName},\n\nGiven how quickly priorities can shift for ${safeRoleName} teams at ${safeCompanyName}, one useful starting point is usually where payment collection, FX and day-to-day spend controls sit in separate systems. That split often creates avoidable reconciliation and cash-visibility friction, especially where international suppliers or online revenue are growing.\n\nIf helpful, I can share a short practical view of how teams in a similar position simplify this without forcing a full banking switch.\n\nSophie`;
+
+  if (stepType === "nudge_1" || stepType === "nudge_2") {
+    subject = `Quick follow-up for ${safeCompanyName}`;
+    body = `Hi ${safeStakeholderName},\n\nA brief follow-up in case useful. When finance and payment tooling remain split, teams often lose time to avoidable reconciliation work and weaker day-to-day cash visibility.\n\nIf it helps, I can send a short, concrete outline focused on ${safeCompanyName} and where a connected setup could remove the most friction first.\n\nSophie`;
+  } else if (stepType === "depth") {
+    subject = `${safeCompanyName}: practical operating angle`;
+    body = `Hi ${safeStakeholderName},\n\nOne deeper angle we often see for ${safeRoleName} teams is the handoff between collection, FX and spend controls. As volume grows, that split can create hidden process cost and slower month-end confidence.\n\nIf useful, I can map a staged path that keeps existing banking relationships in place while tightening control in the areas most likely to move the needle for ${safeCompanyName}.\n\nSophie`;
+  } else if (stepType === "provocation" || stepType === "close") {
+    subject = `Worth pressure-testing this at ${safeCompanyName}`;
+    body = `Hi ${safeStakeholderName},\n\nOne question that may be worth pressure-testing: if collections, currency conversion and spend policy still sit across separate systems, how much finance time is being absorbed by preventable operational drag each month?\n\nHappy to share a practical comparison so you can decide quickly whether this is worth action now or later.\n\nSophie`;
+  }
+
   return {
     subject,
     body,
-    citations: ["gemini.google.api.fallback"],
+    citations: ["gemini.google.api.fallback", `sequence.step_${stepNumber}`],
   };
 }
 
-function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy }) {
+function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy, stepContext = {}, previousDrafts = [] }) {
   const forbiddenLine = generationPolicy?.forbidden_phrases_enforced
     ? "Do not use these phrases: I noticed, quick question. Avoid filler punctuation such as em dash parentheticals."
     : "";
@@ -1016,10 +1102,20 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
   const scoreBreakdown = company?.score_breakdown && typeof company.score_breakdown === "object"
     ? JSON.stringify(company.score_breakdown)
     : "{}";
+  const stepNumber = Number.parseInt(String(stepContext?.step_number || 1), 10) || 1;
+  const totalSteps = Number.parseInt(String(stepContext?.total_steps || campaign?.max_touches || 6), 10) || 6;
+  const stepType = sanitizeSingleLine(stepContext?.step_type || "proof", 40) || "proof";
+  const dayOffset = Number.parseInt(String(stepContext?.day_offset || 0), 10) || 0;
+  const stepObjective = sanitizeSingleLine(stepContext?.objective || "", 200);
+  const priorStepHints = formatGeminiPreviousStepHints(previousDrafts);
+  const isNudgeStep = stepType === "nudge_1" || stepType === "nudge_2";
+  const minWords = isNudgeStep ? 45 : 70;
+  const maxWords = isNudgeStep ? 130 : 190;
 
   return [
     "You are Sophie writing concise UK B2B prospecting outreach.",
     "Write exactly one outreach email step for the stakeholder below.",
+    `This is step ${stepNumber} of ${totalSteps} in a multi-touch sequence.`,
     "Return strict JSON only with keys: subject (string), body (string), citations (string array).",
     "Do not include markdown fences or commentary.",
     forbiddenLine,
@@ -1031,6 +1127,10 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
     `max_touches: ${Number.parseInt(String(campaign?.max_touches || 4), 10) || 4}`,
     `voice_profile: ${sanitizeSingleLine(generationPolicy?.voice_profile || "sophie_outreach", 120)}`,
     `require_citations: ${generationPolicy?.require_citations === true ? "true" : "false"}`,
+    `step_number: ${stepNumber}`,
+    `step_type: ${stepType}`,
+    `day_offset: ${dayOffset}`,
+    stepObjective ? `step_objective: ${stepObjective}` : "",
     "\nCompany context:",
     `company_name: ${sanitizeSingleLine(company?.company_name || "Unknown Company", 160)}`,
     `company_number: ${sanitizeSingleLine(company?.company_number || "", 40)}`,
@@ -1043,24 +1143,28 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
     `role: ${sanitizeSingleLine(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder", 80)}`,
     `persona_bucket: ${sanitizeSingleLine(stakeholder?.persona_bucket || "", 80)}`,
     `confidence: ${sanitizeSingleLine(stakeholder?.confidence || "", 40)}`,
+    priorStepHints.length > 0 ? "\nAvoid repeating these prior sequence lines:" : "",
+    ...priorStepHints,
     "\nOutput requirements:",
     "- subject under 120 characters",
-    "- body between 70 and 180 words",
+    `- body between ${minWords} and ${maxWords} words`,
     "- greeting must use first name only in this form: Hi [FirstName],",
     "- body should end with a light CTA",
+    "- this step must feel distinct from prior steps and avoid repeating the same opening sentence",
     "- citations should reference evidence source labels when possible",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-async function generateGeminiApiDraft({ company, stakeholder, campaign, generationPolicy }) {
+async function generateGeminiApiDraft({ company, stakeholder, campaign, generationPolicy, stepContext = {}, previousDrafts = [] }) {
   const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
   const stakeholderName = normalizeGeminiStakeholderName(stakeholder?.full_name);
   const fallbackDraft = buildGeminiApiFallbackDraft({
     companyName: company?.company_name,
     stakeholderName,
     roleName,
+    stepContext,
   });
 
   if (!GEMINI_API_KEY) {
@@ -1076,7 +1180,14 @@ async function generateGeminiApiDraft({ company, stakeholder, campaign, generati
   }
 
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_API_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-  const prompt = buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy });
+  const prompt = buildGeminiApiDraftPrompt({
+    company,
+    stakeholder,
+    campaign,
+    generationPolicy,
+    stepContext,
+    previousDrafts,
+  });
   const requestPayload = JSON.stringify({
     generationConfig: {
       temperature: 0.45,
@@ -1202,6 +1313,7 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
   const campaign = payload?.campaign || {};
   const generationPolicy = payload?.generation_policy || {};
   const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+  const stepPlan = resolveGeminiSequenceStepPlan(campaign, generationPolicy);
 
   const sequenceOutputs = [];
   const errors = [];
@@ -1238,66 +1350,110 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
       continue;
     }
 
-    const draft = await generateGeminiApiDraft({
-      company,
-      stakeholder,
-      campaign,
-      generationPolicy,
-    });
+    const sequenceId = `seq_${companyNumber}_${personId}`;
+    const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
+    const priorityBand = String(company?.priority_band || "").trim() || null;
 
-    if (draft.error) {
-      errors.push({
-        code: draft.error.code,
-        message: draft.error.message,
-        retryable: draft.error.retryable !== false,
-        scope: {
-          company_number: companyNumber,
-          person_id: personId,
-        },
+    const steps = [];
+    const yammRows = [];
+    let fallbackStepCount = 0;
+    let stepErrorCount = 0;
+
+    for (const planStep of stepPlan) {
+      const stepContext = {
+        ...planStep,
+        total_steps: stepPlan.length,
+      };
+
+      const draft = await generateGeminiApiDraft({
+        company,
+        stakeholder,
+        campaign,
+        generationPolicy,
+        stepContext,
+        previousDrafts: steps,
+      });
+
+      if (draft.error) {
+        stepErrorCount += 1;
+        errors.push({
+          code: draft.error.code,
+          message: draft.error.message,
+          retryable: draft.error.retryable !== false,
+          scope: {
+            company_number: companyNumber,
+            person_id: personId,
+            step_number: planStep.step_number,
+            step_type: planStep.step_type,
+          },
+        });
+      }
+
+      if (draft.used_fallback) fallbackStepCount += 1;
+
+      const citations = Array.isArray(draft.citations)
+        ? draft.citations.filter((item) => String(item || "").trim())
+        : [];
+      const stepRecord = {
+        step_number: planStep.step_number,
+        step_type: planStep.step_type,
+        day_offset: planStep.day_offset,
+        subject: draft.subject,
+        body: draft.body,
+        citations,
+      };
+
+      steps.push(stepRecord);
+      yammRows.push({
+        To: String(stakeholder?.email || ""),
+        Subject: stepRecord.subject,
+        Body: stepRecord.body,
+        Company: companyName,
+        CompanyNumber: companyNumber,
+        PriorityRank: rank,
+        PriorityBand: priorityBand,
+        SequenceId: sequenceId,
+        StepNumber: stepRecord.step_number,
+        StepType: stepRecord.step_type,
+        DayOffset: stepRecord.day_offset,
+        ApprovalStatus: "pending",
+        QCPassed: draft.used_fallback ? "false" : "true",
+        QCScore: draft.used_fallback ? 0.62 : 0.9,
+        EvidenceRefs: citations.join("|") || null,
       });
     }
 
-    const sequenceId = `seq_${companyNumber}_${personId}`;
-    const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
-    const qcScore = draft.used_fallback ? 0.62 : 0.88;
+    const passRate = steps.length > 0
+      ? (steps.length - fallbackStepCount) / steps.length
+      : 0;
+    const qcScore = Math.round((0.62 + (passRate * 0.30)) * 100) / 100;
+    const qcNotes = [];
+    if (fallbackStepCount > 0) {
+      qcNotes.push(`fallback_steps_${fallbackStepCount}`);
+    }
+    if (stepErrorCount > 0) {
+      qcNotes.push(`step_errors_${stepErrorCount}`);
+    }
 
     sequenceOutputs.push({
       company_number: companyNumber,
       person_id: personId,
       sequence_id: sequenceId,
       qc: {
-        passed: !draft.used_fallback,
+        passed: fallbackStepCount === 0 && stepErrorCount === 0,
         score: qcScore,
-        notes: draft.used_fallback ? ["fallback_copy_used"] : [],
+        notes: qcNotes,
       },
-      steps: [
-        {
-          step_number: 1,
-          step_type: "proof",
-          day_offset: 0,
-          subject: draft.subject,
-          body: draft.body,
-          citations: draft.citations,
-        },
-      ],
-      yamm_rows: [
-        {
-          To: String(stakeholder?.email || ""),
-          Subject: draft.subject,
-          Body: draft.body,
-          Company: companyName,
-          CompanyNumber: companyNumber,
-          PriorityRank: rank,
-          SequenceId: sequenceId,
-          StepNumber: 1,
-          ApprovalStatus: "pending",
-        },
-      ],
+      steps,
+      yamm_rows: yammRows,
     });
   }
 
   const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
-  const rowCount = sequenceOutputs.length;
+  const rowCount = sequenceOutputs.reduce((sum, output) => {
+    const rows = Array.isArray(output?.yamm_rows) ? output.yamm_rows.length : 0;
+    return sum + rows;
+  }, 0);
   const status = rowCount === 0 ? "error" : (errors.length > 0 ? "partial" : "ok");
   const responseIdSeed = requestId ? requestId.replace(/[^a-zA-Z0-9_-]/g, "_") : Date.now().toString();
 
@@ -1321,7 +1477,10 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
 function buildDevGeminiHandoffResponse(payload) {
   const requestId = String(payload?.request_id || "").trim();
   const workspace = payload?.workspace || {};
+  const campaign = payload?.campaign || {};
+  const generationPolicy = payload?.generation_policy || {};
   const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+  const stepPlan = resolveGeminiSequenceStepPlan(campaign, generationPolicy);
 
   const sequenceOutputs = rankedCompanies
     .map((company, index) => {
@@ -1334,11 +1493,60 @@ function buildDevGeminiHandoffResponse(payload) {
       const personId = String(stakeholder?.person_id || "").trim();
       if (!companyNumber || !personId) return null;
 
-      const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
       const firstName = extractStakeholderFirstName(stakeholder?.full_name);
       const sequenceId = `seq_${companyNumber}_${personId}`;
-      const subject = `Question about ${roleName} priorities at ${companyName}`;
-      const body = `Hi ${firstName},\n\nI prepared this as a local simulator output so we can validate Gemini handoff plumbing end-to-end before live connector auth is enabled.\n\nBest,\nSophie`;
+      const priorityRank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
+      const priorityBand = String(company?.priority_band || "").trim() || null;
+
+      const steps = stepPlan.map((step) => {
+        const stepLabel = slugToTitle(step.step_type);
+        let subject = `${companyName}: ${stepLabel} note`;
+        let body = `Hi ${firstName},\n\nSimulator output for ${stepLabel.toLowerCase()} step ${step.step_number} of ${stepPlan.length}. This mirrors the Gemini handoff contract so approval and YAMM wiring can be validated end-to-end before live credentials are enabled.\n\nSophie`;
+
+        if (step.step_type === "proof") {
+          subject = `${companyName}: initial observation`;
+          body = `Hi ${firstName},\n\nSimulator proof step for ${companyName}. This line stands in for a concrete opening insight and confirms that step-level sequencing data is flowing correctly into draft and YAMM rows.\n\nSophie`;
+        } else if (step.step_type === "nudge_1" || step.step_type === "nudge_2") {
+          subject = `${companyName}: concise follow-up`;
+          body = `Hi ${firstName},\n\nSimulator nudge step to validate short-form follow-up copy and day offsets in the handoff response. The production path should replace this with evidence-backed language tied to current signals.\n\nSophie`;
+        } else if (step.step_type === "depth") {
+          subject = `${companyName}: deeper operating angle`;
+          body = `Hi ${firstName},\n\nSimulator depth step to validate multi-touch sequencing. In production this is where the richer operational angle and connected product arc should appear with company-specific evidence.\n\nSophie`;
+        } else if (step.step_type === "provocation") {
+          subject = `${companyName}: pressure-test question`;
+          body = `Hi ${firstName},\n\nSimulator provocation step to confirm question-led copy can be carried as a distinct touchpoint. This verifies later-sequence diversity and approval flow handling for non-initial steps.\n\nSophie`;
+        } else if (step.step_type === "close") {
+          subject = `${companyName}: final close-out note`;
+          body = `Hi ${firstName},\n\nSimulator close step to confirm end-of-sequence handling and send-eligible filtering. In production this should remain low-pressure and respectful while offering a practical next step.\n\nSophie`;
+        }
+
+        return {
+          step_number: step.step_number,
+          step_type: step.step_type,
+          day_offset: step.day_offset,
+          subject,
+          body,
+          citations: ["simulator.local", `sequence.step_${step.step_number}`],
+        };
+      });
+
+      const yammRows = steps.map((step) => ({
+        To: String(stakeholder?.email || ""),
+        Subject: step.subject,
+        Body: step.body,
+        Company: companyName,
+        CompanyNumber: companyNumber,
+        PriorityRank: priorityRank,
+        PriorityBand: priorityBand,
+        SequenceId: sequenceId,
+        StepNumber: step.step_number,
+        StepType: step.step_type,
+        DayOffset: step.day_offset,
+        ApprovalStatus: "pending",
+        QCPassed: "true",
+        QCScore: 0.9,
+        EvidenceRefs: step.citations.join("|"),
+      }));
 
       return {
         company_number: companyNumber,
@@ -1349,35 +1557,17 @@ function buildDevGeminiHandoffResponse(payload) {
           score: 0.9,
           notes: [],
         },
-        steps: [
-          {
-            step_number: 1,
-            step_type: "proof",
-            day_offset: 0,
-            subject,
-            body,
-            citations: ["simulator.local"],
-          },
-        ],
-        yamm_rows: [
-          {
-            To: String(stakeholder?.email || ""),
-            Subject: subject,
-            Body: body,
-            Company: companyName,
-            CompanyNumber: companyNumber,
-            PriorityRank: Number.parseInt(String(company?.rank || index + 1), 10) || index + 1,
-            SequenceId: sequenceId,
-            StepNumber: 1,
-            ApprovalStatus: "pending",
-          },
-        ],
+        steps,
+        yamm_rows: yammRows,
       };
     })
     .filter(Boolean);
 
   const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
-  const rowCount = sequenceOutputs.length;
+  const rowCount = sequenceOutputs.reduce((sum, output) => {
+    const rows = Array.isArray(output?.yamm_rows) ? output.yamm_rows.length : 0;
+    return sum + rows;
+  }, 0);
 
   return {
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -1396,7 +1586,57 @@ function buildDevGeminiHandoffResponse(payload) {
   };
 }
 
-function extractGeminiYammRows(responsePayload = {}) {
+function parseGeminiRowStepNumber(value) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function buildGeminiApprovalRowKey(sequenceId, stepNumber) {
+  const sequenceToken = String(sequenceId || "").trim();
+  const parsedStepNumber = parseGeminiRowStepNumber(stepNumber);
+  if (!sequenceToken || !parsedStepNumber) return null;
+  return `${sequenceToken}::${parsedStepNumber}`;
+}
+
+function overlayGeminiYammRowApprovals(rows = [], approvalRows = []) {
+  if (!Array.isArray(rows) || rows.length < 1) return [];
+
+  const approvalLookup = new Map();
+  for (const approvalRow of Array.isArray(approvalRows) ? approvalRows : []) {
+    const key = buildGeminiApprovalRowKey(approvalRow?.sequence_id, approvalRow?.step_number);
+    if (!key) continue;
+    const status = String(approvalRow?.approval_status || "").trim().toLowerCase();
+    approvalLookup.set(key, {
+      ApprovalStatus: GEMINI_APPROVAL_STATUSES.has(status) ? status : "pending",
+      ApprovedBy: approvalRow?.approved_by ? String(approvalRow.approved_by) : null,
+      ApprovedAt: approvalRow?.approved_at ? String(approvalRow.approved_at) : null,
+      ReviewNotes: approvalRow?.review_notes ? String(approvalRow.review_notes) : null,
+    });
+  }
+
+  return rows.map((row) => {
+    const key = buildGeminiApprovalRowKey(row?.SequenceId, row?.StepNumber);
+    if (!key || !approvalLookup.has(key)) {
+      const fallbackStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+      return {
+        ...row,
+        ApprovalStatus: GEMINI_APPROVAL_STATUSES.has(fallbackStatus) ? fallbackStatus : "pending",
+      };
+    }
+
+    const approval = approvalLookup.get(key);
+    return {
+      ...row,
+      ApprovalStatus: approval.ApprovalStatus,
+      ApprovedBy: approval.ApprovedBy,
+      ApprovedAt: approval.ApprovedAt,
+      ReviewNotes: approval.ReviewNotes,
+    };
+  });
+}
+
+function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
   const requestId = String(responsePayload?.request_id || "").trim() || null;
   const responseId = String(responsePayload?.response_id || "").trim() || null;
   const contractVersion = String(responsePayload?.contract_version || GEMINI_HANDOFF_CONTRACT_VERSION).trim();
@@ -1404,10 +1644,20 @@ function extractGeminiYammRows(responsePayload = {}) {
 
   const flattened = [];
   for (const output of outputs) {
+    const outputSteps = Array.isArray(output?.steps) ? output.steps : [];
+    const stepsByNumber = new Map();
+    for (const step of outputSteps) {
+      const stepNumber = parseGeminiRowStepNumber(step?.step_number);
+      if (!stepNumber) continue;
+      stepsByNumber.set(stepNumber, step);
+    }
+
     const yammRows = Array.isArray(output?.yamm_rows) ? output.yamm_rows : [];
     for (const row of yammRows) {
       if (!row || typeof row !== "object") continue;
       const approvalStatus = String(row.ApprovalStatus ?? row.approval_status ?? "").trim().toLowerCase() || null;
+      const stepNumber = parseGeminiRowStepNumber(row.StepNumber ?? row.step_number);
+      const stepDetails = stepNumber ? stepsByNumber.get(stepNumber) : null;
       const rawCompanyName = String(row.Company ?? output?.company_name ?? "").trim();
       const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName) || rawCompanyName || null;
       const companyNameReview = evaluateGeminiCompanyNameReview(rawCompanyName);
@@ -1432,12 +1682,18 @@ function extractGeminiYammRows(responsePayload = {}) {
         SequenceId: row.SequenceId ?? output?.sequence_id ?? null,
         CompanyNumber: row.CompanyNumber ?? output?.company_number ?? null,
         PersonId: row.PersonId ?? output?.person_id ?? null,
-        ApprovalStatus: row.ApprovalStatus ?? approvalStatus,
+        StepNumber: stepNumber ?? parseGeminiRowStepNumber(row.StepNumber),
+        StepType: row.StepType ?? row.step_type ?? stepDetails?.step_type ?? null,
+        DayOffset: row.DayOffset ?? row.day_offset ?? stepDetails?.day_offset ?? 0,
+        ApprovalStatus: row.ApprovalStatus ?? approvalStatus ?? "pending",
+        ApprovedBy: row.ApprovedBy ?? row.approved_by ?? null,
+        ApprovedAt: row.ApprovedAt ?? row.approved_at ?? null,
+        ReviewNotes: row.ReviewNotes ?? row.review_notes ?? null,
       });
     }
   }
 
-  return flattened;
+  return overlayGeminiYammRowApprovals(flattened, approvalRows);
 }
 
 function escapeCsvValue(value) {
@@ -8973,7 +9229,8 @@ app.get("/api/gemini/handoff", (req, res) => {
           yamm_summary: null,
         };
       }
-      const rows = extractGeminiYammRows(record.response);
+      const approvals = listGeminiHandoffApprovals(item.request_id);
+      const rows = extractGeminiYammRows(record.response, approvals);
       return {
         ...item,
         yamm_summary: summarizeGeminiYammRows(rows),
@@ -9359,7 +9616,8 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     });
   }
 
-  const allRows = extractGeminiYammRows(record.response);
+  const approvals = listGeminiHandoffApprovals(requestId);
+  const allRows = extractGeminiYammRows(record.response, approvals);
   const approvalFilteredRows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
@@ -9403,7 +9661,8 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows/summary", (req, res) => {
     });
   }
 
-  const rows = extractGeminiYammRows(record.response);
+  const approvals = listGeminiHandoffApprovals(requestId);
+  const rows = extractGeminiYammRows(record.response, approvals);
   const summary = summarizeGeminiYammRows(rows);
 
   return res.json({
@@ -10367,12 +10626,6 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "PHANTOMBUSTER_URL_TEMPLATE (+ optional PHANTOMBUSTER_API_KEY)",
       purpose: "Workflow automation exports used for hiring/tech/traffic signal ingestion",
     },
-    cursor: {
-      configured: hasTemplate(process.env.CURSOR_URL_TEMPLATE),
-      required: false,
-      env_var: "CURSOR_URL_TEMPLATE (+ optional CURSOR_API_KEY)",
-      purpose: "Workflow automation exports used for hiring/tech/traffic signal ingestion",
-    },
     similarweb: {
       configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
       required: false,
@@ -10514,8 +10767,6 @@ app.get("/api/integrations/status", (_req, res) => {
       "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
       "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
       "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
-      "CURSOR_API_KEY=optional_cursor_key",
-      "CURSOR_URL_TEMPLATE=https://example.com/cursor?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
       "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
       "BUILTWITH_API_KEY=optional_builtwith_key",

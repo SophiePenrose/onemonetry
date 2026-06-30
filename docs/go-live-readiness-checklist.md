@@ -78,7 +78,7 @@ curl -X POST "http://localhost:8000/api/signals/sync/<company_number>" \
 
 Wire API keys in staging in this order:
 
-1. `PROSPEO` / `PHANTOMBUSTER` / `CURSOR` (new connector parity covered)
+1. `PROSPEO` / `PHANTOMBUSTER` (new connector parity covered)
 2. `SIMILARWEB` / `BUILTWITH`
 3. `ADZUNA` / `CRUNCHBASE` / `CLEARBIT`
 

@@ -922,7 +922,7 @@ PHASE 5 (Quarter 2+): ADJACENT EXPANSION
 
 ---
 
-## PART 17: BUILD INSTRUCTION FOR CURSOR
+## PART 17: BUILD INSTRUCTION
 
 Save as `/docs/email-generation-architecture-v7.md`:
 
