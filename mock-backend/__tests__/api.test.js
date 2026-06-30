@@ -2552,6 +2552,20 @@ describe("API endpoints", () => {
       completionPayload.sequence_outputs[0].yamm_rows[0].Company = "EXAMPLE CO LTD";
       completionPayload.sequence_outputs[0].yamm_rows[0].Subject = "Question about Director priorities at EXAMPLE CO LTD";
       completionPayload.sequence_outputs[0].yamm_rows[0].Body = "Hi Jane,\n\nI noticed EXAMPLE CO LIMITED has expanded payment operations.";
+      completionPayload.sequence_outputs[0].yamm_rows[0].PersonId = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].StepType = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].DayOffset = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].RequestId = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].ResponseId = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].ContractVersion = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].RelevantIndividuals = "";
+      completionPayload.sequence_outputs[0].yamm_rows[0].RelevantIndividualsJSON = [
+        {
+          person_id: "manual_1",
+          full_name: "Manual Contact",
+          role: "Treasury Lead",
+        },
+      ];
 
       const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
         method: "POST",
@@ -2565,9 +2579,15 @@ describe("API endpoints", () => {
       assert.equal(allRows.data.count, 1);
       assert.equal(Array.isArray(allRows.data.rows), true);
       assert.equal(allRows.data.rows[0]?.RequestId, requestId);
-      assert.equal(typeof allRows.data.rows[0]?.ResponseId, "string");
+      assert.equal(allRows.data.rows[0]?.ResponseId, "resp_api_test_001");
+      assert.equal(allRows.data.rows[0]?.ContractVersion, "gemini-handoff-v1");
       assert.equal(allRows.data.rows[0]?.ApprovalStatus, "pending");
+      assert.equal(allRows.data.rows[0]?.SequenceId, "seq_01234567_st_001");
       assert.equal(allRows.data.rows[0]?.Company, "Example Co");
+      assert.equal(allRows.data.rows[0]?.CompanyNumber, "01234567");
+      assert.equal(allRows.data.rows[0]?.PersonId, "st_001");
+      assert.equal(allRows.data.rows[0]?.StepType, "proof");
+      assert.equal(allRows.data.rows[0]?.DayOffset, 0);
       assert.equal(allRows.data.rows[0]?.FirstName, "Jane");
       assert.equal(allRows.data.rows[0]?.Stakeholder, "Jane Doe");
       assert.equal(allRows.data.rows[0]?.StakeholderRole, "Finance Director");
@@ -2577,7 +2597,10 @@ describe("API endpoints", () => {
       assert.equal(String(allRows.data.rows[0]?.RelevantIndividuals || "").includes("Jane Doe"), true);
       assert.equal(String(allRows.data.rows[0]?.RelevantIndividuals || "").includes("Alex Roe"), true);
       assert.equal(typeof allRows.data.rows[0]?.RelevantIndividualsJSON, "string");
-      assert.equal(JSON.parse(allRows.data.rows[0]?.RelevantIndividualsJSON || "[]").length >= 2, true);
+      const relevantIndividualsJson = JSON.parse(allRows.data.rows[0]?.RelevantIndividualsJSON || "[]");
+      assert.equal(Array.isArray(relevantIndividualsJson), true);
+      assert.equal(relevantIndividualsJson.length, 1);
+      assert.equal(relevantIndividualsJson[0]?.full_name, "Manual Contact");
       assert.equal(allRows.data.rows[0]?.Subject.includes("Example Co"), true);
       assert.equal(allRows.data.rows[0]?.Body.includes("Example Co"), true);
       assert.equal(/\b(?:limited|ltd)\b/i.test(allRows.data.rows[0]?.Subject || ""), false);
@@ -2783,10 +2806,16 @@ describe("API endpoints", () => {
       assert.equal(summary.data.totals.missing_recipient, 1);
       assert.equal(summary.data.totals.do_not_send, 1);
       assert.equal(summary.data.totals.company_name_needs_review, 1);
+      assert.equal(summary.data.totals.rows_with_fallback_normalization >= 1, true);
       assert.equal(summary.data.by_approval_status.pending, 1);
       assert.equal(summary.data.by_approval_status.approved, 2);
       assert.equal(summary.data.by_approval_status.rejected, 0);
       assert.equal(summary.data.company_name_review_reasons.name_lookup_needed, 1);
+      assert.equal(summary.data.fallback_normalization.rows_with_fallbacks >= 1, true);
+      assert.equal(summary.data.fallback_normalization.fields_with_fallbacks >= 1, true);
+      assert.equal(summary.data.fallback_normalization.by_field.request_id >= 1, true);
+      assert.equal(summary.data.fallback_normalization.by_field.response_id >= 1, true);
+      assert.equal(summary.data.fallback_normalization.by_field.contract_version >= 1, true);
     });
 
     it("validates handoff event history query parameters", async () => {

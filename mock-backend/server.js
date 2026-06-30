@@ -1627,6 +1627,36 @@ function parseGeminiRowStepNumber(value) {
   return parsed;
 }
 
+const GEMINI_YAMM_ROW_NORMALIZATION_META = Symbol("geminiYammRowNormalizationMeta");
+
+function isGeminiBlankRowValue(value) {
+  return value === undefined || value === null || (typeof value === "string" && value.trim().length < 1);
+}
+
+function pickGeminiRowValue(...values) {
+  for (const value of values) {
+    if (isGeminiBlankRowValue(value)) continue;
+    return value;
+  }
+  return null;
+}
+
+function normalizeGeminiRelevantIndividualsJsonCell(value, fallback = null) {
+  const resolved = pickGeminiRowValue(value, fallback);
+  if (isGeminiBlankRowValue(resolved)) return null;
+  if (typeof resolved === "string") return resolved.trim();
+
+  try {
+    return JSON.stringify(resolved);
+  } catch {
+    return typeof fallback === "string" ? fallback.trim() || null : null;
+  }
+}
+
+function didGeminiFallback(primaryValue, resolvedValue) {
+  return isGeminiBlankRowValue(primaryValue) && !isGeminiBlankRowValue(resolvedValue);
+}
+
 function buildGeminiApprovalRowKey(sequenceId, stepNumber) {
   const sequenceToken = String(sequenceId || "").trim();
   const parsedStepNumber = parseGeminiRowStepNumber(stepNumber);
@@ -1692,10 +1722,12 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
     for (const row of yammRows) {
       if (!row || typeof row !== "object") continue;
       const approvalStatus = String(row.ApprovalStatus ?? row.approval_status ?? "").trim().toLowerCase() || null;
-      const stepNumber = parseGeminiRowStepNumber(row.StepNumber ?? row.step_number);
+      const stepNumber = parseGeminiRowStepNumber(pickGeminiRowValue(row.StepNumber, row.step_number));
       const stepDetails = stepNumber ? stepsByNumber.get(stepNumber) : null;
-      const resolvedCompanyNumber = normalizeCompanyNumber(row.CompanyNumber ?? output?.company_number);
-      const resolvedPersonId = String(row.PersonId ?? output?.person_id ?? "").trim() || null;
+      const stepTypePrimary = pickGeminiRowValue(row.StepType, row.step_type);
+      const dayOffsetPrimary = pickGeminiRowValue(row.DayOffset, row.day_offset);
+      const resolvedCompanyNumber = normalizeCompanyNumber(pickGeminiRowValue(row.CompanyNumber, output?.company_number));
+      const resolvedPersonId = String(pickGeminiRowValue(row.PersonId, output?.person_id) || "").trim() || null;
       const stakeholderContext = resolveGeminiStakeholderContext(stakeholderLookup, resolvedCompanyNumber, resolvedPersonId);
       const primaryStakeholder = stakeholderContext.primary;
       const relevantIndividualsList = buildGeminiRelevantIndividualsList(stakeholderContext.all);
@@ -1703,6 +1735,38 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
       const relevantIndividualsJson = relevantIndividualsList.length > 0
         ? JSON.stringify(relevantIndividualsList)
         : null;
+      const selectedRelevantIndividuals = pickGeminiRowValue(row.RelevantIndividuals, relevantIndividualsSummary);
+      const normalizedRelevantIndividuals = typeof selectedRelevantIndividuals === "string"
+        ? selectedRelevantIndividuals.trim() || null
+        : (relevantIndividualsSummary || null);
+      const normalizedRelevantIndividualsJson = normalizeGeminiRelevantIndividualsJsonCell(
+        row.RelevantIndividualsJSON,
+        relevantIndividualsJson
+      );
+      const resolvedRequestId = pickGeminiRowValue(row.RequestId, requestId);
+      const resolvedResponseId = pickGeminiRowValue(row.ResponseId, responseId);
+      const resolvedContractVersion = pickGeminiRowValue(row.ContractVersion, contractVersion);
+      const resolvedSequenceId = pickGeminiRowValue(row.SequenceId, output?.sequence_id);
+      const resolvedRowCompanyNumber = pickGeminiRowValue(row.CompanyNumber, output?.company_number, stakeholderContext.company_number);
+      const resolvedRowPersonId = pickGeminiRowValue(row.PersonId, output?.person_id, primaryStakeholder?.person_id);
+      const resolvedStepType = pickGeminiRowValue(stepTypePrimary, stepDetails?.step_type);
+      const resolvedDayOffset = pickGeminiRowValue(dayOffsetPrimary, stepDetails?.day_offset, 0);
+      const resolvedApprovalStatus = pickGeminiRowValue(row.ApprovalStatus, approvalStatus, "pending");
+      const resolvedApprovedBy = pickGeminiRowValue(row.ApprovedBy, row.approved_by);
+      const resolvedApprovedAt = pickGeminiRowValue(row.ApprovedAt, row.approved_at);
+      const resolvedReviewNotes = pickGeminiRowValue(row.ReviewNotes, row.review_notes);
+      const fallbackFields = [];
+
+      if (didGeminiFallback(row.RequestId, resolvedRequestId)) fallbackFields.push("request_id");
+      if (didGeminiFallback(row.ResponseId, resolvedResponseId)) fallbackFields.push("response_id");
+      if (didGeminiFallback(row.ContractVersion, resolvedContractVersion)) fallbackFields.push("contract_version");
+      if (didGeminiFallback(row.SequenceId, resolvedSequenceId)) fallbackFields.push("sequence_id");
+      if (didGeminiFallback(row.CompanyNumber, resolvedRowCompanyNumber)) fallbackFields.push("company_number");
+      if (didGeminiFallback(row.PersonId, resolvedRowPersonId)) fallbackFields.push("person_id");
+      if (didGeminiFallback(stepTypePrimary, resolvedStepType)) fallbackFields.push("step_type");
+      if (didGeminiFallback(dayOffsetPrimary, resolvedDayOffset)) fallbackFields.push("day_offset");
+      if (didGeminiFallback(row.RelevantIndividuals, normalizedRelevantIndividuals)) fallbackFields.push("relevant_individuals");
+      if (didGeminiFallback(row.RelevantIndividualsJSON, normalizedRelevantIndividualsJson)) fallbackFields.push("relevant_individuals_json");
       const derivedFirstName = primaryStakeholder
         ? extractStakeholderFirstName(primaryStakeholder.full_name)
         : "there";
@@ -1713,18 +1777,20 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
       const stakeholderEmailStatus = String(row.StakeholderEmailStatus || "").trim() || String(primaryStakeholder?.email_status || "").trim() || null;
       const stakeholderConfidence = String(row.StakeholderConfidence || "").trim() || String(primaryStakeholder?.confidence || "").trim() || null;
       const stakeholderPersonaBucket = String(row.StakeholderPersonaBucket || "").trim() || String(primaryStakeholder?.persona_bucket || "").trim() || null;
-      const rawCompanyName = String(row.Company ?? output?.company_name ?? "").trim();
+      const rawCompanyName = String(pickGeminiRowValue(row.Company, output?.company_name) || "").trim();
       const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName) || rawCompanyName || null;
       const companyNameReview = evaluateGeminiCompanyNameReview(rawCompanyName);
-      const normalizedSubject = normalizeCompanyNameInText(String(row.Subject ?? ""), {
+      const rowSubject = String(pickGeminiRowValue(row.Subject, stepDetails?.subject) || "");
+      const rowBody = String(pickGeminiRowValue(row.Body, stepDetails?.body) || "");
+      const normalizedSubject = normalizeCompanyNameInText(rowSubject, {
         rawCompanyName,
         normalizedCompanyName: normalizedCompanyName || rawCompanyName,
       });
-      const normalizedBody = normalizeCompanyNameInText(String(row.Body ?? ""), {
+      const normalizedBody = normalizeCompanyNameInText(rowBody, {
         rawCompanyName,
         normalizedCompanyName: normalizedCompanyName || rawCompanyName,
       });
-      flattened.push({
+      const normalizedRow = {
         ...row,
         To: toAddress,
         FirstName: String(row.FirstName || "").trim() || normalizedFirstName,
@@ -1734,27 +1800,36 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
         StakeholderEmailStatus: stakeholderEmailStatus,
         StakeholderConfidence: stakeholderConfidence,
         StakeholderPersonaBucket: stakeholderPersonaBucket,
-        RelevantIndividuals: row.RelevantIndividuals ?? (relevantIndividualsSummary || null),
-        RelevantIndividualsJSON: row.RelevantIndividualsJSON ?? relevantIndividualsJson,
-        Subject: normalizedSubject || String(row.Subject ?? ""),
-        Body: normalizedBody || String(row.Body ?? ""),
+        RelevantIndividuals: normalizedRelevantIndividuals,
+        RelevantIndividualsJSON: normalizedRelevantIndividualsJson,
+        Subject: normalizedSubject || rowSubject,
+        Body: normalizedBody || rowBody,
         Company: normalizedCompanyName,
         CompanyNameNeedsReview: companyNameReview.needs_review,
         CompanyNameReviewReason: companyNameReview.reason,
-        RequestId: row.RequestId ?? requestId,
-        ResponseId: row.ResponseId ?? responseId,
-        ContractVersion: row.ContractVersion ?? contractVersion,
-        SequenceId: row.SequenceId ?? output?.sequence_id ?? null,
-        CompanyNumber: row.CompanyNumber ?? output?.company_number ?? stakeholderContext.company_number ?? null,
-        PersonId: row.PersonId ?? output?.person_id ?? primaryStakeholder?.person_id ?? null,
+        RequestId: resolvedRequestId,
+        ResponseId: resolvedResponseId,
+        ContractVersion: resolvedContractVersion,
+        SequenceId: resolvedSequenceId,
+        CompanyNumber: resolvedRowCompanyNumber,
+        PersonId: resolvedRowPersonId,
         StepNumber: stepNumber ?? parseGeminiRowStepNumber(row.StepNumber),
-        StepType: row.StepType ?? row.step_type ?? stepDetails?.step_type ?? null,
-        DayOffset: row.DayOffset ?? row.day_offset ?? stepDetails?.day_offset ?? 0,
-        ApprovalStatus: row.ApprovalStatus ?? approvalStatus ?? "pending",
-        ApprovedBy: row.ApprovedBy ?? row.approved_by ?? null,
-        ApprovedAt: row.ApprovedAt ?? row.approved_at ?? null,
-        ReviewNotes: row.ReviewNotes ?? row.review_notes ?? null,
-      });
+        StepType: resolvedStepType,
+        DayOffset: resolvedDayOffset,
+        ApprovalStatus: resolvedApprovalStatus,
+        ApprovedBy: resolvedApprovedBy,
+        ApprovedAt: resolvedApprovedAt,
+        ReviewNotes: resolvedReviewNotes,
+      };
+
+      if (fallbackFields.length > 0) {
+        normalizedRow[GEMINI_YAMM_ROW_NORMALIZATION_META] = {
+          fallback_fields: fallbackFields,
+          fallback_count: fallbackFields.length,
+        };
+      }
+
+      flattened.push(normalizedRow);
     }
   }
 
@@ -1865,6 +1940,9 @@ function summarizeGeminiYammRows(rows = []) {
   let sendEligibleCount = 0;
   let companyNameNeedsReviewCount = 0;
   const companyNameReviewReasons = {};
+  let fallbackNormalizationRows = 0;
+  let fallbackNormalizationFields = 0;
+  const fallbackNormalizationByField = {};
 
   for (const row of rows) {
     const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
@@ -1891,6 +1969,20 @@ function summarizeGeminiYammRows(rows = []) {
         companyNameReviewReasons[reason] = Number(companyNameReviewReasons[reason] || 0) + 1;
       }
     }
+
+    const normalizationMeta = row?.[GEMINI_YAMM_ROW_NORMALIZATION_META];
+    const fallbackFields = Array.isArray(normalizationMeta?.fallback_fields)
+      ? normalizationMeta.fallback_fields
+      : [];
+    if (fallbackFields.length > 0) {
+      fallbackNormalizationRows += 1;
+      fallbackNormalizationFields += fallbackFields.length;
+      for (const rawField of fallbackFields) {
+        const field = String(rawField || "").trim().toLowerCase();
+        if (!field) continue;
+        fallbackNormalizationByField[field] = Number(fallbackNormalizationByField[field] || 0) + 1;
+      }
+    }
   }
 
   return {
@@ -1900,9 +1992,15 @@ function summarizeGeminiYammRows(rows = []) {
       missing_recipient: missingRecipient,
       do_not_send: doNotSendCount,
       company_name_needs_review: companyNameNeedsReviewCount,
+      rows_with_fallback_normalization: fallbackNormalizationRows,
     },
     by_approval_status: byApprovalStatus,
     company_name_review_reasons: companyNameReviewReasons,
+    fallback_normalization: {
+      rows_with_fallbacks: fallbackNormalizationRows,
+      fields_with_fallbacks: fallbackNormalizationFields,
+      by_field: fallbackNormalizationByField,
+    },
   };
 }
 
