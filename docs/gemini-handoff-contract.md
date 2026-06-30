@@ -142,6 +142,14 @@ Design goals:
         {
           "To": "",
           "FirstName": "Jane",
+          "Stakeholder": "Jane Doe",
+          "StakeholderFullName": "Jane Doe",
+          "StakeholderRole": "Finance Director",
+          "StakeholderEmailStatus": "verified",
+          "StakeholderConfidence": "medium",
+          "StakeholderPersonaBucket": "finance_director",
+          "RelevantIndividuals": "Jane Doe (Finance Director) [verified] | Alex Roe (Head of Treasury) [guessed]",
+          "RelevantIndividualsJSON": "[{\"person_id\":\"st_001\",\"full_name\":\"Jane Doe\",\"role\":\"Finance Director\",\"email\":\"jane@example.co.uk\",\"email_status\":\"verified\",\"confidence\":\"medium\",\"persona_bucket\":\"finance_director\"},{\"person_id\":\"st_002\",\"full_name\":\"Alex Roe\",\"role\":\"Head of Treasury\",\"email\":\"alex@example.co.uk\",\"email_status\":\"guessed\",\"confidence\":\"high\",\"persona_bucket\":\"treasury_lead\"}]",
           "Company": "Example Co Ltd",
           "CompanyNumber": "01234567",
           "PriorityRank": 1,
@@ -154,6 +162,7 @@ Design goals:
           "Subject": "Question about FX exposure at Example Co",
           "Body": "...",
           "SequenceId": "seq_01234567_st_001",
+          "PersonId": "st_001",
           "ApprovalStatus": "pending",
           "ApprovedBy": "",
           "ApprovedAt": ""
@@ -264,6 +273,16 @@ Recommended additional control columns:
 - `RequestId`
 - `ResponseId`
 - `ContractVersion`
+- `FirstName`
+- `Stakeholder`
+- `StakeholderFullName`
+- `StakeholderRole`
+- `StakeholderEmailStatus`
+- `StakeholderConfidence`
+- `StakeholderPersonaBucket`
+- `PersonId`
+- `RelevantIndividuals` (human-readable roster summary)
+- `RelevantIndividualsJSON` (structured roster payload for audit/export)
 - `QCScore`
 - `QCPassed`
 - `EvidenceRefs`

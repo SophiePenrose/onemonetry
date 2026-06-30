@@ -281,6 +281,12 @@ describe("Gemini handoff dev simulator transport", () => {
       assert.deepEqual(rows.data.rows.map((row) => String(row.StepType || "")), ["proof", "nudge_1", "depth", "nudge_2", "provocation"]);
       assert.equal(rows.data.rows.every((row) => String(row.ApprovalStatus || "").toLowerCase() === "pending"), true);
       assert.equal(rows.data.rows.every((row) => Number.isInteger(Number(row.DayOffset))), true);
+      assert.equal(rows.data.rows.every((row) => String(row.FirstName || "").length > 0), true);
+      assert.equal(rows.data.rows.every((row) => String(row.Stakeholder || "").length > 0), true);
+      assert.equal(rows.data.rows.every((row) => String(row.StakeholderRole || "").length > 0), true);
+      assert.equal(rows.data.rows.every((row) => typeof row.RelevantIndividuals === "string"), true);
+      assert.equal(rows.data.rows.every((row) => typeof row.RelevantIndividualsJSON === "string"), true);
+      assert.equal(rows.data.rows.every((row) => Array.isArray(JSON.parse(row.RelevantIndividualsJSON || "[]"))), true);
 
       const summary = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows/summary`);
       assert.equal(summary.status, 200);
