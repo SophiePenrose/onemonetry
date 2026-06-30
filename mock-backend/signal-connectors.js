@@ -1458,6 +1458,261 @@ function parseClearbitSpecificEnvelopes(payload, sourceId) {
   };
 }
 
+function splitDelimitedTextValues(value) {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => splitDelimitedTextValues(entry))
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/[;,|]/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
+
+  if (value && typeof value === "object") {
+    const picked = readStringField(value, ["name", "title", "technology", "value", "label"]);
+    return picked ? [picked] : [];
+  }
+
+  return [];
+}
+
+function extractRoleTitleFromRecord(record) {
+  const direct = readStringField(record, [
+    "title",
+    "job_title",
+    "jobTitle",
+    "position",
+    "role",
+    "positionTitle",
+    "occupation",
+  ]);
+  if (direct) return direct;
+
+  const headline = readStringField(record, ["headline", "summary", "description"]);
+  if (!headline) return null;
+
+  const prefix = String(headline).split(/\s+at\s+/i)[0]?.trim();
+  return prefix || headline;
+}
+
+function parseProspeoSpecificEnvelopes(payload, sourceId) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const companyNode = getFirstByPaths(root, [
+    "company",
+    "organization",
+    "data.company",
+    "data.organization",
+    "result.company",
+  ]) || {};
+
+  const contactRows = asObjectArray(collectArraysFromPaths(root, [
+    "people",
+    "contacts",
+    "employees",
+    "prospects",
+    "matches",
+    "leads",
+    "results",
+    "data.results",
+    "data.people",
+    "data.contacts",
+    "organization.people",
+  ]));
+  const explicitJobRows = asObjectArray(collectArraysFromPaths(root, [
+    "jobs",
+    "open_roles",
+    "roles",
+    "vacancies",
+    "company.jobs",
+    "data.jobs",
+  ]));
+
+  const jobs = [...contactRows, ...explicitJobRows]
+    .map((row) => ({ title: extractRoleTitleFromRecord(row) }))
+    .filter((row) => row.title);
+
+  const roleCountFromCompany = getFirstNumericByPaths(companyNode, ["open_roles", "jobs_open", "vacancies"]);
+
+  const technologies = uniqueStrings([
+    ...splitDelimitedTextValues(getFirstArrayByPaths(root, [
+      "technologies",
+      "tech_stack",
+      "data.technologies",
+      "data.tech_stack",
+      "company.technologies",
+      "company.tech_stack",
+      "organization.technologies",
+    ])),
+    ...splitDelimitedTextValues(getFirstArrayByPaths(companyNode, ["technologies", "tech_stack", "stack"])),
+    ...contactRows.flatMap((row) => splitDelimitedTextValues([
+      row?.technologies,
+      row?.technology,
+      row?.tech_stack,
+      row?.stack,
+      row?.tools,
+    ])),
+  ]);
+
+  const normalizedPayload = {
+    jobs,
+    open_roles: getFirstNumericByPaths(root, [
+      "open_roles",
+      "jobs_open",
+      "vacancies",
+      "active_jobs",
+      "results_count",
+      "meta.total_results",
+    ]) ?? roleCountFromCompany,
+    technologies,
+    monthly_web_traffic: getFirstNumericByPaths(root, [
+      "monthly_web_traffic",
+      "monthly_visits",
+      "web_traffic",
+      "traffic.monthly_visits",
+      "data.monthly_web_traffic",
+      "company.monthly_web_traffic",
+      "company.monthly_visits",
+      "organization.monthly_visits",
+    ]) ?? getFirstNumericByPaths(companyNode, ["monthly_web_traffic", "monthly_visits", "traffic.monthly_visits"]),
+    estimated_monthly_ad_spend: getFirstNumericByPaths(root, [
+      "estimated_monthly_ad_spend",
+      "estimated_ad_spend",
+      "ad_spend",
+      "ads.monthly_spend",
+      "company.estimated_monthly_ad_spend",
+    ]),
+    traffic_geography: getFirstByPaths(root, [
+      "traffic_geography",
+      "geography",
+      "geo_distribution",
+      "traffic.geography",
+      "company.traffic_geography",
+      "organization.traffic_geography",
+    ]) || getFirstByPaths(companyNode, ["traffic_geography", "geography", "traffic.geography"]) || {},
+    review_count: getFirstNumericByPaths(root, [
+      "review_count",
+      "reviews.count",
+      "company.review_count",
+      "company.reviews.count",
+    ]),
+    payment_related_complaints: getFirstNumericByPaths(root, [
+      "payment_related_complaints",
+      "reviews.payment_related_complaints",
+      "company.payment_related_complaints",
+    ]),
+    checkout_related_complaints: getFirstNumericByPaths(root, [
+      "checkout_related_complaints",
+      "reviews.checkout_related_complaints",
+      "company.checkout_related_complaints",
+    ]),
+  };
+
+  return {
+    ownership: null,
+    hiring: parseHiringEnvelope(normalizedPayload, sourceId),
+    reputation: parseReputationEnvelope(normalizedPayload, sourceId),
+    marketing: parseMarketingEnvelope(normalizedPayload, sourceId),
+    tech: parseTechEnvelope(normalizedPayload, sourceId),
+  };
+}
+
+function parsePhantomBusterSpecificEnvelopes(payload, sourceId) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const exportRows = asObjectArray(collectArraysFromPaths(root, [
+    "data",
+    "results",
+    "records",
+    "rows",
+    "items",
+    "output",
+    "output.rows",
+    "output.items",
+    "result.rows",
+    "result.items",
+    "data.results",
+    "data.rows",
+    "data.items",
+  ]));
+
+  const jobs = exportRows
+    .map((row) => ({ title: extractRoleTitleFromRecord(row) }))
+    .filter((row) => row.title);
+
+  const technologies = uniqueStrings([
+    ...splitDelimitedTextValues(getFirstArrayByPaths(root, [
+      "technologies",
+      "tech_stack",
+      "stack",
+      "tools",
+      "data.technologies",
+      "data.tech_stack",
+      "result.technologies",
+    ])),
+    ...exportRows.flatMap((row) => splitDelimitedTextValues([
+      row?.technologies,
+      row?.technology,
+      row?.tech,
+      row?.tech_stack,
+      row?.stack,
+      row?.tools,
+    ])),
+  ]);
+
+  const normalizedPayload = {
+    jobs,
+    open_roles: getFirstNumericByPaths(root, [
+      "open_roles",
+      "jobs_open",
+      "vacancies",
+      "active_jobs",
+      "metadata.open_roles",
+      "summary.open_roles",
+    ]),
+    technologies,
+    monthly_web_traffic: getFirstNumericByPaths(root, [
+      "monthly_web_traffic",
+      "monthly_visits",
+      "traffic.monthly_visits",
+      "website.monthly_visits",
+      "website_traffic.monthly_visits",
+      "metrics.monthly_web_traffic",
+      "data.monthly_web_traffic",
+      "data.website.monthly_visits",
+    ]),
+    estimated_monthly_ad_spend: getFirstNumericByPaths(root, [
+      "estimated_monthly_ad_spend",
+      "estimated_ad_spend",
+      "ad_spend",
+      "ads.monthly_spend",
+      "marketing.estimated_monthly_ad_spend",
+      "data.estimated_monthly_ad_spend",
+    ]),
+    traffic_geography: getFirstByPaths(root, [
+      "traffic_geography",
+      "geography",
+      "geo_distribution",
+      "traffic.geography",
+      "website_traffic.geography",
+      "data.traffic_geography",
+    ]) || {},
+    review_count: getFirstNumericByPaths(root, ["review_count", "reviews.count", "data.review_count"]),
+    payment_related_complaints: getFirstNumericByPaths(root, ["payment_related_complaints", "reviews.payment_related_complaints"]),
+    checkout_related_complaints: getFirstNumericByPaths(root, ["checkout_related_complaints", "reviews.checkout_related_complaints"]),
+  };
+
+  return {
+    ownership: null,
+    hiring: parseHiringEnvelope(normalizedPayload, sourceId),
+    reputation: parseReputationEnvelope(normalizedPayload, sourceId),
+    marketing: parseMarketingEnvelope(normalizedPayload, sourceId),
+    tech: parseTechEnvelope(normalizedPayload, sourceId),
+  };
+}
+
 function decodeXmlEntities(value) {
   const text = String(value || "");
   const replacedNamed = text
@@ -1983,6 +2238,10 @@ function parseSpecificConnectorEnvelopes(sourceId, payload) {
       return parseEndoleSpecificEnvelopes(payload, sourceId);
     case "opencorporates":
       return parseOpenCorporatesSpecificEnvelopes(payload, sourceId);
+    case "prospeo":
+      return parseProspeoSpecificEnvelopes(payload, sourceId);
+    case "phantombuster":
+      return parsePhantomBusterSpecificEnvelopes(payload, sourceId);
     case "similarweb":
       return parseSimilarwebSpecificEnvelopes(payload, sourceId);
     case "builtwith":

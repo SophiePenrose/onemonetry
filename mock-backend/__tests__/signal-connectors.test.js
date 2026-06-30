@@ -222,6 +222,127 @@ describe("external signal connectors", () => {
     assert.equal(tech.signal_count >= 3, true);
   });
 
+  it("maps nested Prospeo payload using provider-specific parser", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://signals.example.test/prospeo/{company_number}";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "x-prospeo-key";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://signals.example.test/prospeo/99111119");
+      assert.equal(String(options?.headers?.["x-prospeo-key"] || ""), "test-prospeo-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              organization: {
+                monthly_visits: 133000,
+                traffic_geography: { UK: 0.58, US: 0.21 },
+                technologies: [{ name: "HubSpot" }, { name: "Stripe" }],
+              },
+              contacts: [
+                { jobTitle: "Head of Treasury" },
+                { headline: "Finance Director at Example" },
+              ],
+            },
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111119",
+      companyName: "Example Prospeo Nested Co",
+      companyDomain: "nested-prospeo.example",
+      connectors: ["prospeo"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    const hiring = db.getSetting("hiring_signals_99111119", null);
+    const marketing = db.getSetting("marketing_intelligence_99111119", null);
+    const tech = db.getSetting("tech_stack_99111119", null);
+
+    assert.equal(hiring.total_open_roles >= 2, true);
+    assert.equal(marketing.monthly_web_traffic, 133000);
+    assert.ok((tech.technologies || []).includes("HubSpot"));
+  });
+
+  it("maps nested PhantomBuster export payload using provider-specific parser", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PHANTOMBUSTER_API_KEY = "test-phantombuster-key";
+    process.env.PHANTOMBUSTER_URL_TEMPLATE = "https://signals.example.test/phantombuster/{company_number}";
+    process.env.PHANTOMBUSTER_AUTH_SCHEME = "none";
+    process.env.PHANTOMBUSTER_AUTH_HEADER = "x-phantombuster-key";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://signals.example.test/phantombuster/99111120");
+      assert.equal(String(options?.headers?.["x-phantombuster-key"] || ""), "test-phantombuster-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              open_roles: 6,
+              website: {
+                monthly_visits: 210000,
+              },
+              rows: [
+                {
+                  jobTitle: "Director of Treasury",
+                  technologies: "Stripe, Segment",
+                },
+                {
+                  headline: "Head of Finance at Example Co",
+                  tech_stack: ["HubSpot", "Shopify"],
+                },
+              ],
+            },
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111120",
+      companyName: "Example Phantom Nested Co",
+      companyDomain: "phantom-nested.example",
+      connectors: ["phantombuster"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    const hiring = db.getSetting("hiring_signals_99111120", null);
+    const marketing = db.getSetting("marketing_intelligence_99111120", null);
+    const tech = db.getSetting("tech_stack_99111120", null);
+
+    assert.equal(hiring.total_open_roles >= 2, true);
+    assert.equal(marketing.monthly_web_traffic, 210000);
+    assert.ok((tech.technologies || []).includes("HubSpot"));
+  });
+
   it("syncs configured Cursor connector payload into hiring, marketing, and tech envelopes", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;

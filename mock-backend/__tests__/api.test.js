@@ -404,6 +404,8 @@ describe("API endpoints", () => {
       assert.equal(Object.prototype.hasOwnProperty.call(row, "status_incidents_open"), true);
       assert.equal(Object.prototype.hasOwnProperty.call(row, "status_major_incidents_open"), true);
       assert.equal(Object.prototype.hasOwnProperty.call(row, "status_degraded_components"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "unresolved_company_name"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(row, "unresolved_company_name_reason"), true);
       assert.ok(["low", "medium", "high", null].includes(row.status_health_band));
     });
   });
@@ -441,8 +443,114 @@ describe("API endpoints", () => {
       assert.equal(typeof signals.status_major_incidents_open, "number");
       assert.equal(typeof signals.status_degraded_components, "number");
       assert.ok(["low", "medium", "high", null].includes(signals.status_health_band));
+      assert.equal(Object.prototype.hasOwnProperty.call(data.company, "unresolved_company_name"), true);
+      assert.equal(Object.prototype.hasOwnProperty.call(data.company, "unresolved_company_name_reason"), true);
       assert.equal(Object.prototype.hasOwnProperty.call(data.company, "ownership_structure"), true);
       assert.ok(Array.isArray(data.company.sic_codes));
+      assert.equal(typeof data.company?.stakeholder_alerts, "object");
+      assert.ok(Array.isArray(data.company?.stakeholder_alerts?.items));
+    });
+  });
+
+  describe("GET /api/company/:id/score-diagnostics", () => {
+    it("returns layer, motion, and signal diagnostics for a monitor-backed company", async () => {
+      const seeded = await fetchJSON("/api/monitor/import-seed-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dry_run: false,
+          sync_now: false,
+          queue_analysis: false,
+          rows: [
+            {
+              company_name: "Diagnostics Contract Co",
+              company_number: "07654321",
+              company_website: "https://diagnostics-contract.example.com",
+            },
+          ],
+        }),
+      });
+
+      assert.equal(seeded.status, 200);
+
+      const { status, data } = await fetchJSON("/api/company/ch-07654321/score-diagnostics?refresh=true");
+      assert.equal(status, 200);
+      assert.equal(data.company_number, "07654321");
+      assert.equal(typeof data.score_snapshot, "object");
+      assert.equal(typeof data.score_snapshot.composite_score, "number");
+      assert.equal(typeof data.score_deltas, "object");
+      assert.equal(Object.prototype.hasOwnProperty.call(data.score_deltas, "deterministic_base"), true);
+      assert.equal(Array.isArray(data.layer_breakdown), true);
+      assert.equal(data.layer_breakdown.length >= 1, true);
+      assert.equal(typeof data.motion_impacts, "object");
+      assert.equal(Array.isArray(data.motion_impacts.llm_motion_boosts), true);
+      assert.equal(Array.isArray(data.motion_impacts.enrichment_motion_boosts), true);
+      assert.equal(typeof data.signal_snapshots, "object");
+      assert.equal(typeof data.signal_snapshots.tech_stack, "object");
+      assert.equal(typeof data.signal_snapshots.marketing_intelligence, "object");
+      assert.equal(typeof data.signal_snapshots.reputation, "object");
+      assert.equal(Array.isArray(data.score_history), true);
+    });
+  });
+
+  describe("GET /api/company/:id/stakeholder-alerts", () => {
+    it("returns stakeholder alert summary contract", async () => {
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Stakeholder Alerts Contract Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 41000000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const companyId = created.data.company?.id;
+      assert.ok(companyId);
+
+      const detail = await fetchJSON(`/api/company/${companyId}`);
+      assert.equal(detail.status, 200);
+
+      const { status, data } = await fetchJSON(`/api/company/${companyId}/stakeholder-alerts?limit=10&offset=0`);
+      assert.equal(status, 200);
+      assert.equal(data.company_id, companyId);
+      assert.equal(data.limit, 10);
+      assert.equal(data.offset, 0);
+      assert.equal(typeof data.total, "number");
+      assert.equal(typeof data.by_type, "object");
+      assert.equal(typeof data.recent_7d_by_type, "object");
+      assert.ok(Array.isArray(data.items));
+    });
+
+    it("validates stakeholder alert query parameters", async () => {
+      const created = await fetchJSON("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Stakeholder Alerts Validation Co",
+          industry: "Technology",
+          segment: "Mid-Market",
+          turnover: 39000000,
+        }),
+      });
+
+      assert.equal(created.status, 201);
+      const companyId = created.data.company?.id;
+      assert.ok(companyId);
+
+      const invalidLimit = await fetchJSON(`/api/company/${companyId}/stakeholder-alerts?limit=0`);
+      assert.equal(invalidLimit.status, 400);
+      assert.equal(invalidLimit.data.error, "invalid_limit");
+
+      const invalidOffset = await fetchJSON(`/api/company/${companyId}/stakeholder-alerts?offset=-1`);
+      assert.equal(invalidOffset.status, 400);
+      assert.equal(invalidOffset.data.error, "invalid_offset");
+
+      const invalidSinceHours = await fetchJSON(`/api/company/${companyId}/stakeholder-alerts?since_hours=0`);
+      assert.equal(invalidSinceHours.status, 400);
+      assert.equal(invalidSinceHours.data.error, "invalid_since_hours");
     });
   });
 
@@ -864,6 +972,21 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.website_resolution, "object");
       assert.equal(typeof data.integrations.llm.request_timeout_ms, "number");
       assert.equal(typeof data.integrations.email_generation_llm.runtime?.request_timeout_ms, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_active, "boolean");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_chars, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.max_retries, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.retry_base_ms, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.retry_max_ms, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.retry_429_cooldown_ms, "number");
+      assert.equal(typeof data.integrations.gemini_google_api_bridge.runtime?.retry_429_max_scopes, "number");
+      assert.ok(
+        data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_source === null
+          || typeof data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_source === "string"
+      );
+      assert.ok(
+        data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_path === null
+          || typeof data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_path === "string"
+      );
       assert.equal(typeof data.integrations.tech_enrichment.defaults?.deep_scan_mode, "string");
       assert.equal(typeof data.integrations.website_resolution.defaults?.timeout_ms, "number");
       assert.ok(Array.isArray(data.env_template));
@@ -882,6 +1005,52 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("CURSOR_URL_TEMPLATE=https://example.com/cursor?company={company_number}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
+      assert.ok(data.env_template.includes("GEMINI_GEM_INSTRUCTIONS_PATH=prompts/gemini-gem-instructions.txt"));
+      assert.ok(data.env_template.includes("GEMINI_GEM_INSTRUCTIONS=optional_inline_override"));
+      assert.ok(data.env_template.includes("GEMINI_GEM_INSTRUCTIONS_MAX_CHARS=12000"));
+      assert.ok(data.env_template.includes("GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES=2"));
+      assert.ok(data.env_template.includes("GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS=750"));
+      assert.ok(data.env_template.includes("GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS=6000"));
+      assert.ok(data.env_template.includes("GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS=45000"));
+      assert.ok(data.env_template.includes("GEMINI_HANDOFF_RETRY_429_MAX_SCOPES=25"));
+    });
+
+    it("reloads Gem instructions without backend restart", async () => {
+      const reloaded = await fetchJSON("/api/gemini/gem-instructions/reload", {
+        method: "POST",
+      });
+      assert.equal(reloaded.status, 200);
+      assert.equal(reloaded.data.contract_version, "gemini-handoff-v1");
+      assert.equal(typeof reloaded.data.reloaded_at, "string");
+      assert.equal(typeof reloaded.data.runtime?.gem_instructions_active, "boolean");
+      assert.equal(typeof reloaded.data.runtime?.gem_instructions_chars, "number");
+      assert.ok(
+        reloaded.data.runtime?.gem_instructions_source === null
+          || typeof reloaded.data.runtime?.gem_instructions_source === "string"
+      );
+      assert.ok(
+        reloaded.data.runtime?.gem_instructions_path === null
+          || typeof reloaded.data.runtime?.gem_instructions_path === "string"
+      );
+
+      const statusAfterReload = await fetchJSON("/api/integrations/status");
+      assert.equal(statusAfterReload.status, 200);
+      assert.equal(
+        statusAfterReload.data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_active,
+        reloaded.data.runtime?.gem_instructions_active
+      );
+      assert.equal(
+        statusAfterReload.data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_source,
+        reloaded.data.runtime?.gem_instructions_source
+      );
+      assert.equal(
+        statusAfterReload.data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_path,
+        reloaded.data.runtime?.gem_instructions_path
+      );
+      assert.equal(
+        statusAfterReload.data.integrations.gemini_google_api_bridge.runtime?.gem_instructions_chars,
+        reloaded.data.runtime?.gem_instructions_chars
+      );
     });
   });
 
@@ -2073,6 +2242,127 @@ describe("API endpoints", () => {
       assert.equal(blocked.data.max_retry_count, 5);
     });
 
+    it("rejects retry-429 when no retryable HTTP 429 errors are present", async () => {
+      const requestId = "req_api_test_retry_429_none_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+      });
+      assert.equal(completed.status, 200);
+
+      const retry429 = await fetchJSON(`/api/gemini/handoff/${requestId}/retry-429`, {
+        method: "POST",
+      });
+      assert.equal(retry429.status, 409);
+      assert.equal(retry429.data.error, "no_retryable_429_errors");
+      assert.equal(retry429.data.request_id, requestId);
+      assert.equal(retry429.data.retryable_429_count, 0);
+    });
+
+    it("supports targeted retry-429 contract and cooldown handling", async () => {
+      const requestId = "req_api_test_retry_429_targeted_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const responsePayload = buildGeminiHandoffResponsePayload(requestId);
+      responsePayload.status = "partial";
+      responsePayload.errors = [
+        {
+          code: "gemini_api_http_error",
+          message: "Gemini API HTTP 429 for scoped generation",
+          retryable: true,
+          scope: {
+            company_number: "01234567",
+            person_id: "st_001",
+          },
+        },
+      ];
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(responsePayload),
+      });
+      assert.equal(completed.status, 200);
+      assert.equal(completed.data.status, "partial");
+
+      const retry429 = await fetchJSON(`/api/gemini/handoff/${requestId}/retry-429`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_scopes: 5 }),
+      });
+      assert.equal(retry429.status, 202);
+      assert.equal(retry429.data.request_id, requestId);
+      assert.equal(retry429.data.targeted_scope_count, 1);
+      assert.equal(retry429.data.transport?.attempted, false);
+      assert.equal(retry429.data.transport?.skipped, true);
+      assert.equal(retry429.data.next_action, "retry_requested");
+
+      const afterRetry = await fetchJSON(`/api/gemini/handoff/${requestId}`);
+      assert.equal(afterRetry.status, 200);
+      assert.equal(afterRetry.data.retry_count, 1);
+
+      const blockedByCooldown = await fetchJSON(`/api/gemini/handoff/${requestId}/retry-429`, {
+        method: "POST",
+      });
+      assert.equal(blockedByCooldown.status, 409);
+      assert.equal(blockedByCooldown.data.error, "retry_cooldown_active");
+      assert.equal(blockedByCooldown.data.request_id, requestId);
+      assert.equal(typeof blockedByCooldown.data.retry_after_ms, "number");
+      assert.equal(blockedByCooldown.data.retry_after_ms > 0, true);
+    });
+
+    it("validates retry-429 max_scopes option", async () => {
+      const requestId = "req_api_test_retry_429_max_scopes_validation_001";
+      const accepted = await fetchJSON("/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const responsePayload = buildGeminiHandoffResponsePayload(requestId);
+      responsePayload.status = "partial";
+      responsePayload.errors = [
+        {
+          code: "gemini_api_http_error",
+          message: "Gemini API HTTP 429 for scoped generation",
+          retryable: true,
+          scope: {
+            company_number: "01234567",
+            person_id: "st_001",
+          },
+        },
+      ];
+
+      const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(responsePayload),
+      });
+      assert.equal(completed.status, 200);
+
+      const invalidMaxScopes = await fetchJSON(`/api/gemini/handoff/${requestId}/retry-429`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_scopes: 0 }),
+      });
+      assert.equal(invalidMaxScopes.status, 400);
+      assert.equal(invalidMaxScopes.data.error, "invalid_max_scopes");
+    });
+
     it("treats duplicate complete callbacks with same response_id as idempotent", async () => {
       const requestId = "req_api_test_duplicate_complete_001";
       const accepted = await fetchJSON("/api/gemini/handoff", {
@@ -2247,10 +2537,17 @@ describe("API endpoints", () => {
       assert.equal(notCompleted.status, 409);
       assert.equal(notCompleted.data.error, "handoff_not_completed");
 
+      const completionPayload = buildGeminiHandoffResponsePayload(requestId);
+      completionPayload.sequence_outputs[0].steps[0].subject = "Question about Director priorities at EXAMPLE CO LTD";
+      completionPayload.sequence_outputs[0].steps[0].body = "Hi Jane,\n\nI noticed EXAMPLE CO LIMITED has expanded payment operations.";
+      completionPayload.sequence_outputs[0].yamm_rows[0].Company = "EXAMPLE CO LTD";
+      completionPayload.sequence_outputs[0].yamm_rows[0].Subject = "Question about Director priorities at EXAMPLE CO LTD";
+      completionPayload.sequence_outputs[0].yamm_rows[0].Body = "Hi Jane,\n\nI noticed EXAMPLE CO LIMITED has expanded payment operations.";
+
       const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildGeminiHandoffResponsePayload(requestId)),
+        body: JSON.stringify(completionPayload),
       });
       assert.equal(completed.status, 200);
 
@@ -2261,6 +2558,13 @@ describe("API endpoints", () => {
       assert.equal(allRows.data.rows[0]?.RequestId, requestId);
       assert.equal(typeof allRows.data.rows[0]?.ResponseId, "string");
       assert.equal(allRows.data.rows[0]?.ApprovalStatus, "pending");
+      assert.equal(allRows.data.rows[0]?.Company, "Example Co");
+      assert.equal(allRows.data.rows[0]?.Subject.includes("Example Co"), true);
+      assert.equal(allRows.data.rows[0]?.Body.includes("Example Co"), true);
+      assert.equal(/\b(?:limited|ltd)\b/i.test(allRows.data.rows[0]?.Subject || ""), false);
+      assert.equal(/\b(?:limited|ltd)\b/i.test(allRows.data.rows[0]?.Body || ""), false);
+      assert.equal(allRows.data.rows[0]?.CompanyNameNeedsReview, false);
+      assert.equal(allRows.data.rows[0]?.CompanyNameReviewReason, null);
 
       const pendingRows = await fetchJSON(`/api/gemini/handoff/${requestId}/yamm-rows?approval_status=pending`);
       assert.equal(pendingRows.status, 200);
@@ -2279,7 +2583,11 @@ describe("API endpoints", () => {
       );
       const csvBody = await csvResponse.text();
       assert.equal(csvBody.includes("Subject,Body,Company,CompanyNumber"), true);
-      assert.equal(csvBody.includes("Question about Example Co"), true);
+      assert.equal(csvBody.includes("Director priorities at Example Co"), true);
+      assert.equal(csvBody.includes("EXAMPLE CO LTD"), false);
+      assert.equal(csvBody.includes("Example Co"), true);
+      assert.equal(csvBody.includes("CompanyNameNeedsReview"), true);
+      assert.equal(csvBody.includes("CompanyNameReviewReason"), true);
 
       const csvApproved = await fetch(`${BASE}/api/gemini/handoff/${requestId}/yamm-rows?format=csv&approval_status=approved`);
       assert.equal(csvApproved.status, 200);
@@ -2341,6 +2649,18 @@ describe("API endpoints", () => {
           ApprovalStatus: "approved",
           DoNotSend: "true",
         },
+        {
+          To: "lookup@example.co.uk",
+          Subject: "Approved but company name unresolved",
+          Body: "Should be blocked until company name is corrected",
+          Company: "name lookup needed",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 4,
+          ApprovalStatus: "approved",
+          DoNotSend: "false",
+        },
       ];
 
       const completed = await fetchJSON(`/api/gemini/handoff/${requestId}/complete`, {
@@ -2361,6 +2681,7 @@ describe("API endpoints", () => {
       const sendEligibleCsvBody = await sendEligibleCsv.text();
       assert.equal(sendEligibleCsvBody.includes("owner@example.co.uk"), true);
       assert.equal(sendEligibleCsvBody.includes("blocked@example.co.uk"), false);
+      assert.equal(sendEligibleCsvBody.includes("lookup@example.co.uk"), false);
 
       const contradictoryFilters = await fetchJSON(
         `/api/gemini/handoff/${requestId}/yamm-rows?approval_status=pending&send_eligible=true`
@@ -2392,7 +2713,7 @@ describe("API endpoints", () => {
           To: "",
           Subject: "Pending no recipient",
           Body: "pending",
-          Company: "Example Co Ltd",
+          Company: "name lookup needed",
           CompanyNumber: "01234567",
           PriorityRank: 1,
           SequenceId: "seq_01234567_st_001",
@@ -2438,9 +2759,11 @@ describe("API endpoints", () => {
       assert.equal(summary.data.totals.send_eligible, 1);
       assert.equal(summary.data.totals.missing_recipient, 1);
       assert.equal(summary.data.totals.do_not_send, 1);
+      assert.equal(summary.data.totals.company_name_needs_review, 1);
       assert.equal(summary.data.by_approval_status.pending, 1);
       assert.equal(summary.data.by_approval_status.approved, 2);
       assert.equal(summary.data.by_approval_status.rejected, 0);
+      assert.equal(summary.data.company_name_review_reasons.name_lookup_needed, 1);
     });
 
     it("validates handoff event history query parameters", async () => {
@@ -2483,6 +2806,7 @@ describe("API endpoints", () => {
       await seedWeeklyReadyCompany();
 
       const weekLabel = new Date().toISOString().slice(0, 10);
+      const explicitRequestId = `req_weekly_dry_run_${Date.now()}`;
       const weekly = await fetchJSON("/api/gemini/weekly/handoff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2491,6 +2815,7 @@ describe("API endpoints", () => {
           focus: "all",
           limit: 1,
           request_prefix: `api_weekly_dry_run_${Date.now()}`,
+          request_id: explicitRequestId,
           dry_run: true,
         }),
       });
@@ -2500,9 +2825,11 @@ describe("API endpoints", () => {
       assert.equal(weekly.data.dry_run, true);
       assert.equal(typeof weekly.data.request_id, "string");
       assert.equal(weekly.data.request_id.length > 0, true);
+      assert.equal(weekly.data.request_id, explicitRequestId);
       assert.equal(Number(weekly.data.ranked_count) >= 1, true);
       assert.ok(Array.isArray(weekly.data.payload?.ranked_companies));
       assert.equal(weekly.data.payload.ranked_companies.length >= 1, true);
+      assert.equal(weekly.data.payload?.request_id, explicitRequestId);
     });
 
     it("treats duplicate weekly handoff requests as idempotent", async () => {
