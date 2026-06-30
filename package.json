@@ -5,6 +5,8 @@
   "scripts": {
     "start": "bash ./start.sh",
     "start:dev": "LIGHTWEIGHT_RUNTIME=true IGNORE_RUNTIME_SIGTERM=true FRONTEND_HOST=0.0.0.0 FRONTEND_PORT=5174 bash ./start.sh",
+    "stop:dev": "bash ./scripts/stop-dev.sh",
+    "status:dev": "bash ./scripts/status-dev.sh",
     "start:backend": "npm --prefix ./mock-backend start",
     "start:backend:light": "LIGHTWEIGHT_RUNTIME=true npm --prefix ./mock-backend start",
     "start:frontend": "npm --prefix ./frontend run dev",

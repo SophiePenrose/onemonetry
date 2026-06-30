@@ -24,6 +24,8 @@ const {
   updateStepContent,
   markStepReviewed,
   updateStepStatus,
+  normalizeCompanyDisplayName,
+  normalizeCompanyNameInText,
 } = await import("../email-sequences.js");
 
 after(() => {
@@ -99,4 +101,46 @@ test("markStepReviewed and updateStepStatus both advance updated_at", () => {
     parseSqliteDateTime(getSequence(seq.id).updated_at) > parseSqliteDateTime("2024-01-01 00:00:00"),
     "updateStepStatus should advance updated_at"
   );
+});
+
+test("normalizes company display names and in-text mentions", () => {
+  assert.equal(normalizeCompanyDisplayName("ACME HOLDINGS LIMITED"), "Acme Holdings");
+  assert.equal(normalizeCompanyDisplayName("acme holdings ltd"), "Acme Holdings");
+  assert.equal(normalizeCompanyDisplayName(" Acme Holdings, Ltd. "), "Acme Holdings");
+
+  const normalizedSubject = normalizeCompanyNameInText(
+    "Question about Director priorities at ACME HOLDINGS LTD",
+    {
+      rawCompanyName: "ACME HOLDINGS LIMITED",
+      normalizedCompanyName: "Acme Holdings",
+    }
+  );
+  assert.equal(normalizedSubject, "Question about Director priorities at Acme Holdings");
+});
+
+test("saveGeneratedSequence normalizes preserved subject and body company names", () => {
+  const seq = saveGeneratedSequence({
+    companyId: "co-touch-company-normalize",
+    companyName: "EXAMPLE CO LIMITED",
+    stakeholderName: "Jordan",
+    stakeholderRole: "CFO",
+    steps: [
+      {
+        step_number: 1,
+        subject: "Question about Director priorities at EXAMPLE CO LTD",
+        body: "Hi Jordan,\n\nI noticed EXAMPLE CO LIMITED has expanded payments activity.",
+        send_delay_days: 0,
+      },
+    ],
+    preserveSubject: true,
+  });
+
+  assert.ok(seq && seq.id, "expected sequence to be created");
+  const stored = getSequence(seq.id);
+  assert.ok(stored, "expected persisted sequence");
+  assert.equal(stored.steps.length, 1);
+  assert.equal(stored.steps[0].subject.includes("Example Co"), true);
+  assert.equal(/\b(?:limited|ltd)\b/i.test(stored.steps[0].subject), false);
+  assert.equal(stored.steps[0].body.includes("Example Co"), true);
+  assert.equal(/\b(?:limited|ltd)\b/i.test(stored.steps[0].body), false);
 });
