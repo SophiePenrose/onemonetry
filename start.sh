@@ -33,6 +33,10 @@ is_configured_secret() {
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
+FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+BACKEND_PORT="${PORT:-8000}"
+
 # Load local environment variables for this shell session (if present)
 if [ -f "$REPO_ROOT/.env" ]; then
   set -a
@@ -78,7 +82,7 @@ else
 fi
 
 # Kill any existing processes on our ports
-for port in 8000 5173 5174; do
+for port in "$BACKEND_PORT" "$FRONTEND_PORT" 5173 5174; do
   pid=$(lsof -ti :$port 2>/dev/null || true)
   if [ -n "$pid" ]; then
     echo "Stopping existing process on port $port (PID $pid)"
@@ -88,7 +92,7 @@ for port in 8000 5173 5174; do
 done
 
 # Start backend
-echo "Starting backend on port 8000..."
+echo "Starting backend on port $BACKEND_PORT..."
 cd "$REPO_ROOT"
 IGNORE_RUNTIME_SIGTERM="${IGNORE_RUNTIME_SIGTERM:-true}"
 LIGHTWEIGHT_RUNTIME="${LIGHTWEIGHT_RUNTIME:-true}"
@@ -108,17 +112,17 @@ else
 fi
 
 # Start frontend
-echo "Starting frontend on port 5173..."
+echo "Starting frontend on port $FRONTEND_PORT..."
 cd "$REPO_ROOT/frontend"
-nohup npm run dev > /tmp/onemonetry-frontend.log 2>&1 &
+nohup npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > /tmp/onemonetry-frontend.log 2>&1 &
 FRONTEND_PID=$!
 
 sleep 3
 echo "✅ Frontend running (PID $FRONTEND_PID)"
 echo ""
 echo "=== Ready ==="
-echo "Frontend: http://localhost:5173"
-echo "Backend:  http://localhost:8000"
+echo "Frontend: http://localhost:$FRONTEND_PORT"
+echo "Backend:  http://localhost:$BACKEND_PORT"
 echo "Backend logs: /tmp/onemonetry-backend.log"
 echo "Frontend logs: /tmp/onemonetry-frontend.log"
 echo ""
