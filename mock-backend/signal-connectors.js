@@ -42,15 +42,6 @@ const CONNECTOR_DEFINITIONS = [
     purpose: "workflow_automation_enrichment_exports",
   },
   {
-    id: "cursor",
-    keyEnvs: ["CURSOR_API_KEY"],
-    keysOptional: true,
-    urlTemplateEnv: "CURSOR_URL_TEMPLATE",
-    authHeaderEnv: "CURSOR_AUTH_HEADER",
-    authSchemeEnv: "CURSOR_AUTH_SCHEME",
-    purpose: "workflow_automation_enrichment_exports",
-  },
-  {
     id: "similarweb",
     keyEnvs: ["SIMILARWEB_API_KEY"],
     urlTemplateEnv: "SIMILARWEB_URL_TEMPLATE",
@@ -889,6 +880,14 @@ function getFirstNumericByPaths(root, paths) {
   return null;
 }
 
+function getFirstNumericFromRecords(records, keys) {
+  for (const record of asObjectArray(records)) {
+    const value = readNumericField(record, keys);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
 function getFirstArrayByPaths(root, paths) {
   for (const path of paths || []) {
     const candidate = getByPath(root, path);
@@ -908,9 +907,51 @@ function collectArraysFromPaths(root, paths) {
 }
 
 function normalizeConnectorPayloadRoot(payload) {
+  if (Array.isArray(payload)) {
+    return {
+      results: payload,
+      rows: payload,
+      items: payload,
+      data: payload,
+    };
+  }
+
   const objectPayload = payload && typeof payload === "object" ? payload : {};
-  if (objectPayload.data && typeof objectPayload.data === "object") return objectPayload.data;
-  if (objectPayload.result && typeof objectPayload.result === "object") return objectPayload.result;
+
+  const dataCandidate = objectPayload.data;
+  if (dataCandidate && typeof dataCandidate === "object" && !Array.isArray(dataCandidate)) {
+    return { ...objectPayload, ...dataCandidate };
+  }
+  if (Array.isArray(dataCandidate)) {
+    return {
+      ...objectPayload,
+      results: dataCandidate,
+      rows: dataCandidate,
+      items: dataCandidate,
+    };
+  }
+
+  const resultCandidate = objectPayload.result;
+  if (resultCandidate && typeof resultCandidate === "object" && !Array.isArray(resultCandidate)) {
+    return { ...objectPayload, ...resultCandidate };
+  }
+  if (Array.isArray(resultCandidate)) {
+    return {
+      ...objectPayload,
+      results: resultCandidate,
+      rows: resultCandidate,
+      items: resultCandidate,
+    };
+  }
+
+  if (Array.isArray(objectPayload.results)) {
+    return {
+      ...objectPayload,
+      rows: objectPayload.results,
+      items: objectPayload.results,
+    };
+  }
+
   return objectPayload;
 }
 
@@ -1517,17 +1558,26 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     "matches",
     "leads",
     "results",
+    "rows",
+    "items",
     "data.results",
+    "data.rows",
+    "data.items",
     "data.people",
     "data.contacts",
+    "response.results",
+    "response.data",
     "organization.people",
   ]));
   const explicitJobRows = asObjectArray(collectArraysFromPaths(root, [
     "jobs",
     "open_roles",
     "roles",
+    "positions",
     "vacancies",
     "company.jobs",
+    "company.roles",
+    "organization.roles",
     "data.jobs",
   ]));
 
@@ -1547,6 +1597,16 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "company.tech_stack",
       "organization.technologies",
     ])),
+    ...splitDelimitedTextValues([
+      getFirstByPaths(root, [
+        "technology",
+        "tech",
+        "primary_technology",
+        "company.technology",
+        "organization.technology",
+      ]),
+      getFirstByPaths(companyNode, ["technology", "tech", "primary_technology"]),
+    ]),
     ...splitDelimitedTextValues(getFirstArrayByPaths(companyNode, ["technologies", "tech_stack", "stack"])),
     ...contactRows.flatMap((row) => splitDelimitedTextValues([
       row?.technologies,
@@ -1566,7 +1626,7 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "active_jobs",
       "results_count",
       "meta.total_results",
-    ]) ?? roleCountFromCompany,
+    ]) ?? roleCountFromCompany ?? (jobs.length > 0 ? jobs.length : null),
     technologies,
     monthly_web_traffic: getFirstNumericByPaths(root, [
       "monthly_web_traffic",
@@ -1577,7 +1637,9 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "company.monthly_web_traffic",
       "company.monthly_visits",
       "organization.monthly_visits",
-    ]) ?? getFirstNumericByPaths(companyNode, ["monthly_web_traffic", "monthly_visits", "traffic.monthly_visits"]),
+    ])
+      ?? getFirstNumericByPaths(companyNode, ["monthly_web_traffic", "monthly_visits", "traffic.monthly_visits"])
+      ?? getFirstNumericFromRecords(contactRows, ["monthly_web_traffic", "monthly_visits", "web_traffic", "traffic"]),
     estimated_monthly_ad_spend: getFirstNumericByPaths(root, [
       "estimated_monthly_ad_spend",
       "estimated_ad_spend",
@@ -1636,6 +1698,9 @@ function parsePhantomBusterSpecificEnvelopes(payload, sourceId) {
     "data.results",
     "data.rows",
     "data.items",
+    "response.results",
+    "response.rows",
+    "response.items",
   ]));
 
   const jobs = exportRows
@@ -1652,6 +1717,9 @@ function parsePhantomBusterSpecificEnvelopes(payload, sourceId) {
       "data.tech_stack",
       "result.technologies",
     ])),
+    ...splitDelimitedTextValues([
+      getFirstByPaths(root, ["technology", "tech", "tooling", "result.technology", "data.technology"]),
+    ]),
     ...exportRows.flatMap((row) => splitDelimitedTextValues([
       row?.technologies,
       row?.technology,
@@ -1671,7 +1739,7 @@ function parsePhantomBusterSpecificEnvelopes(payload, sourceId) {
       "active_jobs",
       "metadata.open_roles",
       "summary.open_roles",
-    ]),
+    ]) ?? (jobs.length > 0 ? jobs.length : null),
     technologies,
     monthly_web_traffic: getFirstNumericByPaths(root, [
       "monthly_web_traffic",
@@ -1682,6 +1750,12 @@ function parsePhantomBusterSpecificEnvelopes(payload, sourceId) {
       "metrics.monthly_web_traffic",
       "data.monthly_web_traffic",
       "data.website.monthly_visits",
+    ]) ?? getFirstNumericFromRecords(exportRows, [
+      "monthly_web_traffic",
+      "monthly_visits",
+      "web_traffic",
+      "traffic",
+      "website_traffic",
     ]),
     estimated_monthly_ad_spend: getFirstNumericByPaths(root, [
       "estimated_monthly_ad_spend",
