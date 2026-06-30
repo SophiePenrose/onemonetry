@@ -323,4 +323,142 @@ describe("Gemini handoff persistence across server restart", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("overlays synced approvals in YAMM rows and summary", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "onemonetry-gemini-persist-"));
+    const testDatabasePath = path.join(tempDir, "gemini-persistence-overlay.db");
+    const testCompaniesPath = path.join(tempDir, "companies.json");
+    fs.copyFileSync(sourceCompaniesPath, testCompaniesPath);
+
+    const requestId = "req_persistence_overlay_001";
+    const port = randomPort(21900);
+    const server = await startApiServer({
+      port,
+      testDatabasePath,
+      testCompaniesPath,
+    });
+
+    try {
+      const accepted = await fetchJSON(server.baseUrl, "/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({ request_id: requestId })),
+      });
+      assert.equal(accepted.status, 202);
+
+      const payload = buildGeminiHandoffResponsePayload(requestId);
+      payload.sheet_write.rows_written = 2;
+      payload.sheet_write.range = "queue_week_2026_w26!A2:AZ3";
+      payload.sequence_outputs[0].steps = [
+        {
+          step_number: 1,
+          step_type: "proof",
+          day_offset: 0,
+          subject: "Question about Example Co",
+          body: "Example step one body",
+          citations: ["simulator.local"],
+        },
+        {
+          step_number: 2,
+          step_type: "nudge_1",
+          day_offset: 2,
+          subject: "Quick follow-up for Example Co",
+          body: "Example step two body",
+          citations: ["simulator.local"],
+        },
+      ];
+      payload.sequence_outputs[0].yamm_rows = [
+        {
+          To: "jane@example.com",
+          Subject: "Question about Example Co",
+          Body: "Example step one body",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 1,
+          ApprovalStatus: "pending",
+        },
+        {
+          To: "jane@example.com",
+          Subject: "Quick follow-up for Example Co",
+          Body: "Example step two body",
+          Company: "Example Co Ltd",
+          CompanyNumber: "01234567",
+          PriorityRank: 1,
+          SequenceId: "seq_01234567_st_001",
+          StepNumber: 2,
+          ApprovalStatus: "pending",
+        },
+      ];
+
+      const completed = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(completed.status, 200);
+      assert.equal(completed.data.status, "completed");
+
+      const approvalsSynced = await fetchJSON(server.baseUrl, "/api/gemini/sheets/sync-approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_version: "gemini-handoff-v1",
+          request_id: requestId,
+          approvals: [
+            {
+              sequence_id: "seq_01234567_st_001",
+              step_number: 1,
+              approval_status: "approved",
+              approved_by: "Sophie",
+              approved_at: new Date().toISOString(),
+            },
+            {
+              sequence_id: "seq_01234567_st_001",
+              step_number: 2,
+              approval_status: "paused",
+              review_notes: "waiting_manager_review",
+            },
+          ],
+        }),
+      });
+
+      assert.equal(approvalsSynced.status, 200);
+      assert.equal(approvalsSynced.data.counts.approved, 1);
+      assert.equal(approvalsSynced.data.counts.paused, 1);
+
+      const rows = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows`);
+      assert.equal(rows.status, 200);
+      assert.equal(rows.data.rows.length, 2);
+
+      const rowsByStep = new Map(rows.data.rows.map((row) => [Number(row.StepNumber), row]));
+      assert.equal(rowsByStep.get(1)?.ApprovalStatus, "approved");
+      assert.equal(rowsByStep.get(1)?.ApprovedBy, "Sophie");
+      assert.equal(typeof rowsByStep.get(1)?.ApprovedAt, "string");
+      assert.equal(rowsByStep.get(2)?.ApprovalStatus, "paused");
+      assert.equal(rowsByStep.get(2)?.ReviewNotes, "waiting_manager_review");
+
+      const approvedRows = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows?approval_status=approved`);
+      assert.equal(approvedRows.status, 200);
+      assert.equal(approvedRows.data.rows.length, 1);
+      assert.equal(Number(approvedRows.data.rows[0]?.StepNumber), 1);
+
+      const pausedRows = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows?approval_status=paused`);
+      assert.equal(pausedRows.status, 200);
+      assert.equal(pausedRows.data.rows.length, 1);
+      assert.equal(Number(pausedRows.data.rows[0]?.StepNumber), 2);
+
+      const summary = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows/summary`);
+      assert.equal(summary.status, 200);
+      assert.equal(summary.data.totals.rows, 2);
+      assert.equal(summary.data.totals.send_eligible, 1);
+      assert.equal(summary.data.by_approval_status.approved, 1);
+      assert.equal(summary.data.by_approval_status.paused, 1);
+      assert.equal(summary.data.by_approval_status.pending, 0);
+    } finally {
+      await server.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

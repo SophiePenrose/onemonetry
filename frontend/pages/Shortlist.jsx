@@ -190,6 +190,20 @@ function normalizeStatusBand(value) {
   return "unknown";
 }
 
+function formatUnresolvedCompanyNameReason(value) {
+  const token = String(value || "").trim().toLowerCase();
+  if (!token) return "Name needs confirmation";
+  if (token === "missing_company_name") return "Name missing";
+  if (token === "placeholder_company_number") return "Placeholder name";
+  if (token === "name_lookup_needed") return "Name lookup needed";
+  if (token === "name_lookup_pending") return "Name lookup pending";
+  if (token === "unknown_company") return "Unknown company label";
+  if (token === "not_available") return "Name unavailable";
+  if (token === "to_be_confirmed") return "Name to be confirmed";
+  if (token === "non_company_heading") return "Heading text detected";
+  return token.replaceAll("_", " ");
+}
+
 function formatStatusSeverityPercent(value) {
   const score = Number(value);
   if (!Number.isFinite(score)) return null;
@@ -1274,6 +1288,13 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
     briefStatusDegradedComponents,
   } = briefStatus;
 
+  const briefNameUnresolved = Boolean(
+    companyDetail?.unresolved_company_name ?? activeCompany?.unresolved_company_name
+  );
+  const briefNameResolutionReason = formatUnresolvedCompanyNameReason(
+    companyDetail?.unresolved_company_name_reason || activeCompany?.unresolved_company_name_reason
+  );
+
   if (loading && weeklyCompanies.length === 0) {
     return <TableSkeleton rows={8} />;
   }
@@ -1549,6 +1570,9 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                       <Badge text={`Tier ${company.score_tier}`} bg={company.score_tier === "A" ? "#047857" : company.score_tier === "B" ? "#2563eb" : "#6b7280"} />
                       <Badge text={analysisMeta.label} bg={analysisMeta.color} />
                       <Badge text={state.label} bg={state.color} />
+                      {company.unresolved_company_name && (
+                        <Badge text="Name pending" bg="#92400e" />
+                      )}
                       {(statusBand !== "unknown" || statusSeverity || statusOpenIncidents > 0) && (
                         <Badge text={statusMeta.badge} bg={statusMeta.color} />
                       )}
@@ -1571,6 +1595,14 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
                         <>
                           <span>•</span>
                           <span title="Backend filter reason" style={{ textTransform: "capitalize" }}>{String(company.filter_reason).replaceAll("_", " ")}</span>
+                        </>
+                      )}
+                      {company.unresolved_company_name && (
+                        <>
+                          <span>•</span>
+                          <span title="Company name needs confirmation" style={{ color: "#92400e", fontWeight: 600 }}>
+                            {formatUnresolvedCompanyNameReason(company.unresolved_company_name_reason)}
+                          </span>
                         </>
                       )}
                       {(statusBand !== "unknown" || statusSeverity || statusIncidentAge || statusOpenIncidents > 0) && (
@@ -1639,6 +1671,11 @@ export default function Shortlist({ onSelectCompany, onShowAddCompany }) {
             <div>
               <div style={{ marginBottom: 10 }}>
                 <h4 style={{ margin: "0 0 4px", fontSize: 18 }}>{activeCompany.name}</h4>
+                {briefNameUnresolved && (
+                  <div style={{ marginBottom: 4 }}>
+                    <Badge text={`Name pending: ${briefNameResolutionReason}`} bg="#92400e" />
+                  </div>
+                )}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "#5b6676" }}>
                   <span>{activeCompany.industry || "Unknown industry"}</span>
                   <span>•</span>

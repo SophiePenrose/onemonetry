@@ -302,6 +302,30 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_events_request ON gemini_handoff_events(request_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_gemini_handoff_events_type ON gemini_handoff_events(event_type);
+
+  CREATE TABLE IF NOT EXISTS stakeholder_alert_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id TEXT NOT NULL,
+    company_number TEXT,
+    snapshot_hash TEXT NOT NULL DEFAULT '',
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    stakeholder_key TEXT NOT NULL DEFAULT '',
+    stakeholder_name TEXT,
+    stakeholder_role TEXT,
+    previous_score REAL,
+    current_score REAL,
+    delta_score REAL,
+    confidence_level TEXT,
+    buying_role TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(company_id, snapshot_hash, event_type, stakeholder_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_stakeholder_alert_events_company ON stakeholder_alert_events(company_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_stakeholder_alert_events_company_number ON stakeholder_alert_events(company_number, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_stakeholder_alert_events_type ON stakeholder_alert_events(event_type);
 `);
 
 try {
@@ -1765,6 +1789,21 @@ const stmtGetGeminiApprovalCounts = db.prepare(`
   GROUP BY approval_status
 `);
 
+const stmtListGeminiApprovalsByRequest = db.prepare(`
+  SELECT
+    request_id,
+    sequence_id,
+    step_number,
+    approval_status,
+    approved_by,
+    approved_at,
+    review_notes,
+    synced_at
+  FROM gemini_handoff_approvals
+  WHERE request_id = ?
+  ORDER BY sequence_id ASC, step_number ASC
+`);
+
 const stmtInsertGeminiHandoffEvent = db.prepare(`
   INSERT INTO gemini_handoff_events (
     request_id,
@@ -1773,6 +1812,26 @@ const stmtInsertGeminiHandoffEvent = db.prepare(`
     detail,
     created_at
   ) VALUES (?, ?, ?, ?, datetime('now'))
+`);
+
+const stmtInsertStakeholderAlertEvent = db.prepare(`
+  INSERT OR IGNORE INTO stakeholder_alert_events (
+    company_id,
+    company_number,
+    snapshot_hash,
+    event_type,
+    severity,
+    stakeholder_key,
+    stakeholder_name,
+    stakeholder_role,
+    previous_score,
+    current_score,
+    delta_score,
+    confidence_level,
+    buying_role,
+    detail,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 `);
 
 function hydrateGeminiHandoffRequest(row) {
@@ -1927,6 +1986,7 @@ export function listGeminiHandoffRequests(filters = {}) {
       r.contract_version,
       r.status,
       r.accepted_at,
+      r.approvals_revision,
       r.retry_count,
       r.last_retry_requested_at,
       r.request_payload_sha256,
@@ -3690,6 +3750,23 @@ export function getGeminiHandoffApprovalCounts(requestId) {
   return counts;
 }
 
+export function listGeminiHandoffApprovals(requestId) {
+  const normalized = String(requestId || "").trim();
+  if (!normalized) return [];
+
+  const rows = stmtListGeminiApprovalsByRequest.all(normalized);
+  return rows.map((row) => ({
+    request_id: row.request_id,
+    sequence_id: String(row.sequence_id || "").trim(),
+    step_number: Number.parseInt(String(row.step_number || ""), 10),
+    approval_status: String(row.approval_status || "").trim().toLowerCase() || "pending",
+    approved_by: row.approved_by ? String(row.approved_by) : null,
+    approved_at: row.approved_at ? String(row.approved_at) : null,
+    review_notes: row.review_notes ? String(row.review_notes) : null,
+    synced_at: row.synced_at || null,
+  })).filter((row) => row.sequence_id && Number.isInteger(row.step_number) && row.step_number > 0);
+}
+
 export function addGeminiHandoffEvent(requestId, eventType, eventStage = null, detail = null) {
   const normalizedRequestId = String(requestId || "").trim();
   const normalizedType = String(eventType || "").trim();
@@ -3764,6 +3841,163 @@ export function listGeminiHandoffEvents(requestId, options = 100) {
       created_at: row.created_at,
     };
   });
+}
+
+export function addStakeholderAlertEvent(payload = {}) {
+  const companyId = String(payload?.company_id || "").trim();
+  const eventType = String(payload?.event_type || "").trim();
+  if (!companyId || !eventType) return null;
+
+  const companyNumber = String(payload?.company_number || "").trim() || null;
+  const snapshotHash = String(payload?.snapshot_hash || "").trim();
+  const severity = String(payload?.severity || "info").trim().toLowerCase() || "info";
+  const stakeholderKey = String(payload?.stakeholder_key || "").trim().toLowerCase();
+  const stakeholderName = String(payload?.stakeholder_name || "").trim() || null;
+  const stakeholderRole = String(payload?.stakeholder_role || "").trim() || null;
+  const previousScoreRaw = Number(payload?.previous_score);
+  const currentScoreRaw = Number(payload?.current_score);
+  const deltaScoreRaw = Number(payload?.delta_score);
+  const confidenceLevel = String(payload?.confidence_level || "").trim().toLowerCase() || null;
+  const buyingRole = String(payload?.buying_role || "").trim().toLowerCase() || null;
+  const detail = payload?.detail && typeof payload.detail === "object"
+    ? JSON.stringify(payload.detail)
+    : (payload?.detail === null || payload?.detail === undefined
+      ? null
+      : String(payload.detail));
+
+  const result = stmtInsertStakeholderAlertEvent.run(
+    companyId,
+    companyNumber,
+    snapshotHash,
+    eventType,
+    severity,
+    stakeholderKey,
+    stakeholderName,
+    stakeholderRole,
+    Number.isFinite(previousScoreRaw) ? previousScoreRaw : null,
+    Number.isFinite(currentScoreRaw) ? currentScoreRaw : null,
+    Number.isFinite(deltaScoreRaw) ? deltaScoreRaw : null,
+    confidenceLevel,
+    buyingRole,
+    detail
+  );
+
+  return Number(result.lastInsertRowid || 0) || null;
+}
+
+function buildStakeholderAlertFilterSql(companyId, options = {}) {
+  const normalizedCompanyId = String(companyId || "").trim();
+  if (!normalizedCompanyId) {
+    return {
+      whereSql: "WHERE 1 = 0",
+      params: [],
+    };
+  }
+
+  const whereClauses = ["company_id = ?"];
+  const params = [normalizedCompanyId];
+
+  const eventType = String(options?.eventType || "").trim();
+  if (eventType) {
+    whereClauses.push("event_type = ?");
+    params.push(eventType);
+  }
+
+  const beforeId = Number.parseInt(String(options?.beforeId || ""), 10);
+  if (Number.isInteger(beforeId) && beforeId > 0) {
+    whereClauses.push("id < ?");
+    params.push(beforeId);
+  }
+
+  const sinceHours = Number.parseInt(String(options?.sinceHours || ""), 10);
+  if (Number.isInteger(sinceHours) && sinceHours > 0) {
+    whereClauses.push("created_at >= datetime('now', ?)");
+    params.push(`-${sinceHours} hours`);
+  }
+
+  return {
+    whereSql: `WHERE ${whereClauses.join(" AND ")}`,
+    params,
+  };
+}
+
+export function listStakeholderAlertEvents(companyId, options = {}) {
+  const optionsObject = options && typeof options === "object" ? options : { limit: options };
+  const safeLimit = Math.max(1, Math.min(500, Number.parseInt(String(optionsObject.limit || 100), 10) || 100));
+  const safeOffset = Math.max(0, Math.min(10000, Number.parseInt(String(optionsObject.offset || 0), 10) || 0));
+  const { whereSql, params } = buildStakeholderAlertFilterSql(companyId, optionsObject);
+
+  const rows = db.prepare(`
+    SELECT
+      id,
+      company_id,
+      company_number,
+      snapshot_hash,
+      event_type,
+      severity,
+      stakeholder_key,
+      stakeholder_name,
+      stakeholder_role,
+      previous_score,
+      current_score,
+      delta_score,
+      confidence_level,
+      buying_role,
+      detail,
+      created_at
+    FROM stakeholder_alert_events
+    ${whereSql}
+    ORDER BY id DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, safeLimit, safeOffset);
+
+  return rows.map((row) => ({
+    id: Number(row.id || 0),
+    company_id: row.company_id,
+    company_number: row.company_number || null,
+    snapshot_hash: row.snapshot_hash || "",
+    event_type: row.event_type,
+    severity: row.severity || "info",
+    stakeholder_key: row.stakeholder_key || "",
+    stakeholder_name: row.stakeholder_name || null,
+    stakeholder_role: row.stakeholder_role || null,
+    previous_score: Number.isFinite(Number(row.previous_score)) ? Number(row.previous_score) : null,
+    current_score: Number.isFinite(Number(row.current_score)) ? Number(row.current_score) : null,
+    delta_score: Number.isFinite(Number(row.delta_score)) ? Number(row.delta_score) : null,
+    confidence_level: row.confidence_level || null,
+    buying_role: row.buying_role || null,
+    detail: parseJsonText(row.detail, null),
+    created_at: row.created_at,
+  }));
+}
+
+export function countStakeholderAlertEvents(companyId, options = {}) {
+  const { whereSql, params } = buildStakeholderAlertFilterSql(companyId, options || {});
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM stakeholder_alert_events
+    ${whereSql}
+  `).get(...params);
+
+  return Number(row?.count || 0);
+}
+
+export function getStakeholderAlertTypeCounts(companyId, options = {}) {
+  const { whereSql, params } = buildStakeholderAlertFilterSql(companyId, options || {});
+  const rows = db.prepare(`
+    SELECT event_type, COUNT(*) AS count
+    FROM stakeholder_alert_events
+    ${whereSql}
+    GROUP BY event_type
+  `).all(...params);
+
+  const counts = {};
+  for (const row of rows) {
+    const key = String(row?.event_type || "").trim();
+    if (!key) continue;
+    counts[key] = Number(row?.count || 0);
+  }
+  return counts;
 }
 
 export function closeDb() {

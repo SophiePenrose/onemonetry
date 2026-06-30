@@ -295,6 +295,7 @@ const PLACEHOLDER_TOKEN_PATTERN = /\[(?:rounded\s*figure|your\s*name|your\s*titl
 const RESEARCH_HEADER_PREFIX = "Revolut X";
 const RESEARCH_HEADER_SUBJECT_SUFFIX = " research";
 const RESEARCH_HEADER_SUBJECT_MAX_LENGTH = 45;
+const TRAILING_COMPANY_SUFFIX_PATTERN = /(?:\s|,)*(?:limited|ltd\.?)\s*$/i;
 const INTERNAL_MOTION_PRIORITY = {
   "Cards": 0.95,
   "FX": 0.9,
@@ -306,8 +307,102 @@ const INTERNAL_MOTION_PRIORITY = {
   "Monthly Plans": 0.4,
 };
 
+function escapeRegexToken(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripTrailingCompanySuffix(value) {
+  let remaining = compactWhitespace(value);
+  if (!remaining) return "";
+
+  while (TRAILING_COMPANY_SUFFIX_PATTERN.test(remaining)) {
+    const next = remaining
+      .replace(TRAILING_COMPANY_SUFFIX_PATTERN, "")
+      .replace(/[\s,]+$/, "")
+      .trim();
+    if (!next || next === remaining) break;
+    remaining = next;
+  }
+
+  return remaining;
+}
+
+function titleCaseCompanyToken(token) {
+  const lower = String(token || "").toLowerCase();
+  return lower.replace(/(^|[^a-z])([a-z])/g, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+}
+
+function titleCaseCompanyName(value) {
+  return compactWhitespace(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => titleCaseCompanyToken(token))
+    .join(" ");
+}
+
+function buildLoosePhrasePattern(value) {
+  const parts = compactWhitespace(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => escapeRegexToken(token));
+  if (parts.length < 1) return "";
+  return parts.join("\\s+");
+}
+
+function replaceCompanyPhrase(sourceText, phrasePattern, normalizedCompanyName, includeOptionalSuffix = false) {
+  if (!phrasePattern) return sourceText;
+  const suffixPattern = includeOptionalSuffix ? "(?:\\s+(?:limited|ltd\\.?))?" : "";
+  const matcher = new RegExp(`(^|[^A-Za-z0-9])(${phrasePattern}${suffixPattern})(?=[^A-Za-z0-9]|$)`, "gi");
+  return sourceText.replace(matcher, (match, prefix) => `${prefix}${normalizedCompanyName}`);
+}
+
+export function normalizeCompanyDisplayName(value) {
+  const safe = compactWhitespace(value);
+  if (!safe) return "";
+  const stripped = stripTrailingCompanySuffix(safe);
+  return titleCaseCompanyName(stripped || safe);
+}
+
+export function normalizeCompanyNameInText(text, options = {}) {
+  const sourceText = String(text ?? "");
+  const rawCompanyName = compactWhitespace(options.rawCompanyName || options.companyName || "");
+  const normalizedCompanyName = compactWhitespace(
+    options.normalizedCompanyName || normalizeCompanyDisplayName(rawCompanyName)
+  );
+
+  if (!sourceText || !rawCompanyName || !normalizedCompanyName) return sourceText;
+
+  const strippedRawName = stripTrailingCompanySuffix(rawCompanyName) || rawCompanyName;
+  const patternEntries = [];
+  const seen = new Set();
+
+  const addPattern = (value, includeOptionalSuffix) => {
+    const pattern = buildLoosePhrasePattern(value);
+    const key = `${pattern}|${includeOptionalSuffix ? "suffix" : "exact"}`;
+    if (!pattern || seen.has(key)) return;
+    seen.add(key);
+    patternEntries.push({ pattern, includeOptionalSuffix });
+  };
+
+  addPattern(rawCompanyName, false);
+  addPattern(strippedRawName, true);
+
+  let normalizedText = sourceText;
+  for (const entry of patternEntries) {
+    normalizedText = replaceCompanyPhrase(
+      normalizedText,
+      entry.pattern,
+      normalizedCompanyName,
+      entry.includeOptionalSuffix
+    );
+  }
+
+  return normalizedText;
+}
+
 function buildResearchHeaderSubject(companyName) {
-  const safeCompanyName = String(companyName || "Company").trim() || "Company";
+  const normalizedCompanyName = normalizeCompanyDisplayName(companyName);
+  const safeCompanyName = normalizedCompanyName || String(companyName || "Company").trim() || "Company";
   const maxCompanyLength = Math.max(
     1,
     RESEARCH_HEADER_SUBJECT_MAX_LENGTH
@@ -552,7 +647,8 @@ function buildHolisticSteps(params) {
   } = params;
 
   const firstName = stakeholderName?.split(" ")[0] || "there";
-  const company = companyName || "your company";
+  const normalizedCompanyName = normalizeCompanyDisplayName(companyName);
+  const company = normalizedCompanyName || String(companyName || "").trim() || "your company";
   const painList = uniqStrings((analysis?.pain_indicators || []).map((p) => p.pain || p));
   const oppList = uniqStrings((analysis?.opportunities || []).map((o) => o.product || ""));
   const competitorList = uniqStrings((analysis?.competitors_detected || []).map((c) => c.name || c));
@@ -698,8 +794,27 @@ export function saveGeneratedSequence(params) {
     preserveSubject,
   } = params;
 
-  const fixedSubject = companyName ? buildResearchHeaderSubject(companyName) : null;
-  const normalizedSteps = normalizeSteps(steps, { companyName, stakeholderName }).map((step) => {
+  const rawCompanyName = String(companyName || "").trim();
+  const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName);
+  const companyNameForSequence = normalizedCompanyName || rawCompanyName || null;
+  const fixedSubject = companyNameForSequence ? buildResearchHeaderSubject(companyNameForSequence) : null;
+  const sourceSteps = Array.isArray(steps) ? steps : [];
+  const normalizedSourceSteps = sourceSteps.map((step) => ({
+    ...step,
+    subject: normalizeCompanyNameInText(String(step?.subject || ""), {
+      rawCompanyName,
+      normalizedCompanyName: companyNameForSequence || rawCompanyName,
+    }),
+    body: normalizeCompanyNameInText(String(step?.body || ""), {
+      rawCompanyName,
+      normalizedCompanyName: companyNameForSequence || rawCompanyName,
+    }),
+  }));
+
+  const normalizedSteps = normalizeSteps(normalizedSourceSteps, {
+    companyName: companyNameForSequence,
+    stakeholderName,
+  }).map((step) => {
     if (preserveSubject === true) {
       return {
         ...step,

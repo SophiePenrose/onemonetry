@@ -10,6 +10,9 @@ import CompanyAnalysis from "../components/CompanyAnalysis";
 import EvidencePanel from "../components/EvidencePanel";
 import EmailSequencePanel from "../components/EmailSequencePanel";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
+import EnrichmentSignalsPanel from "../components/EnrichmentSignalsPanel";
+import GeminiYammPanel from "../components/GeminiYammPanel";
+import StakeholderAlertsPanel from "../components/StakeholderAlertsPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
 
 const EMPTY_ARRAY = [];
@@ -53,6 +56,20 @@ export function formatOwnershipTimestamp(value) {
   const ts = Date.parse(String(value));
   if (!Number.isFinite(ts)) return "Unknown";
   return new Date(ts).toLocaleString("en-GB");
+}
+
+function formatUnresolvedCompanyNameReason(value) {
+  const token = String(value || "").trim().toLowerCase();
+  if (!token) return "Name needs confirmation";
+  if (token === "missing_company_name") return "Name missing";
+  if (token === "placeholder_company_number") return "Placeholder name";
+  if (token === "name_lookup_needed") return "Name lookup needed";
+  if (token === "name_lookup_pending") return "Name lookup pending";
+  if (token === "unknown_company") return "Unknown company label";
+  if (token === "not_available") return "Name unavailable";
+  if (token === "to_be_confirmed") return "Name to be confirmed";
+  if (token === "non_company_heading") return "Heading text detected";
+  return token.replaceAll("_", " ");
 }
 
 function Field({ label, children }) {
@@ -272,6 +289,8 @@ export default function CompanyDetail({ companyId }) {
     ? propensityScore >= 0.7 ? "#0a8754" : propensityScore >= 0.5 ? "#c27b00" : "#6b7280"
     : "#6b7280";
   const propensityDeltaLabel = formatBpsDelta(company?.combined_score, company?.base_score);
+  const unresolvedCompanyName = company?.unresolved_company_name === true;
+  const unresolvedCompanyNameReason = formatUnresolvedCompanyNameReason(company?.unresolved_company_name_reason);
 
   if (!companyId) return <div>Missing company ID.</div>;
   if (loading) return <DetailSkeleton />;
@@ -282,7 +301,25 @@ export default function CompanyDetail({ companyId }) {
     <div>
       <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
+            {unresolvedCompanyName && (
+              <div
+                style={{
+                  display: "inline-block",
+                  marginTop: 6,
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#fff",
+                  background: "#92400e",
+                }}
+              >
+                Name pending: {unresolvedCompanyNameReason}
+              </div>
+            )}
+          </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Combined Score</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: "#0075EB" }}>{formatScore(company.combined_score)}</div>
@@ -485,6 +522,11 @@ export default function CompanyDetail({ companyId }) {
         />
       </div>
 
+      <StakeholderAlertsPanel
+        companyId={companyId}
+        initialAlerts={company.stakeholder_alerts}
+      />
+
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />
 
       <CompanyAnalysis
@@ -497,6 +539,16 @@ export default function CompanyDetail({ companyId }) {
         initialAnalysis={company.analysis}
         motions={allMotionScores}
         statusSignals={company.reputation_signals || null}
+      />
+
+      <EnrichmentSignalsPanel
+        companyId={companyId}
+        companyNumber={company.company_number}
+      />
+
+      <GeminiYammPanel
+        companyId={companyId}
+        companyNumber={company.company_number}
       />
 
       <EmailSequencePanel

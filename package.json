@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "bash ./start.sh",
+    "start:dev": "LIGHTWEIGHT_RUNTIME=true IGNORE_RUNTIME_SIGTERM=true FRONTEND_HOST=0.0.0.0 FRONTEND_PORT=5174 bash ./start.sh",
     "start:backend": "npm --prefix ./mock-backend start",
     "start:backend:light": "LIGHTWEIGHT_RUNTIME=true npm --prefix ./mock-backend start",
     "start:frontend": "npm --prefix ./frontend run dev",
@@ -15,6 +16,7 @@
     "import:monitor-list": "node ./scripts/import-monitor-list-bulk.mjs",
     "import:monitor-seed-list": "node ./scripts/import-monitor-seed-list.mjs",
     "import:endole-live": "node ./scripts/import-endole-live.mjs",
+    "gemini:weekly:bundle": "node ./scripts/gemini-weekly-export-bundle.mjs",
     "logs": "bash -lc 'echo Backend: && tail -n 120 /tmp/onemonetry-backend.log && echo && echo Frontend: && tail -n 120 /tmp/onemonetry-frontend.log'",
     "logs:backend": "tail -n 120 /tmp/onemonetry-backend.log",
     "logs:frontend": "tail -n 120 /tmp/onemonetry-frontend.log",

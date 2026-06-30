@@ -57,7 +57,7 @@ import {
 } from "./analysis-queue.js";
 import { processZipInChunks, getTurnoverThreshold, getTurnoverMaxThreshold } from "./stream-processor.js";
 import { scoreCompany, getStoredScore, batchScoreCompanies, scoreCompanyWithLLM, batchScoreWithLLM, integrateAnalysis } from "./scoring-engine.js";
-import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences } from "./email-sequences.js";
+import { generateSequence, getSequencesForCompany, getSequence, updateStepStatus, updateStepContent, markStepReviewed, deleteSequence, SEQUENCE_TEMPLATES, getSequenceTemplates, saveGeneratedSequence, purgePlaceholderSequencesForCompany, purgeBrokenSequencesForCompany, purgeBrokenSequences, normalizeCompanyDisplayName, normalizeCompanyNameInText } from "./email-sequences.js";
 import { generateFullSequence, getEmailLlmRuntimeInfo } from "./email-generator.js";
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
@@ -129,8 +129,13 @@ import {
   incrementGeminiHandoffRetry,
   replaceGeminiHandoffApprovals,
   getGeminiHandoffApprovalCounts,
+  listGeminiHandoffApprovals,
   addGeminiHandoffEvent,
   listGeminiHandoffEvents,
+  addStakeholderAlertEvent,
+  listStakeholderAlertEvents,
+  countStakeholderAlertEvents,
+  getStakeholderAlertTypeCounts,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
 import {
@@ -246,6 +251,41 @@ const parsedGeminiHandoffGoogleApiTimeoutMs = Number.parseInt(
 const GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS = Number.isFinite(parsedGeminiHandoffGoogleApiTimeoutMs)
   ? Math.max(3000, Math.min(parsedGeminiHandoffGoogleApiTimeoutMs, 120000))
   : 30000;
+const parsedGeminiHandoffGoogleApiMaxRetries = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES || "2"),
+  10
+);
+const GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES = Number.isFinite(parsedGeminiHandoffGoogleApiMaxRetries)
+  ? Math.max(0, Math.min(parsedGeminiHandoffGoogleApiMaxRetries, 5))
+  : 2;
+const parsedGeminiHandoffGoogleApiRetryBaseMs = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS || "750"),
+  10
+);
+const GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS = Number.isFinite(parsedGeminiHandoffGoogleApiRetryBaseMs)
+  ? Math.max(100, Math.min(parsedGeminiHandoffGoogleApiRetryBaseMs, 5000))
+  : 750;
+const parsedGeminiHandoffGoogleApiRetryMaxMs = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS || "6000"),
+  10
+);
+const GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS = Number.isFinite(parsedGeminiHandoffGoogleApiRetryMaxMs)
+  ? Math.max(GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS, Math.min(parsedGeminiHandoffGoogleApiRetryMaxMs, 60000))
+  : 6000;
+const parsedGeminiHandoffRetry429CooldownMs = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS || "45000"),
+  10
+);
+const GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS = Number.isFinite(parsedGeminiHandoffRetry429CooldownMs)
+  ? Math.max(0, Math.min(parsedGeminiHandoffRetry429CooldownMs, 600000))
+  : 45000;
+const parsedGeminiHandoffRetry429MaxScopes = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_RETRY_429_MAX_SCOPES || "25"),
+  10
+);
+const GEMINI_HANDOFF_RETRY_429_MAX_SCOPES = Number.isFinite(parsedGeminiHandoffRetry429MaxScopes)
+  ? Math.max(1, Math.min(parsedGeminiHandoffRetry429MaxScopes, 200))
+  : 25;
 const GEMINI_WEEKLY_AUTORUN_ENABLED = ["1", "true", "yes", "on"].includes(
   String(process.env.ENABLE_GEMINI_WEEKLY_AUTORUN || "true").trim().toLowerCase()
 );
@@ -273,9 +313,188 @@ const parsedGeminiHandoffDefaultMaxTouches = Number.parseInt(String(process.env.
 const GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES = Number.isFinite(parsedGeminiHandoffDefaultMaxTouches)
   ? Math.max(1, Math.min(parsedGeminiHandoffDefaultMaxTouches, 12))
   : 6;
+const DEFAULT_GEMINI_GEM_INSTRUCTIONS_PATH = path.join(REPO_ROOT, "prompts", "gemini-gem-instructions.txt");
+const configuredGemInstructionsPath = String(
+  process.env.GEMINI_GEM_INSTRUCTIONS_PATH || DEFAULT_GEMINI_GEM_INSTRUCTIONS_PATH
+).trim();
+const GEMINI_GEM_INSTRUCTIONS_PATH = configuredGemInstructionsPath
+  ? (path.isAbsolute(configuredGemInstructionsPath)
+    ? configuredGemInstructionsPath
+    : path.resolve(REPO_ROOT, configuredGemInstructionsPath))
+  : DEFAULT_GEMINI_GEM_INSTRUCTIONS_PATH;
+const GEMINI_GEM_INSTRUCTIONS_INLINE = String(process.env.GEMINI_GEM_INSTRUCTIONS || "").trim();
+const parsedGeminiGemInstructionsMaxChars = Number.parseInt(
+  String(process.env.GEMINI_GEM_INSTRUCTIONS_MAX_CHARS || "12000"),
+  10
+);
+const GEMINI_GEM_INSTRUCTIONS_MAX_CHARS = Number.isFinite(parsedGeminiGemInstructionsMaxChars)
+  ? Math.max(500, Math.min(parsedGeminiGemInstructionsMaxChars, 50000))
+  : 12000;
+const GEMINI_COMPANY_NAME_REVIEW_RULES = [
+  {
+    reason: "name_lookup_needed",
+    pattern: /\bname\s+lookup\s+needed\b/i,
+  },
+  {
+    reason: "name_lookup_pending",
+    pattern: /\bname\s+lookup\s+(?:pending|required)\b/i,
+  },
+  {
+    reason: "unknown_company",
+    pattern: /^(?:unknown|unknown\s+company)$/i,
+  },
+  {
+    reason: "not_available",
+    pattern: /^(?:n\/?a|na|none)$/i,
+  },
+  {
+    reason: "to_be_confirmed",
+    pattern: /^(?:tbd|tbc|to\s+be\s+confirmed)$/i,
+  },
+];
+const GEMINI_STAKEHOLDER_PLACEHOLDER_PATTERNS = [
+  /^company(?:\s|$)/i,
+  /^introduction(?:\s|$)/i,
+  /^strategic(?:\s|$)/i,
+  /\bcompany\s+information\b/i,
+  /\breport\s+and\s+accounts\b/i,
+  /\bannual\s+report\b/i,
+  /\bfiling\b/i,
+  /^unknown(?:\s+stakeholder)?$/i,
+];
+const GEMINI_STAKEHOLDER_CORPORATE_TOKENS = new Set([
+  "company",
+  "information",
+  "introduction",
+  "strategic",
+  "report",
+  "accounts",
+  "limited",
+  "ltd",
+  "plc",
+  "group",
+  "holdings",
+  "international",
+  "the",
+]);
+const STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE = 55;
+const STAKEHOLDER_ALERT_PRIORITY_JUMP = 12;
+const STAKEHOLDER_ALERT_RECENT_HOURS = 24 * 7;
+const STAKEHOLDER_ALERT_SNAPSHOT_SETTINGS_PREFIX = "stakeholder_alert_snapshot_";
+const STAKEHOLDER_ALERT_EVENT_LABELS = {
+  new_relevant_stakeholder: "New Relevant Stakeholder",
+  stakeholder_priority_increase: "Stakeholder Priority Increased",
+  stakeholder_verification_cleared: "Stakeholder Verification Cleared",
+  stakeholder_no_longer_detected: "Stakeholder No Longer Detected",
+};
+const STAKEHOLDER_ALERT_WATCH_ROLE_PATTERNS = [
+  /\bcfo\b/i,
+  /chief\s+financial\s+officer/i,
+  /finance\s+director/i,
+  /group\s+finance\s+director/i,
+  /financial\s+controller/i,
+  /head\s+of\s+finance/i,
+  /head\s+of\s+treasury/i,
+  /group\s+treasurer/i,
+  /\btreasurer\b/i,
+  /treasury\s+manager/i,
+  /vp\s+finance/i,
+  /svp\s+finance/i,
+  /finance\s+manager/i,
+];
 
 function formatSchemaErrors(errors) {
   return (errors || []).map((entry) => `${entry.path}: ${entry.message}`);
+}
+
+function sanitizeGemInstructions(value) {
+  const normalized = String(value || "").replace(/\r/g, "").trim();
+  if (!normalized) return "";
+  if (/^PASTE_GEM_INSTRUCTIONS_HERE$/i.test(normalized)) return "";
+
+  const cleanedPlaceholder = normalized.replace(/\bPASTE_GEM_INSTRUCTIONS_HERE\b/gi, "").trim();
+  if (!cleanedPlaceholder) return "";
+
+  return cleanedPlaceholder.slice(0, GEMINI_GEM_INSTRUCTIONS_MAX_CHARS).trim();
+}
+
+function loadGemInstructionsConfig() {
+  const inlineInstructions = sanitizeGemInstructions(GEMINI_GEM_INSTRUCTIONS_INLINE);
+  if (inlineInstructions) {
+    return {
+      text: inlineInstructions,
+      source: "env_inline",
+      path: null,
+    };
+  }
+
+  if (!GEMINI_GEM_INSTRUCTIONS_PATH || !fs.existsSync(GEMINI_GEM_INSTRUCTIONS_PATH)) {
+    return {
+      text: "",
+      source: null,
+      path: GEMINI_GEM_INSTRUCTIONS_PATH || null,
+    };
+  }
+
+  try {
+    const raw = fs.readFileSync(GEMINI_GEM_INSTRUCTIONS_PATH, "utf8");
+    const fileInstructions = sanitizeGemInstructions(raw);
+    const relativePath = path.relative(REPO_ROOT, GEMINI_GEM_INSTRUCTIONS_PATH) || path.basename(GEMINI_GEM_INSTRUCTIONS_PATH);
+
+    return {
+      text: fileInstructions,
+      source: fileInstructions ? `file:${relativePath}` : null,
+      path: GEMINI_GEM_INSTRUCTIONS_PATH,
+    };
+  } catch {
+    return {
+      text: "",
+      source: null,
+      path: GEMINI_GEM_INSTRUCTIONS_PATH,
+    };
+  }
+}
+
+let GEMINI_GEM_INSTRUCTIONS_CONFIG = loadGemInstructionsConfig();
+
+function getGemInstructionsRuntimeInfo() {
+  return {
+    gem_instructions_active: !!GEMINI_GEM_INSTRUCTIONS_CONFIG.text,
+    gem_instructions_source: GEMINI_GEM_INSTRUCTIONS_CONFIG.source,
+    gem_instructions_path: GEMINI_GEM_INSTRUCTIONS_CONFIG.path,
+    gem_instructions_chars: GEMINI_GEM_INSTRUCTIONS_CONFIG.text.length,
+  };
+}
+
+function reloadGemInstructionsConfig() {
+  GEMINI_GEM_INSTRUCTIONS_CONFIG = loadGemInstructionsConfig();
+  return getGemInstructionsRuntimeInfo();
+}
+
+function evaluateGeminiCompanyNameReview(value) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return {
+      needs_review: true,
+      reason: "missing_company_name",
+    };
+  }
+
+  for (const rule of GEMINI_COMPANY_NAME_REVIEW_RULES) {
+    if (rule.pattern.test(text)) {
+      return {
+        needs_review: true,
+        reason: rule.reason,
+      };
+    }
+  }
+
+  return {
+    needs_review: false,
+    reason: null,
+  };
 }
 
 function getStoredGeminiResponseId(record) {
@@ -328,6 +547,260 @@ function hasGeminiDuplicatePayloadMismatch(record, payload) {
   return storedHash !== incomingHash;
 }
 
+function getGeminiRetryScopeKey(companyNumber, personId) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  const normalizedPersonId = String(personId || "").trim();
+  if (!normalizedCompanyNumber || !normalizedPersonId) return "";
+  return `${normalizedCompanyNumber}::${normalizedPersonId}`;
+}
+
+function normalizeGeminiRetryScope(scope = {}) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(scope?.company_number || scope?.companyNumber);
+  const normalizedPersonId = String(scope?.person_id || scope?.personId || "").trim();
+  if (!normalizedCompanyNumber || !normalizedPersonId) return null;
+  return {
+    company_number: normalizedCompanyNumber,
+    person_id: normalizedPersonId,
+  };
+}
+
+function normalizeGeminiRetryScopeFromOutput(output = {}) {
+  return normalizeGeminiRetryScope({
+    company_number: output?.company_number,
+    person_id: output?.person_id,
+  });
+}
+
+function isGemini429HttpError(errorEntry = {}) {
+  const code = String(errorEntry?.code || "").trim().toLowerCase();
+  const message = String(errorEntry?.message || "").trim();
+  return code === "gemini_api_http_error" && /\bHTTP\s+429\b/i.test(message);
+}
+
+function extractGeminiRetry429ScopesFromResponse(responsePayload = {}, maxScopes = GEMINI_HANDOFF_RETRY_429_MAX_SCOPES) {
+  const errors = Array.isArray(responsePayload?.errors) ? responsePayload.errors : [];
+  const scopes = [];
+  const seen = new Set();
+  const safeMaxScopes = Math.max(1, Math.min(Number.parseInt(String(maxScopes || ""), 10) || GEMINI_HANDOFF_RETRY_429_MAX_SCOPES, 200));
+
+  for (const entry of errors) {
+    if (!isGemini429HttpError(entry)) continue;
+    const scope = normalizeGeminiRetryScope(entry?.scope || {});
+    if (!scope) continue;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (!scopeKey || seen.has(scopeKey)) continue;
+    seen.add(scopeKey);
+    scopes.push(scope);
+    if (scopes.length >= safeMaxScopes) break;
+  }
+
+  return scopes;
+}
+
+function countGeminiRetryable429Errors(responsePayload = {}, scopeKeys = null) {
+  const errors = Array.isArray(responsePayload?.errors) ? responsePayload.errors : [];
+  let count = 0;
+  for (const entry of errors) {
+    if (!isGemini429HttpError(entry)) continue;
+    if (scopeKeys && scopeKeys.size > 0) {
+      const scope = normalizeGeminiRetryScope(entry?.scope || {});
+      if (!scope) continue;
+      const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+      if (!scopeKeys.has(scopeKey)) continue;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function getGeminiRetryable429ScopeKeySet(responsePayload = {}, allowedScopeKeys = null) {
+  const errors = Array.isArray(responsePayload?.errors) ? responsePayload.errors : [];
+  const keys = new Set();
+  for (const entry of errors) {
+    if (!isGemini429HttpError(entry)) continue;
+    const scope = normalizeGeminiRetryScope(entry?.scope || {});
+    if (!scope) continue;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (!scopeKey) continue;
+    if (allowedScopeKeys && !allowedScopeKeys.has(scopeKey)) continue;
+    keys.add(scopeKey);
+  }
+  return keys;
+}
+
+function buildGeminiRetry429RequestPayload(requestPayload = {}, retryScopes = []) {
+  const rankedCompanies = Array.isArray(requestPayload?.ranked_companies) ? requestPayload.ranked_companies : [];
+  if (rankedCompanies.length < 1 || !Array.isArray(retryScopes) || retryScopes.length < 1) {
+    return null;
+  }
+
+  const scopeMap = new Map();
+  for (const scope of retryScopes) {
+    const normalizedScope = normalizeGeminiRetryScope(scope);
+    if (!normalizedScope) continue;
+    const existing = scopeMap.get(normalizedScope.company_number) || new Set();
+    existing.add(normalizedScope.person_id);
+    scopeMap.set(normalizedScope.company_number, existing);
+  }
+
+  if (scopeMap.size < 1) return null;
+
+  const retryRankedCompanies = [];
+  for (const company of rankedCompanies) {
+    const companyNumber = normalizeCompanyNumber(company?.company_number);
+    if (!companyNumber || !scopeMap.has(companyNumber)) continue;
+
+    const allowedPersonIds = scopeMap.get(companyNumber);
+    const stakeholders = Array.isArray(company?.stakeholders) ? company.stakeholders : [];
+    const filteredStakeholders = stakeholders.filter((stakeholder) => {
+      const personId = String(stakeholder?.person_id || "").trim();
+      if (!personId) return false;
+      return allowedPersonIds.has(personId);
+    });
+
+    if (filteredStakeholders.length < 1) continue;
+
+    retryRankedCompanies.push({
+      ...company,
+      company_number: companyNumber,
+      stakeholders: filteredStakeholders,
+    });
+  }
+
+  if (retryRankedCompanies.length < 1) return null;
+
+  return {
+    ...requestPayload,
+    ranked_companies: retryRankedCompanies,
+  };
+}
+
+function mergeGeminiRetry429ResponsePayload({
+  requestId,
+  baseResponsePayload = {},
+  retryResponsePayload = {},
+  retryScopes = [],
+}) {
+  const basePayload = baseResponsePayload && typeof baseResponsePayload === "object"
+    ? JSON.parse(JSON.stringify(baseResponsePayload))
+    : {};
+  const retryPayload = retryResponsePayload && typeof retryResponsePayload === "object"
+    ? JSON.parse(JSON.stringify(retryResponsePayload))
+    : {};
+
+  const scopeKeys = new Set(
+    (Array.isArray(retryScopes) ? retryScopes : [])
+      .map((scope) => normalizeGeminiRetryScope(scope))
+      .filter(Boolean)
+      .map((scope) => getGeminiRetryScopeKey(scope.company_number, scope.person_id))
+      .filter(Boolean)
+  );
+
+  const baseOutputs = Array.isArray(basePayload.sequence_outputs) ? basePayload.sequence_outputs : [];
+  const retryOutputs = Array.isArray(retryPayload.sequence_outputs) ? retryPayload.sequence_outputs : [];
+  const retryOutputByKey = new Map();
+
+  for (const output of retryOutputs) {
+    const scope = normalizeGeminiRetryScopeFromOutput(output);
+    if (!scope) continue;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (!scopeKey) continue;
+    retryOutputByKey.set(scopeKey, output);
+  }
+
+  const mergedOutputs = [];
+  for (const output of baseOutputs) {
+    const scope = normalizeGeminiRetryScopeFromOutput(output);
+    const scopeKey = scope ? getGeminiRetryScopeKey(scope.company_number, scope.person_id) : "";
+    if (scopeKey && retryOutputByKey.has(scopeKey)) {
+      mergedOutputs.push(retryOutputByKey.get(scopeKey));
+      retryOutputByKey.delete(scopeKey);
+      continue;
+    }
+    mergedOutputs.push(output);
+  }
+
+  for (const output of retryOutputByKey.values()) {
+    mergedOutputs.push(output);
+  }
+
+  const baseErrors = Array.isArray(basePayload.errors) ? basePayload.errors : [];
+  const retryErrors = Array.isArray(retryPayload.errors) ? retryPayload.errors : [];
+  const retainedBaseErrors = baseErrors.filter((entry) => {
+    const scope = normalizeGeminiRetryScope(entry?.scope || {});
+    if (!scope) return true;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (!scopeKeys.has(scopeKey)) return true;
+    return !isGemini429HttpError(entry);
+  });
+
+  const retryCoveredScopeKeys = new Set();
+  for (const output of retryOutputs) {
+    const scope = normalizeGeminiRetryScopeFromOutput(output);
+    if (!scope) continue;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (scopeKey) retryCoveredScopeKeys.add(scopeKey);
+  }
+  for (const entry of retryErrors) {
+    const scope = normalizeGeminiRetryScope(entry?.scope || {});
+    if (!scope) continue;
+    const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+    if (scopeKey) retryCoveredScopeKeys.add(scopeKey);
+  }
+
+  const missingScopeErrors = [];
+  for (const scopeKey of scopeKeys) {
+    if (retryCoveredScopeKeys.has(scopeKey)) continue;
+    const [companyNumber, personId] = String(scopeKey).split("::");
+    missingScopeErrors.push({
+      code: "gemini_retry_scope_missing",
+      message: "Targeted retry scope missing from retry response",
+      retryable: true,
+      scope: {
+        company_number: companyNumber,
+        person_id: personId,
+      },
+    });
+  }
+
+  const mergedErrors = [...retainedBaseErrors, ...retryErrors, ...missingScopeErrors];
+
+  const preferredSheetWrite = basePayload.sheet_write && typeof basePayload.sheet_write === "object"
+    ? basePayload.sheet_write
+    : (retryPayload.sheet_write && typeof retryPayload.sheet_write === "object" ? retryPayload.sheet_write : {});
+  const sheetTab = String(preferredSheetWrite.sheet_tab || "queue").trim() || "queue";
+  const mergedSheetWrite = {
+    sheet_id: String(preferredSheetWrite.sheet_id || "gemini_api_sheet").trim() || "gemini_api_sheet",
+    sheet_tab: sheetTab,
+    rows_written: mergedOutputs.length,
+    range: String(preferredSheetWrite.range || `${sheetTab}!A2:AZ${Math.max(1, mergedOutputs.length + 1)}`).trim() || `${sheetTab}!A2:AZ${Math.max(1, mergedOutputs.length + 1)}`,
+  };
+
+  const mergedStatus = mergedErrors.length > 0
+    ? (mergedOutputs.length > 0 ? "partial" : "error")
+    : "ok";
+
+  const normalizedRequestId = String(
+    requestId
+    || basePayload.request_id
+    || retryPayload.request_id
+    || ""
+  ).trim();
+  const responseId = String(basePayload.response_id || retryPayload.response_id || "").trim()
+    || `resp_retry_429_${Date.now()}`;
+
+  return {
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: normalizedRequestId,
+    response_id: responseId,
+    completed_at: new Date().toISOString(),
+    status: mergedStatus,
+    sheet_write: mergedSheetWrite,
+    sequence_outputs: mergedOutputs,
+    errors: mergedErrors,
+  };
+}
+
 function slugToTitle(value) {
   const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
   if (!normalized) return "Unknown";
@@ -342,6 +815,43 @@ function sanitizeBodyText(value, maxLength = 4000) {
   return String(value || "").trim().slice(0, maxLength);
 }
 
+function waitForGeminiApiRetry(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterHeaderMs(value) {
+  const token = String(value || "").trim();
+  if (!token) return null;
+
+  if (/^\d+$/.test(token)) {
+    const seconds = Number.parseInt(token, 10);
+    if (!Number.isFinite(seconds)) return null;
+    return seconds * 1000;
+  }
+
+  const parsedDate = Date.parse(token);
+  if (!Number.isFinite(parsedDate)) return null;
+  return Math.max(0, parsedDate - Date.now());
+}
+
+function getGeminiApiRetryDelayMs({ attempt = 1, retryAfterHeader = "" } = {}) {
+  const retryAfterMs = parseRetryAfterHeaderMs(retryAfterHeader);
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    return Math.max(
+      GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS,
+      Math.min(retryAfterMs, GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS)
+    );
+  }
+
+  const exponential = GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1));
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(exponential + jitter, GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS);
+}
+
+function shouldRetryGeminiApiHttpStatus(statusCode) {
+  return statusCode === 429 || statusCode >= 500;
+}
+
 function extractGeminiApiGeneratedText(payload) {
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
   const firstCandidate = candidates[0] || {};
@@ -353,60 +863,274 @@ function extractGeminiApiGeneratedText(payload) {
     .trim();
 }
 
+function parseJsonCandidate(rawValue) {
+  const text = String(rawValue || "").trim();
+  if (!text) return null;
+
+  const withoutFences = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```$/g, "")
+    .trim();
+
+  const parseAttempts = [
+    withoutFences,
+    withoutFences.replace(/[“”]/g, "\"").replace(/[‘’]/g, "'"),
+    withoutFences.replace(/,\s*([}\]])/g, "$1"),
+    withoutFences
+      .replace(/[“”]/g, "\"")
+      .replace(/[‘’]/g, "'")
+      .replace(/,\s*([}\]])/g, "$1"),
+  ];
+
+  for (const attempt of parseAttempts) {
+    try {
+      return JSON.parse(attempt);
+    } catch {
+      // Continue trying relaxed parsing variants.
+    }
+  }
+
+  return null;
+}
+
 function parseJsonObjectFromText(rawText) {
   const text = String(rawText || "").trim();
   if (!text) return null;
 
-  try {
-    return JSON.parse(text);
-  } catch {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start === -1 || end <= start) return null;
-    try {
-      return JSON.parse(text.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
+  const direct = parseJsonCandidate(text);
+  if (direct && typeof direct === "object") return direct;
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+
+  const sliced = parseJsonCandidate(text.slice(start, end + 1));
+  return sliced && typeof sliced === "object" ? sliced : null;
 }
 
-function buildGeminiApiFallbackDraft({ companyName, stakeholderName, roleName }) {
-  const safeCompanyName = sanitizeSingleLine(companyName || "Unknown Company", 120) || "Unknown Company";
-  const safeStakeholderName = sanitizeSingleLine(stakeholderName || "there", 80) || "there";
-  const safeRoleName = sanitizeSingleLine(roleName || "stakeholder", 60) || "stakeholder";
-  const subject = `Question about ${safeRoleName} priorities at ${safeCompanyName}`;
-  const body = `Hi ${safeStakeholderName},\n\nI am reaching out because your team appears to be scaling payments and treasury workflows at ${safeCompanyName}. If useful, I can share a focused view of where Revolut Business tends to reduce friction for ${safeRoleName} teams.\n\nBest,\nSophie`;
+function parseLooseDraftFromText(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return null;
+
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```$/g, "")
+    .trim();
+
+  const subjectMatch = cleaned.match(/(?:^|\n)\s*(?:subject|title)\s*:\s*(.+)\s*(?:\n|$)/i);
+  const bodyMatch = cleaned.match(/(?:^|\n)\s*body\s*:\s*([\s\S]*?)(?:\n\s*(?:citations?|sources?)\s*:|\s*$)/i);
+  const citationsMatch = cleaned.match(/(?:^|\n)\s*(?:citations?|sources?)\s*:\s*([\s\S]+)$/i);
+
+  const subject = subjectMatch ? subjectMatch[1].trim() : "";
+  const body = bodyMatch ? bodyMatch[1].trim() : "";
+  if (!subject || !body) return null;
+
+  const citations = citationsMatch
+    ? citationsMatch[1]
+      .split(/[\n,;]+/)
+      .map((entry) => entry.replace(/^[-*\d.)\s]+/, "").trim())
+      .filter(Boolean)
+      .slice(0, 6)
+    : [];
+
   return {
     subject,
     body,
-    citations: ["gemini.google.api.fallback"],
+    citations,
   };
 }
 
-function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy }) {
+function normalizeGeneratedDraftPayload(generatedObject) {
+  if (!generatedObject || typeof generatedObject !== "object") {
+    return {
+      subject: "",
+      body: "",
+      citations: [],
+    };
+  }
+
+  const subject = sanitizeSingleLine(
+    generatedObject.subject
+      || generatedObject.Subject
+      || generatedObject.subject_line
+      || generatedObject.email_subject
+      || generatedObject.title
+      || "",
+    180
+  );
+
+  const body = sanitizeBodyText(
+    generatedObject.body
+      || generatedObject.Body
+      || generatedObject.email_body
+      || generatedObject.content
+      || generatedObject.message
+      || "",
+    4000
+  );
+
+  const citationSource = generatedObject.citations
+    ?? generatedObject.Citations
+    ?? generatedObject.sources
+    ?? generatedObject.evidence
+    ?? [];
+
+  const citations = Array.isArray(citationSource)
+    ? citationSource
+      .map((entry) => sanitizeSingleLine(entry, 120))
+      .filter(Boolean)
+      .slice(0, 6)
+    : String(citationSource || "")
+      .split(/[\n,;]+/)
+      .map((entry) => sanitizeSingleLine(entry, 120))
+      .filter(Boolean)
+      .slice(0, 6);
+
+  return {
+    subject,
+    body,
+    citations,
+  };
+}
+
+const GEMINI_SEQUENCE_STEP_BLUEPRINT = [
+  {
+    step_type: "proof",
+    day_offset: 0,
+    objective: "Lead with one specific observation and the operational implication.",
+  },
+  {
+    step_type: "nudge_1",
+    day_offset: 2,
+    objective: "Keep this short; reinforce relevance with one precise angle and a low-friction CTA.",
+  },
+  {
+    step_type: "depth",
+    day_offset: 5,
+    objective: "Add depth with a second concrete signal and a connected-stack recommendation.",
+  },
+  {
+    step_type: "nudge_2",
+    day_offset: 8,
+    objective: "Send a concise follow-up with one sharpened commercial implication.",
+  },
+  {
+    step_type: "provocation",
+    day_offset: 11,
+    objective: "Use a thoughtful challenge question grounded in known constraints.",
+  },
+  {
+    step_type: "close",
+    day_offset: 14,
+    objective: "Close politely with optional next step and clear respect for timing.",
+  },
+];
+
+function clampGeminiSequenceStepCount(value, fallback = GEMINI_SEQUENCE_STEP_BLUEPRINT.length) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(3, Math.min(fallback, GEMINI_SEQUENCE_STEP_BLUEPRINT.length));
+  }
+  return Math.max(3, Math.min(parsed, GEMINI_SEQUENCE_STEP_BLUEPRINT.length));
+}
+
+function resolveGeminiSequenceStepPlan(campaign = {}, generationPolicy = {}) {
+  const requested = Number.parseInt(
+    String(generationPolicy?.max_steps_per_sequence || campaign?.max_touches || GEMINI_SEQUENCE_STEP_BLUEPRINT.length),
+    10
+  );
+  const stepCount = clampGeminiSequenceStepCount(requested, GEMINI_SEQUENCE_STEP_BLUEPRINT.length);
+  return GEMINI_SEQUENCE_STEP_BLUEPRINT
+    .slice(0, stepCount)
+    .map((step, idx) => ({
+      ...step,
+      step_number: idx + 1,
+    }));
+}
+
+function formatGeminiPreviousStepHints(previousDrafts = []) {
+  if (!Array.isArray(previousDrafts) || previousDrafts.length < 1) return [];
+  return previousDrafts
+    .slice(-3)
+    .map((entry) => {
+      const stepNumber = Number.parseInt(String(entry?.step_number || ""), 10);
+      const stepType = sanitizeSingleLine(entry?.step_type || "", 40);
+      const subject = sanitizeSingleLine(entry?.subject || "", 120);
+      const bodyPreview = sanitizeSingleLine(String(entry?.body || "").split("\n")[0] || "", 120);
+      if (!subject && !bodyPreview) return null;
+      return `- prior_step_${Number.isInteger(stepNumber) ? stepNumber : "x"} (${stepType || "n/a"}) subject: ${subject || "n/a"}; opener: ${bodyPreview || "n/a"}`;
+    })
+    .filter(Boolean);
+}
+
+function buildGeminiApiFallbackDraft({ companyName, stakeholderName, roleName, stepContext = {} }) {
+  const safeCompanyName = sanitizeSingleLine(companyName || "Unknown Company", 120) || "Unknown Company";
+  const safeStakeholderName = extractStakeholderFirstName(stakeholderName);
+  const safeRoleName = sanitizeSingleLine(roleName || "stakeholder", 60) || "stakeholder";
+  const stepType = String(stepContext?.step_type || "proof").trim().toLowerCase() || "proof";
+  const stepNumber = Number.parseInt(String(stepContext?.step_number || 1), 10) || 1;
+
+  let subject = `Question about ${safeRoleName} priorities at ${safeCompanyName}`;
+  let body = `Hi ${safeStakeholderName},\n\nGiven how quickly priorities can shift for ${safeRoleName} teams at ${safeCompanyName}, one useful starting point is usually where payment collection, FX and day-to-day spend controls sit in separate systems. That split often creates avoidable reconciliation and cash-visibility friction, especially where international suppliers or online revenue are growing.\n\nIf helpful, I can share a short practical view of how teams in a similar position simplify this without forcing a full banking switch.\n\nSophie`;
+
+  if (stepType === "nudge_1" || stepType === "nudge_2") {
+    subject = `Quick follow-up for ${safeCompanyName}`;
+    body = `Hi ${safeStakeholderName},\n\nA brief follow-up in case useful. When finance and payment tooling remain split, teams often lose time to avoidable reconciliation work and weaker day-to-day cash visibility.\n\nIf it helps, I can send a short, concrete outline focused on ${safeCompanyName} and where a connected setup could remove the most friction first.\n\nSophie`;
+  } else if (stepType === "depth") {
+    subject = `${safeCompanyName}: practical operating angle`;
+    body = `Hi ${safeStakeholderName},\n\nOne deeper angle we often see for ${safeRoleName} teams is the handoff between collection, FX and spend controls. As volume grows, that split can create hidden process cost and slower month-end confidence.\n\nIf useful, I can map a staged path that keeps existing banking relationships in place while tightening control in the areas most likely to move the needle for ${safeCompanyName}.\n\nSophie`;
+  } else if (stepType === "provocation" || stepType === "close") {
+    subject = `Worth pressure-testing this at ${safeCompanyName}`;
+    body = `Hi ${safeStakeholderName},\n\nOne question that may be worth pressure-testing: if collections, currency conversion and spend policy still sit across separate systems, how much finance time is being absorbed by preventable operational drag each month?\n\nHappy to share a practical comparison so you can decide quickly whether this is worth action now or later.\n\nSophie`;
+  }
+
+  return {
+    subject,
+    body,
+    citations: ["gemini.google.api.fallback", `sequence.step_${stepNumber}`],
+  };
+}
+
+function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy, stepContext = {}, previousDrafts = [] }) {
   const forbiddenLine = generationPolicy?.forbidden_phrases_enforced
     ? "Do not use these phrases: I noticed, quick question. Avoid filler punctuation such as em dash parentheticals."
     : "";
+  const customGemInstructions = sanitizeBodyText(GEMINI_GEM_INSTRUCTIONS_CONFIG.text, GEMINI_GEM_INSTRUCTIONS_MAX_CHARS);
   const insightsText = company?.insights && typeof company.insights === "object"
     ? JSON.stringify(company.insights).slice(0, 1800)
     : "{}";
   const scoreBreakdown = company?.score_breakdown && typeof company.score_breakdown === "object"
     ? JSON.stringify(company.score_breakdown)
     : "{}";
+  const stepNumber = Number.parseInt(String(stepContext?.step_number || 1), 10) || 1;
+  const totalSteps = Number.parseInt(String(stepContext?.total_steps || campaign?.max_touches || 6), 10) || 6;
+  const stepType = sanitizeSingleLine(stepContext?.step_type || "proof", 40) || "proof";
+  const dayOffset = Number.parseInt(String(stepContext?.day_offset || 0), 10) || 0;
+  const stepObjective = sanitizeSingleLine(stepContext?.objective || "", 200);
+  const priorStepHints = formatGeminiPreviousStepHints(previousDrafts);
+  const isNudgeStep = stepType === "nudge_1" || stepType === "nudge_2";
+  const minWords = isNudgeStep ? 45 : 70;
+  const maxWords = isNudgeStep ? 130 : 190;
 
   return [
     "You are Sophie writing concise UK B2B prospecting outreach.",
     "Write exactly one outreach email step for the stakeholder below.",
+    `This is step ${stepNumber} of ${totalSteps} in a multi-touch sequence.`,
     "Return strict JSON only with keys: subject (string), body (string), citations (string array).",
     "Do not include markdown fences or commentary.",
     forbiddenLine,
+    customGemInstructions ? "\nCustom Gem-style instruction overlay:" : "",
+    customGemInstructions || "",
     "\nCampaign context:",
     `campaign_name: ${sanitizeSingleLine(campaign?.campaign_name || "Prospecting", 120)}`,
     `sequence_template: ${sanitizeSingleLine(campaign?.sequence_template || "standard", 120)}`,
     `max_touches: ${Number.parseInt(String(campaign?.max_touches || 4), 10) || 4}`,
     `voice_profile: ${sanitizeSingleLine(generationPolicy?.voice_profile || "sophie_outreach", 120)}`,
     `require_citations: ${generationPolicy?.require_citations === true ? "true" : "false"}`,
+    `step_number: ${stepNumber}`,
+    `step_type: ${stepType}`,
+    `day_offset: ${dayOffset}`,
+    stepObjective ? `step_objective: ${stepObjective}` : "",
     "\nCompany context:",
     `company_name: ${sanitizeSingleLine(company?.company_name || "Unknown Company", 160)}`,
     `company_number: ${sanitizeSingleLine(company?.company_number || "", 40)}`,
@@ -415,26 +1139,32 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
     `score_breakdown: ${scoreBreakdown}`,
     `insights: ${insightsText}`,
     "\nStakeholder context:",
-    `full_name: ${sanitizeSingleLine(stakeholder?.full_name || "there", 120)}`,
+    `full_name: ${sanitizeSingleLine(normalizeGeminiStakeholderName(stakeholder?.full_name), 120)}`,
     `role: ${sanitizeSingleLine(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder", 80)}`,
     `persona_bucket: ${sanitizeSingleLine(stakeholder?.persona_bucket || "", 80)}`,
     `confidence: ${sanitizeSingleLine(stakeholder?.confidence || "", 40)}`,
+    priorStepHints.length > 0 ? "\nAvoid repeating these prior sequence lines:" : "",
+    ...priorStepHints,
     "\nOutput requirements:",
     "- subject under 120 characters",
-    "- body between 70 and 180 words",
+    `- body between ${minWords} and ${maxWords} words`,
+    "- greeting must use first name only in this form: Hi [FirstName],",
     "- body should end with a light CTA",
+    "- this step must feel distinct from prior steps and avoid repeating the same opening sentence",
     "- citations should reference evidence source labels when possible",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-async function generateGeminiApiDraft({ company, stakeholder, campaign, generationPolicy }) {
+async function generateGeminiApiDraft({ company, stakeholder, campaign, generationPolicy, stepContext = {}, previousDrafts = [] }) {
   const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
+  const stakeholderName = normalizeGeminiStakeholderName(stakeholder?.full_name);
   const fallbackDraft = buildGeminiApiFallbackDraft({
     companyName: company?.company_name,
-    stakeholderName: stakeholder?.full_name,
+    stakeholderName,
     roleName,
+    stepContext,
   });
 
   if (!GEMINI_API_KEY) {
@@ -450,92 +1180,131 @@ async function generateGeminiApiDraft({ company, stakeholder, campaign, generati
   }
 
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_API_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-  const prompt = buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationPolicy });
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  const prompt = buildGeminiApiDraftPrompt({
+    company,
+    stakeholder,
+    campaign,
+    generationPolicy,
+    stepContext,
+    previousDrafts,
+  });
+  const requestPayload = JSON.stringify({
+    generationConfig: {
+      temperature: 0.45,
+      maxOutputTokens: 900,
+      responseMimeType: "application/json",
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
       },
-      body: JSON.stringify({
-        generationConfig: {
-          temperature: 0.45,
-          maxOutputTokens: 900,
-          responseMimeType: "application/json",
+    ],
+  });
+  const maxAttempts = Math.max(1, GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES + 1);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
+        body: requestPayload,
+        signal: controller.signal,
+      });
+
+      const responseJson = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (shouldRetryGeminiApiHttpStatus(response.status) && attempt < maxAttempts) {
+          const retryDelayMs = getGeminiApiRetryDelayMs({
+            attempt,
+            retryAfterHeader: response.headers?.get("retry-after") || "",
+          });
+          await waitForGeminiApiRetry(retryDelayMs);
+          continue;
+        }
+
+        return {
+          ...fallbackDraft,
+          used_fallback: true,
+          error: {
+            code: "gemini_api_http_error",
+            message: `Google Gemini API returned HTTP ${response.status}`,
+            retryable: shouldRetryGeminiApiHttpStatus(response.status),
           },
-        ],
-      }),
-      signal: controller.signal,
-    });
+        };
+      }
 
-    const responseJson = await response.json().catch(() => ({}));
+      const generatedText = extractGeminiApiGeneratedText(responseJson);
+      const generatedObject = parseJsonObjectFromText(generatedText) || parseLooseDraftFromText(generatedText);
+      const normalizedDraft = normalizeGeneratedDraftPayload(generatedObject);
+      const subject = normalizedDraft.subject;
+      const body = normalizedDraft.body;
+      const citations = normalizedDraft.citations;
 
-    if (!response.ok) {
+      if (!subject || !body) {
+        if (attempt < maxAttempts) {
+          const retryDelayMs = getGeminiApiRetryDelayMs({ attempt });
+          await waitForGeminiApiRetry(retryDelayMs);
+          continue;
+        }
+
+        return {
+          ...fallbackDraft,
+          used_fallback: true,
+          error: {
+            code: "gemini_api_invalid_output",
+            message: "Gemini API did not return parseable subject/body JSON",
+            retryable: true,
+          },
+        };
+      }
+
       return {
-        ...fallbackDraft,
-        used_fallback: true,
-        error: {
-          code: "gemini_api_http_error",
-          message: `Google Gemini API returned HTTP ${response.status}`,
-          retryable: response.status >= 500 || response.status === 429,
-        },
+        subject,
+        body,
+        citations: citations.length ? citations : ["gemini.google.api"],
+        used_fallback: false,
+        error: null,
       };
-    }
+    } catch (err) {
+      const isAbort = err?.name === "AbortError";
+      if (attempt < maxAttempts) {
+        const retryDelayMs = getGeminiApiRetryDelayMs({ attempt });
+        await waitForGeminiApiRetry(retryDelayMs);
+        continue;
+      }
 
-    const generatedText = extractGeminiApiGeneratedText(responseJson);
-    const generatedObject = parseJsonObjectFromText(generatedText);
-    const subject = sanitizeSingleLine(generatedObject?.subject || "", 180);
-    const body = sanitizeBodyText(generatedObject?.body || "", 4000);
-    const citations = Array.isArray(generatedObject?.citations)
-      ? generatedObject.citations
-        .map((entry) => sanitizeSingleLine(entry, 120))
-        .filter(Boolean)
-        .slice(0, 6)
-      : [];
-
-    if (!subject || !body) {
       return {
         ...fallbackDraft,
         used_fallback: true,
         error: {
-          code: "gemini_api_invalid_output",
-          message: "Gemini API did not return parseable subject/body JSON",
+          code: isAbort ? "gemini_api_timeout" : "gemini_api_network_error",
+          message: isAbort
+            ? `Gemini API timed out after ${GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS}ms`
+            : String(err?.message || "Gemini API request failed"),
           retryable: true,
         },
       };
+    } finally {
+      clearTimeout(timeoutHandle);
     }
-
-    return {
-      subject,
-      body,
-      citations: citations.length ? citations : ["gemini.google.api"],
-      used_fallback: false,
-      error: null,
-    };
-  } catch (err) {
-    const isAbort = err?.name === "AbortError";
-    return {
-      ...fallbackDraft,
-      used_fallback: true,
-      error: {
-        code: isAbort ? "gemini_api_timeout" : "gemini_api_network_error",
-        message: isAbort
-          ? `Gemini API timed out after ${GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS}ms`
-          : String(err?.message || "Gemini API request failed"),
-        retryable: true,
-      },
-    };
-  } finally {
-    clearTimeout(timeoutHandle);
   }
+
+  return {
+    ...fallbackDraft,
+    used_fallback: true,
+    error: {
+      code: "gemini_api_retry_exhausted",
+      message: "Gemini API retry attempts were exhausted",
+      retryable: true,
+    },
+  };
 }
 
 async function buildGoogleApiGeminiHandoffResponse(payload) {
@@ -544,6 +1313,7 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
   const campaign = payload?.campaign || {};
   const generationPolicy = payload?.generation_policy || {};
   const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+  const stepPlan = resolveGeminiSequenceStepPlan(campaign, generationPolicy);
 
   const sequenceOutputs = [];
   const errors = [];
@@ -580,66 +1350,110 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
       continue;
     }
 
-    const draft = await generateGeminiApiDraft({
-      company,
-      stakeholder,
-      campaign,
-      generationPolicy,
-    });
+    const sequenceId = `seq_${companyNumber}_${personId}`;
+    const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
+    const priorityBand = String(company?.priority_band || "").trim() || null;
 
-    if (draft.error) {
-      errors.push({
-        code: draft.error.code,
-        message: draft.error.message,
-        retryable: draft.error.retryable !== false,
-        scope: {
-          company_number: companyNumber,
-          person_id: personId,
-        },
+    const steps = [];
+    const yammRows = [];
+    let fallbackStepCount = 0;
+    let stepErrorCount = 0;
+
+    for (const planStep of stepPlan) {
+      const stepContext = {
+        ...planStep,
+        total_steps: stepPlan.length,
+      };
+
+      const draft = await generateGeminiApiDraft({
+        company,
+        stakeholder,
+        campaign,
+        generationPolicy,
+        stepContext,
+        previousDrafts: steps,
+      });
+
+      if (draft.error) {
+        stepErrorCount += 1;
+        errors.push({
+          code: draft.error.code,
+          message: draft.error.message,
+          retryable: draft.error.retryable !== false,
+          scope: {
+            company_number: companyNumber,
+            person_id: personId,
+            step_number: planStep.step_number,
+            step_type: planStep.step_type,
+          },
+        });
+      }
+
+      if (draft.used_fallback) fallbackStepCount += 1;
+
+      const citations = Array.isArray(draft.citations)
+        ? draft.citations.filter((item) => String(item || "").trim())
+        : [];
+      const stepRecord = {
+        step_number: planStep.step_number,
+        step_type: planStep.step_type,
+        day_offset: planStep.day_offset,
+        subject: draft.subject,
+        body: draft.body,
+        citations,
+      };
+
+      steps.push(stepRecord);
+      yammRows.push({
+        To: String(stakeholder?.email || ""),
+        Subject: stepRecord.subject,
+        Body: stepRecord.body,
+        Company: companyName,
+        CompanyNumber: companyNumber,
+        PriorityRank: rank,
+        PriorityBand: priorityBand,
+        SequenceId: sequenceId,
+        StepNumber: stepRecord.step_number,
+        StepType: stepRecord.step_type,
+        DayOffset: stepRecord.day_offset,
+        ApprovalStatus: "pending",
+        QCPassed: draft.used_fallback ? "false" : "true",
+        QCScore: draft.used_fallback ? 0.62 : 0.9,
+        EvidenceRefs: citations.join("|") || null,
       });
     }
 
-    const sequenceId = `seq_${companyNumber}_${personId}`;
-    const rank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
-    const qcScore = draft.used_fallback ? 0.62 : 0.88;
+    const passRate = steps.length > 0
+      ? (steps.length - fallbackStepCount) / steps.length
+      : 0;
+    const qcScore = Math.round((0.62 + (passRate * 0.30)) * 100) / 100;
+    const qcNotes = [];
+    if (fallbackStepCount > 0) {
+      qcNotes.push(`fallback_steps_${fallbackStepCount}`);
+    }
+    if (stepErrorCount > 0) {
+      qcNotes.push(`step_errors_${stepErrorCount}`);
+    }
 
     sequenceOutputs.push({
       company_number: companyNumber,
       person_id: personId,
       sequence_id: sequenceId,
       qc: {
-        passed: !draft.used_fallback,
+        passed: fallbackStepCount === 0 && stepErrorCount === 0,
         score: qcScore,
-        notes: draft.used_fallback ? ["fallback_copy_used"] : [],
+        notes: qcNotes,
       },
-      steps: [
-        {
-          step_number: 1,
-          step_type: "proof",
-          day_offset: 0,
-          subject: draft.subject,
-          body: draft.body,
-          citations: draft.citations,
-        },
-      ],
-      yamm_rows: [
-        {
-          To: String(stakeholder?.email || ""),
-          Subject: draft.subject,
-          Body: draft.body,
-          Company: companyName,
-          CompanyNumber: companyNumber,
-          PriorityRank: rank,
-          SequenceId: sequenceId,
-          StepNumber: 1,
-          ApprovalStatus: "pending",
-        },
-      ],
+      steps,
+      yamm_rows: yammRows,
     });
   }
 
   const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
-  const rowCount = sequenceOutputs.length;
+  const rowCount = sequenceOutputs.reduce((sum, output) => {
+    const rows = Array.isArray(output?.yamm_rows) ? output.yamm_rows.length : 0;
+    return sum + rows;
+  }, 0);
   const status = rowCount === 0 ? "error" : (errors.length > 0 ? "partial" : "ok");
   const responseIdSeed = requestId ? requestId.replace(/[^a-zA-Z0-9_-]/g, "_") : Date.now().toString();
 
@@ -663,7 +1477,10 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
 function buildDevGeminiHandoffResponse(payload) {
   const requestId = String(payload?.request_id || "").trim();
   const workspace = payload?.workspace || {};
+  const campaign = payload?.campaign || {};
+  const generationPolicy = payload?.generation_policy || {};
   const rankedCompanies = Array.isArray(payload?.ranked_companies) ? payload.ranked_companies : [];
+  const stepPlan = resolveGeminiSequenceStepPlan(campaign, generationPolicy);
 
   const sequenceOutputs = rankedCompanies
     .map((company, index) => {
@@ -676,10 +1493,60 @@ function buildDevGeminiHandoffResponse(payload) {
       const personId = String(stakeholder?.person_id || "").trim();
       if (!companyNumber || !personId) return null;
 
-      const roleName = slugToTitle(stakeholder?.role || stakeholder?.persona_bucket || "stakeholder");
+      const firstName = extractStakeholderFirstName(stakeholder?.full_name);
       const sequenceId = `seq_${companyNumber}_${personId}`;
-      const subject = `Question about ${roleName} priorities at ${companyName}`;
-      const body = `Hi ${stakeholder?.full_name || "there"},\n\nI prepared this as a local simulator output so we can validate Gemini handoff plumbing end-to-end before live connector auth is enabled.\n\nBest,\nSophie`;
+      const priorityRank = Number.parseInt(String(company?.rank || index + 1), 10) || index + 1;
+      const priorityBand = String(company?.priority_band || "").trim() || null;
+
+      const steps = stepPlan.map((step) => {
+        const stepLabel = slugToTitle(step.step_type);
+        let subject = `${companyName}: ${stepLabel} note`;
+        let body = `Hi ${firstName},\n\nSimulator output for ${stepLabel.toLowerCase()} step ${step.step_number} of ${stepPlan.length}. This mirrors the Gemini handoff contract so approval and YAMM wiring can be validated end-to-end before live credentials are enabled.\n\nSophie`;
+
+        if (step.step_type === "proof") {
+          subject = `${companyName}: initial observation`;
+          body = `Hi ${firstName},\n\nSimulator proof step for ${companyName}. This line stands in for a concrete opening insight and confirms that step-level sequencing data is flowing correctly into draft and YAMM rows.\n\nSophie`;
+        } else if (step.step_type === "nudge_1" || step.step_type === "nudge_2") {
+          subject = `${companyName}: concise follow-up`;
+          body = `Hi ${firstName},\n\nSimulator nudge step to validate short-form follow-up copy and day offsets in the handoff response. The production path should replace this with evidence-backed language tied to current signals.\n\nSophie`;
+        } else if (step.step_type === "depth") {
+          subject = `${companyName}: deeper operating angle`;
+          body = `Hi ${firstName},\n\nSimulator depth step to validate multi-touch sequencing. In production this is where the richer operational angle and connected product arc should appear with company-specific evidence.\n\nSophie`;
+        } else if (step.step_type === "provocation") {
+          subject = `${companyName}: pressure-test question`;
+          body = `Hi ${firstName},\n\nSimulator provocation step to confirm question-led copy can be carried as a distinct touchpoint. This verifies later-sequence diversity and approval flow handling for non-initial steps.\n\nSophie`;
+        } else if (step.step_type === "close") {
+          subject = `${companyName}: final close-out note`;
+          body = `Hi ${firstName},\n\nSimulator close step to confirm end-of-sequence handling and send-eligible filtering. In production this should remain low-pressure and respectful while offering a practical next step.\n\nSophie`;
+        }
+
+        return {
+          step_number: step.step_number,
+          step_type: step.step_type,
+          day_offset: step.day_offset,
+          subject,
+          body,
+          citations: ["simulator.local", `sequence.step_${step.step_number}`],
+        };
+      });
+
+      const yammRows = steps.map((step) => ({
+        To: String(stakeholder?.email || ""),
+        Subject: step.subject,
+        Body: step.body,
+        Company: companyName,
+        CompanyNumber: companyNumber,
+        PriorityRank: priorityRank,
+        PriorityBand: priorityBand,
+        SequenceId: sequenceId,
+        StepNumber: step.step_number,
+        StepType: step.step_type,
+        DayOffset: step.day_offset,
+        ApprovalStatus: "pending",
+        QCPassed: "true",
+        QCScore: 0.9,
+        EvidenceRefs: step.citations.join("|"),
+      }));
 
       return {
         company_number: companyNumber,
@@ -690,35 +1557,17 @@ function buildDevGeminiHandoffResponse(payload) {
           score: 0.9,
           notes: [],
         },
-        steps: [
-          {
-            step_number: 1,
-            step_type: "proof",
-            day_offset: 0,
-            subject,
-            body,
-            citations: ["simulator.local"],
-          },
-        ],
-        yamm_rows: [
-          {
-            To: String(stakeholder?.email || ""),
-            Subject: subject,
-            Body: body,
-            Company: companyName,
-            CompanyNumber: companyNumber,
-            PriorityRank: Number.parseInt(String(company?.rank || index + 1), 10) || index + 1,
-            SequenceId: sequenceId,
-            StepNumber: 1,
-            ApprovalStatus: "pending",
-          },
-        ],
+        steps,
+        yamm_rows: yammRows,
       };
     })
     .filter(Boolean);
 
   const sheetTab = String(workspace?.sheet_tab || "queue").trim() || "queue";
-  const rowCount = sequenceOutputs.length;
+  const rowCount = sequenceOutputs.reduce((sum, output) => {
+    const rows = Array.isArray(output?.yamm_rows) ? output.yamm_rows.length : 0;
+    return sum + rows;
+  }, 0);
 
   return {
     contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
@@ -737,7 +1586,57 @@ function buildDevGeminiHandoffResponse(payload) {
   };
 }
 
-function extractGeminiYammRows(responsePayload = {}) {
+function parseGeminiRowStepNumber(value) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function buildGeminiApprovalRowKey(sequenceId, stepNumber) {
+  const sequenceToken = String(sequenceId || "").trim();
+  const parsedStepNumber = parseGeminiRowStepNumber(stepNumber);
+  if (!sequenceToken || !parsedStepNumber) return null;
+  return `${sequenceToken}::${parsedStepNumber}`;
+}
+
+function overlayGeminiYammRowApprovals(rows = [], approvalRows = []) {
+  if (!Array.isArray(rows) || rows.length < 1) return [];
+
+  const approvalLookup = new Map();
+  for (const approvalRow of Array.isArray(approvalRows) ? approvalRows : []) {
+    const key = buildGeminiApprovalRowKey(approvalRow?.sequence_id, approvalRow?.step_number);
+    if (!key) continue;
+    const status = String(approvalRow?.approval_status || "").trim().toLowerCase();
+    approvalLookup.set(key, {
+      ApprovalStatus: GEMINI_APPROVAL_STATUSES.has(status) ? status : "pending",
+      ApprovedBy: approvalRow?.approved_by ? String(approvalRow.approved_by) : null,
+      ApprovedAt: approvalRow?.approved_at ? String(approvalRow.approved_at) : null,
+      ReviewNotes: approvalRow?.review_notes ? String(approvalRow.review_notes) : null,
+    });
+  }
+
+  return rows.map((row) => {
+    const key = buildGeminiApprovalRowKey(row?.SequenceId, row?.StepNumber);
+    if (!key || !approvalLookup.has(key)) {
+      const fallbackStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
+      return {
+        ...row,
+        ApprovalStatus: GEMINI_APPROVAL_STATUSES.has(fallbackStatus) ? fallbackStatus : "pending",
+      };
+    }
+
+    const approval = approvalLookup.get(key);
+    return {
+      ...row,
+      ApprovalStatus: approval.ApprovalStatus,
+      ApprovedBy: approval.ApprovedBy,
+      ApprovedAt: approval.ApprovedAt,
+      ReviewNotes: approval.ReviewNotes,
+    };
+  });
+}
+
+function extractGeminiYammRows(responsePayload = {}, approvalRows = []) {
   const requestId = String(responsePayload?.request_id || "").trim() || null;
   const responseId = String(responsePayload?.response_id || "").trim() || null;
   const contractVersion = String(responsePayload?.contract_version || GEMINI_HANDOFF_CONTRACT_VERSION).trim();
@@ -745,24 +1644,56 @@ function extractGeminiYammRows(responsePayload = {}) {
 
   const flattened = [];
   for (const output of outputs) {
+    const outputSteps = Array.isArray(output?.steps) ? output.steps : [];
+    const stepsByNumber = new Map();
+    for (const step of outputSteps) {
+      const stepNumber = parseGeminiRowStepNumber(step?.step_number);
+      if (!stepNumber) continue;
+      stepsByNumber.set(stepNumber, step);
+    }
+
     const yammRows = Array.isArray(output?.yamm_rows) ? output.yamm_rows : [];
     for (const row of yammRows) {
       if (!row || typeof row !== "object") continue;
       const approvalStatus = String(row.ApprovalStatus ?? row.approval_status ?? "").trim().toLowerCase() || null;
+      const stepNumber = parseGeminiRowStepNumber(row.StepNumber ?? row.step_number);
+      const stepDetails = stepNumber ? stepsByNumber.get(stepNumber) : null;
+      const rawCompanyName = String(row.Company ?? output?.company_name ?? "").trim();
+      const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName) || rawCompanyName || null;
+      const companyNameReview = evaluateGeminiCompanyNameReview(rawCompanyName);
+      const normalizedSubject = normalizeCompanyNameInText(String(row.Subject ?? ""), {
+        rawCompanyName,
+        normalizedCompanyName: normalizedCompanyName || rawCompanyName,
+      });
+      const normalizedBody = normalizeCompanyNameInText(String(row.Body ?? ""), {
+        rawCompanyName,
+        normalizedCompanyName: normalizedCompanyName || rawCompanyName,
+      });
       flattened.push({
         ...row,
+        Subject: normalizedSubject || String(row.Subject ?? ""),
+        Body: normalizedBody || String(row.Body ?? ""),
+        Company: normalizedCompanyName,
+        CompanyNameNeedsReview: companyNameReview.needs_review,
+        CompanyNameReviewReason: companyNameReview.reason,
         RequestId: row.RequestId ?? requestId,
         ResponseId: row.ResponseId ?? responseId,
         ContractVersion: row.ContractVersion ?? contractVersion,
         SequenceId: row.SequenceId ?? output?.sequence_id ?? null,
         CompanyNumber: row.CompanyNumber ?? output?.company_number ?? null,
         PersonId: row.PersonId ?? output?.person_id ?? null,
-        ApprovalStatus: row.ApprovalStatus ?? approvalStatus,
+        StepNumber: stepNumber ?? parseGeminiRowStepNumber(row.StepNumber),
+        StepType: row.StepType ?? row.step_type ?? stepDetails?.step_type ?? null,
+        DayOffset: row.DayOffset ?? row.day_offset ?? stepDetails?.day_offset ?? 0,
+        ApprovalStatus: row.ApprovalStatus ?? approvalStatus ?? "pending",
+        ApprovedBy: row.ApprovedBy ?? row.approved_by ?? null,
+        ApprovedAt: row.ApprovedAt ?? row.approved_at ?? null,
+        ReviewNotes: row.ReviewNotes ?? row.review_notes ?? null,
       });
     }
   }
 
-  return flattened;
+  return overlayGeminiYammRowApprovals(flattened, approvalRows);
 }
 
 function escapeCsvValue(value) {
@@ -797,6 +1728,8 @@ function buildGeminiYammRowsCsv(rows = []) {
     "RequestId",
     "ResponseId",
     "ContractVersion",
+    "CompanyNameNeedsReview",
+    "CompanyNameReviewReason",
     "QCScore",
     "QCPassed",
     "EvidenceRefs",
@@ -840,7 +1773,8 @@ function isGeminiYammRowSendEligible(row = {}) {
   const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
   const hasRecipient = String(row?.To || "").trim().length > 0;
   const doNotSend = isTruthyGeminiYammFlag(row?.DoNotSend);
-  return approvalStatus === "approved" && hasRecipient && !doNotSend;
+  const companyNameNeedsReview = isTruthyGeminiYammFlag(row?.CompanyNameNeedsReview);
+  return approvalStatus === "approved" && hasRecipient && !doNotSend && !companyNameNeedsReview;
 }
 
 function summarizeGeminiYammRows(rows = []) {
@@ -855,6 +1789,8 @@ function summarizeGeminiYammRows(rows = []) {
   let missingRecipient = 0;
   let doNotSendCount = 0;
   let sendEligibleCount = 0;
+  let companyNameNeedsReviewCount = 0;
+  const companyNameReviewReasons = {};
 
   for (const row of rows) {
     const approvalStatus = String(row?.ApprovalStatus || "").trim().toLowerCase();
@@ -873,6 +1809,14 @@ function summarizeGeminiYammRows(rows = []) {
     if (isGeminiYammRowSendEligible(row)) {
       sendEligibleCount += 1;
     }
+
+    if (isTruthyGeminiYammFlag(row?.CompanyNameNeedsReview)) {
+      companyNameNeedsReviewCount += 1;
+      const reason = String(row?.CompanyNameReviewReason || "").trim().toLowerCase();
+      if (reason) {
+        companyNameReviewReasons[reason] = Number(companyNameReviewReasons[reason] || 0) + 1;
+      }
+    }
   }
 
   return {
@@ -881,8 +1825,10 @@ function summarizeGeminiYammRows(rows = []) {
       send_eligible: sendEligibleCount,
       missing_recipient: missingRecipient,
       do_not_send: doNotSendCount,
+      company_name_needs_review: companyNameNeedsReviewCount,
     },
     by_approval_status: byApprovalStatus,
+    company_name_review_reasons: companyNameReviewReasons,
   };
 }
 
@@ -976,11 +1922,51 @@ function scoreTier(entry = {}) {
   return "C";
 }
 
+function normalizeGeminiStakeholderName(value) {
+  const raw = sanitizeSingleLine(value || "", 120);
+  if (!raw) return "there";
+
+  if (GEMINI_STAKEHOLDER_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(raw))) {
+    return "there";
+  }
+
+  const alphaTokens = raw
+    .split(/\s+/)
+    .map((token) => token.replace(/[^A-Za-z'-]/g, ""))
+    .filter(Boolean);
+  if (alphaTokens.length === 0) return "there";
+
+  const personalNameTokens = alphaTokens.filter((token) => {
+    if (GEMINI_STAKEHOLDER_CORPORATE_TOKENS.has(token.toLowerCase())) return false;
+    return /^[A-Z][A-Za-z'-]{1,}$/.test(token);
+  });
+  const corporateTokens = alphaTokens.filter((token) => GEMINI_STAKEHOLDER_CORPORATE_TOKENS.has(token.toLowerCase()));
+
+  if (personalNameTokens.length === 0 && corporateTokens.length >= Math.max(2, Math.ceil(alphaTokens.length * 0.6))) {
+    return "there";
+  }
+
+  return raw;
+}
+
+function extractStakeholderFirstName(value) {
+  const normalized = normalizeGeminiStakeholderName(value);
+  if (!normalized || normalized === "there") return "there";
+
+  const firstToken = String(normalized)
+    .trim()
+    .split(/\s+/)
+    .find((token) => /^[A-Za-z][A-Za-z'-]{0,62}$/.test(token));
+
+  return firstToken || "there";
+}
+
 function buildGeminiStakeholderFromScored(entry, scoredStakeholder, rank) {
   const fallbackCompanyNumber = normalizeCompanyNumber(entry?.company_number);
   const personName = String(scoredStakeholder?.name || "").trim();
+  const normalizedName = normalizeGeminiStakeholderName(personName);
   const role = String(scoredStakeholder?.role || "").trim();
-  const personSeed = personName || role || `stakeholder_${rank}`;
+  const personSeed = normalizedName !== "there" ? normalizedName : (role || `stakeholder_${rank}`);
   const companySeed = fallbackCompanyNumber || "company";
   const personId = `st_${companySeed}_${personSeed}`
     .toLowerCase()
@@ -992,7 +1978,7 @@ function buildGeminiStakeholderFromScored(entry, scoredStakeholder, rank) {
 
   return {
     person_id: personId,
-    full_name: personName || "Unknown Stakeholder",
+    full_name: normalizedName,
     role: role || "Finance stakeholder",
     email: emailGuess,
     email_status: emailGuess ? "guessed" : "missing",
@@ -1009,6 +1995,7 @@ function buildGeminiRequestFromWeeklyEntries({
   selectedEntries,
   maxTouches,
   requestPrefix,
+  requestIdOverride,
 }) {
   const safeWeekLabel = String(weekLabel || "").trim();
   const weekToken = safeWeekLabel.replace(/[^0-9]/g, "") || "current";
@@ -1018,9 +2005,14 @@ function buildGeminiRequestFromWeeklyEntries({
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "_")
     .replace(/^_+|_+$/g, "") || "weekly";
-  const requestId = `${prefixToken}_req_${weekToken}_${focusToken}`
+  const fallbackRequestId = `${prefixToken}_req_${weekToken}_${focusToken}`
     .replace(/[^a-zA-Z0-9_-]/g, "_")
     .slice(0, 120);
+  const requestIdToken = String(requestIdOverride || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 120);
+  const requestId = requestIdToken || fallbackRequestId;
 
   const rankedCompanies = [];
   let skippedMissingStakeholders = 0;
@@ -1595,6 +2587,7 @@ async function runGeminiWeeklyHandoff(options = {}) {
   const maxTouches = clampGeminiWeeklyLimit(options.max_touches, GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES);
   const dryRun = parseGeminiBooleanFlag(options.dry_run, false);
   const requestPrefix = String(options.request_prefix || "weekly").trim() || "weekly";
+  const requestIdOverride = String(options.request_id || "").trim() || null;
 
   const weekStartDate = new Date(weekStart);
   const weekEndDate = new Date(weekEnd);
@@ -1643,6 +2636,7 @@ async function runGeminiWeeklyHandoff(options = {}) {
     selectedEntries: selection.entries,
     maxTouches,
     requestPrefix,
+    requestIdOverride,
   });
 
   if (requestEnvelope.ranked_count < 1) {
@@ -3115,7 +4109,7 @@ function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
     || toOptionalString(overrides.companyName)
     || toOptionalString(company?.name)
     || toOptionalString(monitored?.company_name)
-    || pendingCompanyName();
+    || pendingCompanyName(companyNumber);
 
   const companyWebsite =
     toOptionalString(overrides.company_website)
@@ -3151,16 +4145,51 @@ function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
   };
 }
 
-function isFallbackCompanyName(name, companyNumber) {
-  return !name || name === `Company ${companyNumber}` || name === companyNumber;
+function normalizeStoredCompanyName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function pendingCompanyName() {
+function inferFallbackCompanyNameReason(name, companyNumber) {
+  const normalized = normalizeStoredCompanyName(name);
+  if (!normalized) return "missing_company_name";
+
+  const normalizedNumber = normalizeCompanyNumber(companyNumber) || String(companyNumber || "").trim();
+  if (normalizedNumber && (normalized === `Company ${normalizedNumber}` || normalized === normalizedNumber)) {
+    return "placeholder_company_number";
+  }
+
+  const reviewRule = GEMINI_COMPANY_NAME_REVIEW_RULES.find((rule) => rule.pattern.test(normalized));
+  if (reviewRule) return reviewRule.reason;
+
+  if (/^(?:notes?\s+to\b|to\s+set\s+out\b|report\s+and\s+accounts\b|strategic\s+report\b|company\s+information\b)/i.test(normalized)) {
+    return "non_company_heading";
+  }
+
+  return null;
+}
+
+function isFallbackCompanyName(name, companyNumber) {
+  return !!inferFallbackCompanyNameReason(name, companyNumber);
+}
+
+function pendingCompanyName(companyNumber = "") {
+  const normalizedNumber = normalizeCompanyNumber(companyNumber);
+  if (normalizedNumber) return `Name lookup needed (${normalizedNumber})`;
   return "Name lookup needed";
 }
 
+function resolveCompanyNameDisplay(storedName, companyNumber) {
+  const normalized = normalizeStoredCompanyName(storedName);
+  const unresolvedReason = inferFallbackCompanyNameReason(normalized, companyNumber);
+  return {
+    display_name: unresolvedReason ? pendingCompanyName(companyNumber) : normalized,
+    unresolved_company_name: !!unresolvedReason,
+    unresolved_company_name_reason: unresolvedReason,
+  };
+}
+
 function displayNameForCompanyNumber(companyNumber, storedName) {
-  return isFallbackCompanyName(storedName, companyNumber) ? pendingCompanyName() : storedName;
+  return resolveCompanyNameDisplay(storedName, companyNumber).display_name;
 }
 
 function getManualList(kind, companyId) {
@@ -3208,7 +4237,7 @@ async function refreshOwnershipEnvelope(companyNumber) {
 
 async function resolveMonitorName(companyNumber, storedName) {
   if (!isFallbackCompanyName(storedName, companyNumber)) return storedName;
-  if (!isCompaniesHouseConfigured()) return pendingCompanyName();
+  if (!isCompaniesHouseConfigured()) return pendingCompanyName(companyNumber);
 
   const lookup = await lookupCompany(companyNumber);
   const name = lookup?.name || lookup?.company_name;
@@ -3216,11 +4245,233 @@ async function resolveMonitorName(companyNumber, storedName) {
     updateMonitorCheck(companyNumber, { company_name: name, status: lookup.status || "active" });
     return name;
   }
-  return pendingCompanyName();
+  return pendingCompanyName(companyNumber);
 }
 
 function formatMonitorName(storedName, companyNumber) {
   return displayNameForCompanyNumber(companyNumber, storedName);
+}
+
+function buildSignalGeographyTop(geography, maxItems = 3) {
+  if (!geography || typeof geography !== "object" || Array.isArray(geography)) return [];
+
+  return Object.entries(geography)
+    .map(([country, share]) => ({ country, share: toOptionalNumber(share) ?? null }))
+    .filter((entry) => !!entry.country)
+    .sort((a, b) => (toOptionalNumber(b.share) ?? -1) - (toOptionalNumber(a.share) ?? -1))
+    .slice(0, maxItems);
+}
+
+function buildSignalEnvelopeSnapshot(kind, envelope, includeRaw = false) {
+  if (!envelope || typeof envelope !== "object") {
+    return {
+      available: false,
+      source: null,
+      updated_at: null,
+    };
+  }
+
+  const base = {
+    available: true,
+    source: String(envelope.source || "").trim() || null,
+    updated_at: String(envelope.updated_at || envelope.fetched_at || "").trim() || null,
+    confidence: String(envelope.confidence || "").trim() || null,
+    confidence_score: toOptionalNumber(envelope.confidence_score),
+    external_sources: Array.isArray(envelope.external_sources) ? envelope.external_sources : [],
+  };
+
+  if (kind === "tech_stack") {
+    const technologies = Array.isArray(envelope.technologies)
+      ? envelope.technologies
+      : (Array.isArray(envelope.detected_technologies) ? envelope.detected_technologies : []);
+    base.metrics = {
+      signal_count: toOptionalNumber(envelope.signal_count) ?? technologies.length,
+      technologies_sample: technologies.slice(0, 10),
+    };
+  } else if (kind === "website_intelligence") {
+    const currencies = Array.isArray(envelope.pricing_currencies)
+      ? envelope.pricing_currencies
+      : (Array.isArray(envelope.currencies_on_pricing_page) ? envelope.currencies_on_pricing_page : []);
+    const officeLocations = Array.isArray(envelope.office_locations) ? envelope.office_locations : [];
+    base.metrics = {
+      domain: String(envelope.domain || envelope.company_domain || "").trim() || null,
+      website_url: String(envelope.website_url || envelope.url || "").trim() || null,
+      customer_type: String(envelope.customer_type || "").trim() || null,
+      pricing_currencies_count: currencies.length,
+      office_locations_count: officeLocations.length,
+      international_shipping: envelope.international_shipping === true,
+      shipping_countries: toOptionalNumber(envelope.shipping_countries),
+    };
+  } else if (kind === "marketing_intelligence") {
+    base.metrics = {
+      monthly_web_traffic: toOptionalNumber(envelope.monthly_web_traffic) ?? toOptionalNumber(envelope.web_traffic),
+      estimated_monthly_ad_spend: toOptionalNumber(envelope.estimated_monthly_ad_spend) ?? toOptionalNumber(envelope.estimated_ad_spend),
+      traffic_geography_top: buildSignalGeographyTop(envelope.traffic_geography),
+    };
+  } else if (kind === "reputation") {
+    base.metrics = {
+      trustpilot_review_count: toOptionalNumber(envelope.trustpilot_review_count),
+      payment_related_complaints: toOptionalNumber(envelope.payment_related_complaints),
+      checkout_related_complaints: toOptionalNumber(envelope.checkout_related_complaints),
+      status_health_band: String(envelope.status_health_band || "").trim() || null,
+      status_incident_severity_score: toOptionalNumber(envelope.status_incident_severity_score),
+      status_incidents_open: toOptionalNumber(envelope.status_incidents_open),
+      status_major_incidents_open: toOptionalNumber(envelope.status_major_incidents_open),
+      status_degraded_components: toOptionalNumber(envelope.status_degraded_components),
+      status_recent_incident_at: String(envelope.status_recent_incident_at || "").trim() || null,
+      status_recent_incident_age_days: toOptionalNumber(envelope.status_recent_incident_age_days),
+    };
+  } else if (kind === "hiring_signals") {
+    const roleNames = (Array.isArray(envelope.open_roles) ? envelope.open_roles : [])
+      .map((entry) => String(entry?.role || entry?.title || "").trim())
+      .filter(Boolean);
+    base.metrics = {
+      total_open_roles: toOptionalNumber(envelope.total_open_roles),
+      hiring_signal_score: toOptionalNumber(envelope.hiring_signal_score),
+      hiring_intensity: String(envelope.hiring_intensity || "").trim() || null,
+      role_sample: roleNames.slice(0, 10),
+    };
+  } else if (kind === "ownership") {
+    base.metrics = {
+      structure: String(envelope.structure || "").trim() || null,
+      parent_company: String(envelope.parent_company || "").trim() || null,
+      parent_country: String(envelope.parent_country || "").trim() || null,
+      significant_corporate_controllers_count: toOptionalNumber(envelope.significant_corporate_controllers_count),
+      non_uk_significant_corporate_controllers_count: toOptionalNumber(envelope.non_uk_significant_corporate_controllers_count),
+    };
+  }
+
+  if (includeRaw) {
+    base.raw = envelope;
+  }
+
+  return base;
+}
+
+function buildScoreSignalSnapshots(companyNumber, includeRaw = false) {
+  return {
+    tech_stack: buildSignalEnvelopeSnapshot("tech_stack", getSetting(`tech_stack_${companyNumber}`, null), includeRaw),
+    website_intelligence: buildSignalEnvelopeSnapshot("website_intelligence", getSetting(`website_intelligence_${companyNumber}`, null), includeRaw),
+    marketing_intelligence: buildSignalEnvelopeSnapshot("marketing_intelligence", getSetting(`marketing_intelligence_${companyNumber}`, null), includeRaw),
+    reputation: buildSignalEnvelopeSnapshot("reputation", getSetting(`reputation_${companyNumber}`, null), includeRaw),
+    hiring_signals: buildSignalEnvelopeSnapshot("hiring_signals", getSetting(`hiring_signals_${companyNumber}`, null), includeRaw),
+    ownership: buildSignalEnvelopeSnapshot("ownership", getSetting(`ownership_${companyNumber}`, null), includeRaw),
+  };
+}
+
+function buildScoreLayerBreakdown(score) {
+  const layers = score?.layers || {};
+  const competitorDetectedCount = Array.isArray(layers?.competitor_context?.detected)
+    ? layers.competitor_context.detected.length
+    : 0;
+
+  return [
+    {
+      layer: "product_fit",
+      score: toOptionalNumber(layers?.product_fit?.score),
+      best_motion: String(layers?.product_fit?.best_motion || "").trim() || null,
+    },
+    {
+      layer: "commercial_value",
+      score: toOptionalNumber(layers?.commercial_value?.score),
+    },
+    {
+      layer: "pain_strength",
+      score: toOptionalNumber(layers?.pain_strength?.score),
+    },
+    {
+      layer: "urgency",
+      score: toOptionalNumber(layers?.urgency?.score),
+      trend: String(layers?.urgency?.trend || "").trim() || null,
+    },
+    {
+      layer: "competitor_context",
+      score: toOptionalNumber(layers?.competitor_context?.score),
+      detected_competitors: competitorDetectedCount,
+    },
+    {
+      layer: "switching_feasibility",
+      score: toOptionalNumber(layers?.switching_feasibility?.score),
+      band: String(layers?.switching_feasibility?.band || "").trim() || null,
+    },
+  ];
+}
+
+function buildScoreDeltaBreakdown(score) {
+  const integrationQuality = score?.integration_quality || {};
+  const deterministicBase = toOptionalNumber(integrationQuality.deterministic_base);
+  const llmBoost = toOptionalNumber(integrationQuality.bounded_boost) ?? 0;
+  const stakeholderBoost = toOptionalNumber(score?.stakeholder_priority?.boost) ?? 0;
+  const finalComposite = toOptionalNumber(score?.composite_score);
+
+  const clampUnit = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    if (numeric <= 0) return 0;
+    if (numeric >= 1) return 1;
+    return Math.round(numeric * 100) / 100;
+  };
+
+  const postLlm = deterministicBase === null ? null : clampUnit(deterministicBase + llmBoost);
+  const postStakeholder = postLlm === null ? null : clampUnit(postLlm + stakeholderBoost);
+  const residualDelta = (finalComposite === null || postStakeholder === null)
+    ? null
+    : Math.round((finalComposite - postStakeholder) * 100) / 100;
+
+  return {
+    deterministic_base: deterministicBase,
+    llm_bounded_boost: Math.round(llmBoost * 100) / 100,
+    stakeholder_boost: Math.round(stakeholderBoost * 100) / 100,
+    inferred_post_llm: postLlm,
+    inferred_post_stakeholder: postStakeholder,
+    final_composite: finalComposite,
+    residual_delta: residualDelta,
+  };
+}
+
+function buildScoreMotionImpactBreakdown(score) {
+  const motionScores = score?.all_motion_scores && typeof score.all_motion_scores === "object"
+    ? score.all_motion_scores
+    : {};
+  const llmMotionBoosts = [];
+  const competitorMotionBoosts = [];
+  const enrichmentMotionBoosts = [];
+
+  for (const [motion, details] of Object.entries(motionScores)) {
+    const llmBoost = toOptionalNumber(details?.llm_boost);
+    const llmRawBoost = toOptionalNumber(details?.llm_boost_raw);
+    if (llmBoost !== null || llmRawBoost !== null) {
+      llmMotionBoosts.push({
+        motion,
+        applied_boost: llmBoost,
+        raw_boost: llmRawBoost,
+      });
+    }
+
+    const competitorBoost = toOptionalNumber(details?.competitor_boost);
+    if (competitorBoost !== null) {
+      competitorMotionBoosts.push({ motion, boost: competitorBoost });
+    }
+
+    for (const [key, value] of Object.entries(details || {})) {
+      if (!key.endsWith("_boost")) continue;
+      if (["llm_boost", "llm_boost_raw", "competitor_boost"].includes(key)) continue;
+      const boost = toOptionalNumber(value);
+      if (boost === null || boost === 0) continue;
+      enrichmentMotionBoosts.push({
+        motion,
+        source: key.replace(/_boost$/, ""),
+        boost,
+      });
+    }
+  }
+
+  return {
+    llm_motion_boosts: llmMotionBoosts,
+    competitor_motion_boosts: competitorMotionBoosts,
+    enrichment_motion_boosts: enrichmentMotionBoosts,
+    enrichment_motion_adjustments: score?.enrichment?.motion_adjustments || null,
+  };
 }
 
 function titleCase(value) {
@@ -3892,6 +5143,360 @@ function buildMonitorMotionScores(score) {
   });
 }
 
+function normalizeStakeholderToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildStakeholderKey(stakeholder, rank = 0) {
+  const normalizedName = normalizeStakeholderToken(stakeholder?.name);
+  if (normalizedName) {
+    return `name:${normalizedName}`;
+  }
+
+  const normalizedRole = normalizeStakeholderToken(stakeholder?.role);
+  if (normalizedRole) {
+    return `role:${normalizedRole}`;
+  }
+
+  return `unknown:${rank + 1}`;
+}
+
+function isStakeholderWatchRole(role) {
+  const normalizedRole = normalizeStakeholderToken(role);
+  if (!normalizedRole) return false;
+  return STAKEHOLDER_ALERT_WATCH_ROLE_PATTERNS.some((pattern) => pattern.test(normalizedRole));
+}
+
+function normalizeStakeholderSnapshot(stakeholders = []) {
+  const rows = Array.isArray(stakeholders) ? stakeholders : [];
+
+  const normalized = rows
+    .map((stakeholder, idx) => {
+      const name = String(stakeholder?.name || "").replace(/\s+/g, " ").trim() || null;
+      const role = String(stakeholder?.role || "").replace(/\s+/g, " ").trim() || null;
+      const finalScoreRaw = Number(stakeholder?.final_score);
+      const finalScore = Number.isFinite(finalScoreRaw) ? Math.round(finalScoreRaw * 10) / 10 : 0;
+      const confidenceLevel = String(stakeholder?.confidence_level || "").trim().toLowerCase() || null;
+      const buyingRole = String(stakeholder?.buying_role || "").trim().toLowerCase() || null;
+      const needsVerification = stakeholder?.needs_verification === true;
+
+      return {
+        stakeholder_key: buildStakeholderKey({ name, role }, idx),
+        stakeholder_name: name,
+        stakeholder_role: role,
+        final_score: finalScore,
+        confidence_level: confidenceLevel,
+        buying_role: buyingRole,
+        needs_verification: needsVerification,
+        watch_role: isStakeholderWatchRole(role),
+      };
+    })
+    .sort((a, b) => Number(b.final_score || 0) - Number(a.final_score || 0));
+
+  const hashInput = normalized.map((entry) => ({
+    stakeholder_key: entry.stakeholder_key,
+    stakeholder_name: entry.stakeholder_name,
+    stakeholder_role: entry.stakeholder_role,
+    final_score: entry.final_score,
+    confidence_level: entry.confidence_level,
+    buying_role: entry.buying_role,
+    needs_verification: entry.needs_verification,
+    watch_role: entry.watch_role,
+  }));
+
+  return {
+    version: 1,
+    generated_at: new Date().toISOString(),
+    hash: sha256Hex(JSON.stringify(hashInput)),
+    items: normalized,
+  };
+}
+
+function loadStakeholderAlertSnapshot(companyId) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const key = `${STAKEHOLDER_ALERT_SNAPSHOT_SETTINGS_PREFIX}${canonicalId}`;
+  const snapshot = getSetting(key, null);
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+
+  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+  return {
+    version: Number(snapshot.version || 1),
+    generated_at: snapshot.generated_at || null,
+    hash: String(snapshot.hash || "").trim(),
+    items,
+  };
+}
+
+function saveStakeholderAlertSnapshot(companyId, snapshot, metadata = {}) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const key = `${STAKEHOLDER_ALERT_SNAPSHOT_SETTINGS_PREFIX}${canonicalId}`;
+  setSetting(key, {
+    version: Number(snapshot?.version || 1),
+    generated_at: snapshot?.generated_at || new Date().toISOString(),
+    hash: String(snapshot?.hash || ""),
+    items: Array.isArray(snapshot?.items) ? snapshot.items : [],
+    company_name: metadata.company_name || null,
+    company_number: metadata.company_number || null,
+    primary_motion: metadata.primary_motion || null,
+  });
+}
+
+function buildStakeholderAlertCandidates(previousSnapshot, currentSnapshot, context = {}) {
+  const previousItems = Array.isArray(previousSnapshot?.items) ? previousSnapshot.items : [];
+  const currentItems = Array.isArray(currentSnapshot?.items) ? currentSnapshot.items : [];
+  const previousByKey = new Map(previousItems.map((item) => [String(item?.stakeholder_key || "").trim(), item]));
+  const currentByKey = new Map(currentItems.map((item) => [String(item?.stakeholder_key || "").trim(), item]));
+  const events = [];
+
+  for (const current of currentItems) {
+    const stakeholderKey = String(current?.stakeholder_key || "").trim();
+    if (!stakeholderKey) continue;
+
+    const previous = previousByKey.get(stakeholderKey) || null;
+    const previousScore = Number(previous?.final_score || 0);
+    const currentScore = Number(current?.final_score || 0);
+    const deltaScore = Math.round((currentScore - previousScore) * 10) / 10;
+    const crossedHighPriority = previousScore < STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE
+      && currentScore >= STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE;
+    const jumped = deltaScore >= STAKEHOLDER_ALERT_PRIORITY_JUMP;
+    const confidenceUpgraded = String(previous?.confidence_level || "") !== "high"
+      && String(current?.confidence_level || "") === "high";
+    const verificationCleared = previous?.needs_verification === true && current?.needs_verification === false;
+
+    if (!previous) {
+      if (currentScore >= STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE || current?.watch_role) {
+        events.push({
+          event_type: "new_relevant_stakeholder",
+          severity: currentScore >= STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE ? "high" : "medium",
+          stakeholder_key: stakeholderKey,
+          stakeholder_name: current.stakeholder_name,
+          stakeholder_role: current.stakeholder_role,
+          previous_score: null,
+          current_score: currentScore,
+          delta_score: null,
+          confidence_level: current.confidence_level,
+          buying_role: current.buying_role,
+          detail: {
+            reason: current?.watch_role ? "watch_role_detected" : "high_priority_score",
+            company_name: context.company_name || null,
+            company_number: context.company_number || null,
+            primary_motion: context.primary_motion || null,
+            threshold_score: STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE,
+          },
+        });
+      }
+      continue;
+    }
+
+    if (crossedHighPriority || jumped || confidenceUpgraded) {
+      const reason = crossedHighPriority
+        ? "crossed_high_priority_threshold"
+        : jumped
+          ? "score_jump"
+          : "confidence_upgraded";
+      events.push({
+        event_type: "stakeholder_priority_increase",
+        severity: crossedHighPriority || currentScore >= STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE ? "high" : "medium",
+        stakeholder_key: stakeholderKey,
+        stakeholder_name: current.stakeholder_name,
+        stakeholder_role: current.stakeholder_role,
+        previous_score: previousScore,
+        current_score: currentScore,
+        delta_score: deltaScore,
+        confidence_level: current.confidence_level,
+        buying_role: current.buying_role,
+        detail: {
+          reason,
+          company_name: context.company_name || null,
+          company_number: context.company_number || null,
+          primary_motion: context.primary_motion || null,
+          threshold_score: STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE,
+          minimum_jump: STAKEHOLDER_ALERT_PRIORITY_JUMP,
+        },
+      });
+    }
+
+    if (verificationCleared) {
+      events.push({
+        event_type: "stakeholder_verification_cleared",
+        severity: "medium",
+        stakeholder_key: stakeholderKey,
+        stakeholder_name: current.stakeholder_name,
+        stakeholder_role: current.stakeholder_role,
+        previous_score: previousScore,
+        current_score: currentScore,
+        delta_score: deltaScore,
+        confidence_level: current.confidence_level,
+        buying_role: current.buying_role,
+        detail: {
+          reason: "needs_verification_cleared",
+          company_name: context.company_name || null,
+          company_number: context.company_number || null,
+          primary_motion: context.primary_motion || null,
+        },
+      });
+    }
+  }
+
+  for (const previous of previousItems) {
+    const stakeholderKey = String(previous?.stakeholder_key || "").trim();
+    if (!stakeholderKey) continue;
+    if (currentByKey.has(stakeholderKey)) continue;
+    const previousScore = Number(previous?.final_score || 0);
+    if (previousScore < STAKEHOLDER_ALERT_HIGH_PRIORITY_SCORE) continue;
+
+    events.push({
+      event_type: "stakeholder_no_longer_detected",
+      severity: "info",
+      stakeholder_key: stakeholderKey,
+      stakeholder_name: previous.stakeholder_name || null,
+      stakeholder_role: previous.stakeholder_role || null,
+      previous_score: previousScore,
+      current_score: null,
+      delta_score: null,
+      confidence_level: String(previous?.confidence_level || "").trim().toLowerCase() || null,
+      buying_role: String(previous?.buying_role || "").trim().toLowerCase() || null,
+      detail: {
+        reason: "missing_from_latest_snapshot",
+        company_name: context.company_name || null,
+        company_number: context.company_number || null,
+        primary_motion: context.primary_motion || null,
+      },
+    });
+  }
+
+  const severityWeight = {
+    high: 3,
+    medium: 2,
+    info: 1,
+  };
+
+  return events
+    .sort((a, b) => {
+      const severityDelta = (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0);
+      if (severityDelta !== 0) return severityDelta;
+      return Number(b.current_score || 0) - Number(a.current_score || 0);
+    })
+    .slice(0, 15);
+}
+
+function syncStakeholderAlertFeed({ companyId, companyNumber, companyName, stakeholders, primaryMotion }) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const previousSnapshot = loadStakeholderAlertSnapshot(canonicalId);
+  const currentSnapshot = normalizeStakeholderSnapshot(stakeholders || []);
+  const previousHash = String(previousSnapshot?.hash || "").trim();
+  const currentHash = String(currentSnapshot?.hash || "").trim();
+
+  if (previousHash && currentHash && previousHash === currentHash) {
+    return {
+      changed: false,
+      inserted: 0,
+      snapshot_hash: currentHash,
+      generated_at: currentSnapshot.generated_at,
+      candidate_count: 0,
+    };
+  }
+
+  const candidates = buildStakeholderAlertCandidates(previousSnapshot, currentSnapshot, {
+    company_name: companyName,
+    company_number: companyNumber,
+    primary_motion: primaryMotion,
+  });
+
+  let inserted = 0;
+  for (const candidate of candidates) {
+    const insertedId = addStakeholderAlertEvent({
+      company_id: canonicalId,
+      company_number: companyNumber,
+      snapshot_hash: currentHash,
+      event_type: candidate.event_type,
+      severity: candidate.severity,
+      stakeholder_key: candidate.stakeholder_key,
+      stakeholder_name: candidate.stakeholder_name,
+      stakeholder_role: candidate.stakeholder_role,
+      previous_score: candidate.previous_score,
+      current_score: candidate.current_score,
+      delta_score: candidate.delta_score,
+      confidence_level: candidate.confidence_level,
+      buying_role: candidate.buying_role,
+      detail: {
+        ...(candidate.detail || {}),
+        event_label: STAKEHOLDER_ALERT_EVENT_LABELS[candidate.event_type] || candidate.event_type,
+      },
+    });
+    if (insertedId) inserted += 1;
+  }
+
+  saveStakeholderAlertSnapshot(canonicalId, currentSnapshot, {
+    company_name: companyName,
+    company_number: companyNumber,
+    primary_motion: primaryMotion,
+  });
+
+  return {
+    changed: true,
+    inserted,
+    snapshot_hash: currentHash,
+    generated_at: currentSnapshot.generated_at,
+    candidate_count: candidates.length,
+  };
+}
+
+function buildStakeholderAlertSummary(companyId, options = {}) {
+  const canonicalId = canonicalCompanyId(companyId);
+  const rawLimit = Number.parseInt(String(options?.limit || 12), 10);
+  const limit = Number.isInteger(rawLimit) ? Math.max(1, Math.min(rawLimit, 100)) : 12;
+  const rawOffset = Number.parseInt(String(options?.offset || 0), 10);
+  const offset = Number.isInteger(rawOffset) ? Math.max(0, Math.min(rawOffset, 5000)) : 0;
+  const sinceHours = Number.parseInt(String(options?.sinceHours || ""), 10);
+  const safeSinceHours = Number.isInteger(sinceHours) && sinceHours > 0
+    ? Math.min(sinceHours, 24 * 365)
+    : null;
+  const eventType = String(options?.eventType || "").trim() || null;
+
+  const queryOptions = {
+    limit,
+    offset,
+    eventType,
+    ...(safeSinceHours ? { sinceHours: safeSinceHours } : {}),
+  };
+
+  const items = listStakeholderAlertEvents(canonicalId, queryOptions).map((item) => ({
+    ...item,
+    event_label: STAKEHOLDER_ALERT_EVENT_LABELS[item.event_type] || item.event_type,
+  }));
+
+  const total = countStakeholderAlertEvents(canonicalId, {
+    eventType,
+    ...(safeSinceHours ? { sinceHours: safeSinceHours } : {}),
+  });
+
+  return {
+    total,
+    limit,
+    offset,
+    event_type: eventType,
+    since_hours: safeSinceHours,
+    latest_event_at: items[0]?.created_at || null,
+    event_labels: STAKEHOLDER_ALERT_EVENT_LABELS,
+    by_type: getStakeholderAlertTypeCounts(canonicalId, {
+      eventType,
+      ...(safeSinceHours ? { sinceHours: safeSinceHours } : {}),
+    }),
+    recent_7d_by_type: getStakeholderAlertTypeCounts(canonicalId, {
+      eventType,
+      sinceHours: STAKEHOLDER_ALERT_RECENT_HOURS,
+    }),
+    items,
+  };
+}
+
 function buildStakeholderAssessment(companyId, company, analysis, score) {
   const activeContacts = getActiveContactsForCompany(companyId);
   if (!analysis?.key_people?.length) {
@@ -3944,6 +5549,14 @@ async function runStakeholderReview(companyId) {
   const baseScore = monitored ? scoreCompany(companyNumber) : getStoredScore(companyNumber);
   const score = baseScore ? integrateAnalysis(baseScore, analysis) : baseScore;
   const assessment = buildStakeholderAssessment(canonicalId, company, analysis, score);
+  const stakeholderAlertSync = syncStakeholderAlertFeed({
+    companyId: canonicalId,
+    companyNumber,
+    companyName: company.name,
+    stakeholders: assessment.stakeholders,
+    primaryMotion: assessment.primary_motion,
+  });
+  const stakeholderAlerts = buildStakeholderAlertSummary(canonicalId, { limit: 12 });
 
   return {
     company_id: canonicalId,
@@ -3951,6 +5564,8 @@ async function runStakeholderReview(companyId) {
     company_name: company.name,
     analysis,
     score,
+    stakeholder_alert_sync: stakeholderAlertSync,
+    stakeholder_alerts: stakeholderAlerts,
     ...assessment,
   };
 }
@@ -4629,6 +6244,7 @@ app.get("/api/unified-shortlist", (req, res) => {
       const supp = isSuppressed(`ch-${c.company_number}`, c.company_number);
       const queue = queueRows[c.company_number] || null;
       const storedAnalysis = getSetting(`analysis_${c.company_number}`, null);
+      const nameResolution = resolveCompanyNameDisplay(c.company_name, c.company_number);
 
       const analysis_status = deriveAnalysisStatus(queue, storedAnalysis);
       const priority = computePriorityBreakdown(c, stored, analysis_status, segment);
@@ -4640,7 +6256,9 @@ app.get("/api/unified-shortlist", (req, res) => {
       return {
         id: `ch-${c.company_number}`,
         company_number: c.company_number,
-        name: formatMonitorName(c.company_name, c.company_number),
+        name: nameResolution.display_name,
+        unresolved_company_name: nameResolution.unresolved_company_name,
+        unresolved_company_name_reason: nameResolution.unresolved_company_name_reason,
         industry: titleCase(stored?.industries?.[0]),
         turnover: c.latest_turnover,
         employee_count: stored?.employees || 0,
@@ -4826,15 +6444,24 @@ app.get("/api/company/:id", async (req, res) => {
         maybeKickShortlistAutoAnalysis(2);
       }
       const displayName = await resolveMonitorName(companyNumber, monitored.company_name);
+      const displayNameResolution = resolveCompanyNameDisplay(displayName, companyNumber);
       const monitorCompany = {
         id: profileId,
-        name: displayName,
+        name: displayNameResolution.display_name,
         company_number: companyNumber,
         turnover: monitored.latest_turnover,
         industry: titleCase(score?.industries?.[0]),
       };
       const reputationSignals = getStatusSignalSnapshot(companyNumber);
       const { stakeholders, assessment } = getProfileStakeholders(profileId, analysis, score, monitorCompany);
+      syncStakeholderAlertFeed({
+        companyId: profileId,
+        companyNumber,
+        companyName: displayNameResolution.display_name,
+        stakeholders: assessment.stakeholders,
+        primaryMotion: assessment.primary_motion,
+      });
+      const stakeholderAlerts = buildStakeholderAlertSummary(profileId, { limit: 12 });
       const competitors = getProfileCompetitors(profileId, analysis, score);
       const cadenceHistory = getCadenceLog(profileId);
       const ownershipStructure = getSetting(`ownership_${companyNumber}`, null);
@@ -4845,7 +6472,9 @@ app.get("/api/company/:id", async (req, res) => {
         company: {
           id: profileId,
           company_number: companyNumber,
-          name: displayName,
+          name: displayNameResolution.display_name,
+          unresolved_company_name: displayNameResolution.unresolved_company_name,
+          unresolved_company_name_reason: displayNameResolution.unresolved_company_name_reason,
           industry: monitorCompany.industry,
           sic_codes: sicCodes,
           turnover: monitored.latest_turnover,
@@ -4858,6 +6487,7 @@ app.get("/api/company/:id", async (req, res) => {
           best_motion: score?.layers?.product_fit?.best_motion || null,
           stakeholder_priority: score?.stakeholder_priority || null,
           stakeholder_assessment: assessment,
+          stakeholder_alerts: stakeholderAlerts,
           workflow_state: ws.state,
           workflow_history: ws.history || [],
           below_threshold: monitored.below_threshold === 1,
@@ -4911,6 +6541,16 @@ app.get("/api/company/:id", async (req, res) => {
   const ownershipStructure = getSetting(`ownership_${company.company_number}`, null);
   const sicCodes = getStoredSicCodes(company.company_number);
   const analysisStatus = analysis ? "ready" : "none";
+  const companyNameResolution = resolveCompanyNameDisplay(company.name, company.company_number);
+  const stakeholderAssessment = buildStakeholderAssessment(company.id, company, analysis, storedScore);
+  syncStakeholderAlertFeed({
+    companyId: company.id,
+    companyNumber: company.company_number,
+    companyName: companyNameResolution.display_name,
+    stakeholders: stakeholderAssessment.stakeholders,
+    primaryMotion: stakeholderAssessment.primary_motion,
+  });
+  const stakeholderAlerts = buildStakeholderAlertSummary(company.id, { limit: 12 });
 
   if (product_motion && VALID_MOTIONS.includes(product_motion)) {
     const fit = company.product_fit[product_motion];
@@ -4922,7 +6562,9 @@ app.get("/api/company/:id", async (req, res) => {
     res.json({
       company: {
         id: company.id,
-        name: company.name,
+        name: companyNameResolution.display_name,
+        unresolved_company_name: companyNameResolution.unresolved_company_name,
+        unresolved_company_name_reason: companyNameResolution.unresolved_company_name_reason,
         company_number: company.company_number,
         industry: company.industry,
         sic_codes: sicCodes,
@@ -4937,6 +6579,8 @@ app.get("/api/company/:id", async (req, res) => {
         workflow_history: ws.history || [],
         competitors,
         stakeholders: company.stakeholders || [],
+        stakeholder_assessment: stakeholderAssessment,
+        stakeholder_alerts: stakeholderAlerts,
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
         analysis,
@@ -4956,7 +6600,9 @@ app.get("/api/company/:id", async (req, res) => {
     res.json({
       company: {
         id: company.id,
-        name: company.name,
+        name: companyNameResolution.display_name,
+        unresolved_company_name: companyNameResolution.unresolved_company_name,
+        unresolved_company_name_reason: companyNameResolution.unresolved_company_name_reason,
         company_number: company.company_number,
         industry: company.industry,
         sic_codes: sicCodes,
@@ -4975,6 +6621,8 @@ app.get("/api/company/:id", async (req, res) => {
         workflow_history: ws.history || [],
         competitors,
         stakeholders: company.stakeholders || [],
+        stakeholder_assessment: stakeholderAssessment,
+        stakeholder_alerts: stakeholderAlerts,
         cadence_history: company.cadence_history || [],
         notes: getSetting(`notes_${company.id}`, ""),
         analysis,
@@ -5022,6 +6670,54 @@ app.patch("/api/company/:id/state", (req, res) => {
     new_state,
     allowed_transitions: ALLOWED_TRANSITIONS[new_state],
     history: updated.history,
+  });
+});
+
+app.get("/api/company/:id/stakeholder-alerts", (req, res) => {
+  const companyId = canonicalCompanyId(req.params.id);
+  const companyNumber = companyNumberFromId(companyId);
+
+  const rawLimit = Number.parseInt(String(req.query?.limit || "25"), 10);
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 200) {
+    return res.status(400).json({
+      error: "invalid_limit",
+      message: "limit must be an integer between 1 and 200",
+    });
+  }
+
+  const rawOffset = Number.parseInt(String(req.query?.offset || "0"), 10);
+  if (!Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 10000) {
+    return res.status(400).json({
+      error: "invalid_offset",
+      message: "offset must be an integer between 0 and 10000",
+    });
+  }
+
+  const rawSinceHours = String(req.query?.since_hours || "").trim();
+  let sinceHours = null;
+  if (rawSinceHours) {
+    const parsedSinceHours = Number.parseInt(rawSinceHours, 10);
+    if (!Number.isInteger(parsedSinceHours) || parsedSinceHours < 1 || parsedSinceHours > 24 * 365) {
+      return res.status(400).json({
+        error: "invalid_since_hours",
+        message: `since_hours must be an integer between 1 and ${24 * 365}`,
+      });
+    }
+    sinceHours = parsedSinceHours;
+  }
+
+  const eventType = String(req.query?.event_type || "").trim() || null;
+  const summary = buildStakeholderAlertSummary(companyId, {
+    limit: rawLimit,
+    offset: rawOffset,
+    sinceHours,
+    eventType,
+  });
+
+  return res.json({
+    company_id: companyId,
+    company_number: companyNumber,
+    ...summary,
   });
 });
 
@@ -7146,6 +8842,7 @@ app.post("/api/gemini/weekly/handoff", async (req, res) => {
       limit: payload.limit ?? query.limit,
       max_touches: payload.max_touches ?? query.max_touches,
       request_prefix: payload.request_prefix ?? query.request_prefix,
+      request_id: payload.request_id ?? query.request_id,
       dry_run: payload.dry_run ?? query.dry_run,
     });
 
@@ -7532,7 +9229,8 @@ app.get("/api/gemini/handoff", (req, res) => {
           yamm_summary: null,
         };
       }
-      const rows = extractGeminiYammRows(record.response);
+      const approvals = listGeminiHandoffApprovals(item.request_id);
+      const rows = extractGeminiYammRows(record.response, approvals);
       return {
         ...item,
         yamm_summary: summarizeGeminiYammRows(rows),
@@ -7918,7 +9616,8 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
     });
   }
 
-  const allRows = extractGeminiYammRows(record.response);
+  const approvals = listGeminiHandoffApprovals(requestId);
+  const allRows = extractGeminiYammRows(record.response, approvals);
   const approvalFilteredRows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
@@ -7962,7 +9661,8 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows/summary", (req, res) => {
     });
   }
 
-  const rows = extractGeminiYammRows(record.response);
+  const approvals = listGeminiHandoffApprovals(requestId);
+  const rows = extractGeminiYammRows(record.response, approvals);
   const summary = summarizeGeminiYammRows(rows);
 
   return res.json({
@@ -8350,6 +10050,367 @@ app.post("/api/gemini/handoff/:requestId/retry", async (req, res) => {
   });
 });
 
+app.post("/api/gemini/handoff/:requestId/retry-429", async (req, res) => {
+  const requestId = String(req.params?.requestId || "").trim();
+  const record = getGeminiHandoffRequest(requestId);
+  if (!record) {
+    return res.status(404).json({ error: "not_found", request_id: requestId });
+  }
+
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const currentStatus = String(record?.status || "").trim().toLowerCase();
+  if (!GEMINI_HANDOFF_RETRYABLE_STATUSES.has(currentStatus)) {
+    addGeminiHandoffEvent(requestId, "retry_429_invalid_transition", "manual", {
+      from_status: currentStatus || null,
+      to_status: "retry_429_requested",
+    });
+    return res.status(409).json({
+      error: "invalid_state_transition",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      from_status: currentStatus || null,
+      to_status: "retry_429_requested",
+      allowed_from_statuses: Array.from(GEMINI_HANDOFF_RETRYABLE_STATUSES),
+    });
+  }
+
+  if (Number(record?.retry_count || 0) >= GEMINI_HANDOFF_MAX_RETRY_COUNT) {
+    addGeminiHandoffEvent(requestId, "retry_429_limit_reached", "manual", {
+      retry_count: Number(record?.retry_count || 0),
+      max_retry_count: GEMINI_HANDOFF_MAX_RETRY_COUNT,
+    });
+    return res.status(409).json({
+      error: "retry_limit_reached",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      status: record?.status || null,
+      current_retry_count: Number(record?.retry_count || 0),
+      max_retry_count: GEMINI_HANDOFF_MAX_RETRY_COUNT,
+    });
+  }
+
+  const responsePayload = record?.response && typeof record.response === "object"
+    ? record.response
+    : null;
+  if (!responsePayload) {
+    addGeminiHandoffEvent(requestId, "retry_429_response_missing", "manual", {
+      status: record?.status || null,
+    });
+    return res.status(409).json({
+      error: "response_payload_unavailable",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      status: record?.status || null,
+    });
+  }
+
+  const force = parseBooleanInput(payload.force, false);
+  const rawMaxScopes = payload.max_scopes;
+  const hasMaxScopesOverride = !(rawMaxScopes === undefined || rawMaxScopes === null || String(rawMaxScopes).trim() === "");
+  let requestedMaxScopes = GEMINI_HANDOFF_RETRY_429_MAX_SCOPES;
+  if (hasMaxScopesOverride) {
+    const parsedMaxScopes = Number.parseInt(String(rawMaxScopes), 10);
+    if (!Number.isInteger(parsedMaxScopes) || parsedMaxScopes < 1) {
+      return res.status(400).json({
+        error: "invalid_max_scopes",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        message: "max_scopes must be a positive integer",
+      });
+    }
+    requestedMaxScopes = parsedMaxScopes;
+  }
+  const maxScopes = Math.max(1, Math.min(requestedMaxScopes, GEMINI_HANDOFF_RETRY_429_MAX_SCOPES));
+
+  if (!force && GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS > 0) {
+    const lastRetryRequestedAt = Date.parse(String(record?.last_retry_requested_at || "").trim());
+    if (Number.isFinite(lastRetryRequestedAt) && lastRetryRequestedAt > 0) {
+      const elapsedMs = Math.max(0, Date.now() - lastRetryRequestedAt);
+      const retryAfterMs = GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS - elapsedMs;
+      if (retryAfterMs > 0) {
+        addGeminiHandoffEvent(requestId, "retry_429_cooldown_active", "manual", {
+          retry_after_ms: retryAfterMs,
+          cooldown_ms: GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS,
+        });
+        return res.status(409).json({
+          error: "retry_cooldown_active",
+          contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+          request_id: requestId,
+          status: record?.status || null,
+          retry_after_ms: retryAfterMs,
+          cooldown_ms: GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS,
+        });
+      }
+    }
+  }
+
+  const retryScopes = extractGeminiRetry429ScopesFromResponse(responsePayload, maxScopes);
+  if (retryScopes.length < 1) {
+    addGeminiHandoffEvent(requestId, "retry_429_no_retryable_scopes", "manual", {
+      max_scopes: maxScopes,
+    });
+    return res.status(409).json({
+      error: "no_retryable_429_errors",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      max_scopes: maxScopes,
+      retryable_429_count: countGeminiRetryable429Errors(responsePayload),
+    });
+  }
+
+  const requestPayload = record?.request && typeof record.request === "object" ? record.request : null;
+  if (!requestPayload || String(requestPayload.request_id || "").trim() !== requestId) {
+    addGeminiHandoffEvent(requestId, "retry_429_request_payload_missing", "manual", {
+      has_request_payload: !!requestPayload,
+    });
+    return res.status(409).json({
+      error: "request_payload_unavailable",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      targeted_scope_count: retryScopes.length,
+    });
+  }
+
+  const retryRequestPayload = buildGeminiRetry429RequestPayload(requestPayload, retryScopes);
+  if (!retryRequestPayload) {
+    addGeminiHandoffEvent(requestId, "retry_429_scope_resolution_failed", "manual", {
+      targeted_scope_count: retryScopes.length,
+      max_scopes: maxScopes,
+    });
+    return res.status(409).json({
+      error: "retry_scope_resolution_failed",
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      targeted_scope_count: retryScopes.length,
+      max_scopes: maxScopes,
+    });
+  }
+
+  const updated = incrementGeminiHandoffRetry(requestId);
+  addGeminiHandoffEvent(requestId, "retry_429_requested", "manual", {
+    retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+    targeted_scope_count: retryScopes.length,
+    max_scopes: maxScopes,
+    forced: force,
+  });
+
+  const transportRuntime = getGeminiHandoffTransportRuntimeInfo();
+  const dispatchResult = await dispatchGeminiHandoffRequest(retryRequestPayload);
+
+  if (dispatchResult?.success && dispatchResult.response_payload && typeof dispatchResult.response_payload === "object") {
+    const responseValidation = validateJsonSchema(
+      GEMINI_HANDOFF_RESPONSE_SCHEMA,
+      dispatchResult.response_payload
+    );
+    const responseRequestId = String(dispatchResult.response_payload.request_id || "").trim();
+
+    if (responseValidation.valid && responseRequestId === requestId) {
+      const mergedPayload = mergeGeminiRetry429ResponsePayload({
+        requestId,
+        baseResponsePayload: responsePayload,
+        retryResponsePayload: dispatchResult.response_payload,
+        retryScopes,
+      });
+      const mergedValidation = validateJsonSchema(
+        GEMINI_HANDOFF_RESPONSE_SCHEMA,
+        mergedPayload
+      );
+
+      if (!mergedValidation.valid) {
+        addGeminiHandoffEvent(requestId, "retry_429_merge_invalid", "transport", {
+          retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+          status_code: dispatchResult.status_code || null,
+          details: formatSchemaErrors(mergedValidation.errors),
+        });
+
+        if (!transportRuntime.fail_open) {
+          return res.status(502).json({
+            error: "retry_429_merge_invalid",
+            contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+            request_id: requestId,
+            status: updated?.status || "retry_requested",
+            retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+            transport: {
+              attempted: true,
+              success: true,
+              status_code: dispatchResult.status_code,
+            },
+            details: formatSchemaErrors(mergedValidation.errors),
+          });
+        }
+
+        return res.status(202).json({
+          contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+          request_id: requestId,
+          status: updated?.status || "retry_requested",
+          retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+          requested_at: updated?.last_retry_requested_at || new Date().toISOString(),
+          targeted_scope_count: retryScopes.length,
+          transport: {
+            attempted: true,
+            success: true,
+            status_code: dispatchResult.status_code,
+            invalid_response: true,
+          },
+          next_action: "retry_requested",
+        });
+      }
+
+      const completed = completeGeminiHandoffRequest(requestId, mergedPayload);
+      const sequenceImportSummary = persistGeminiResponseSequences(completed);
+
+      const targetedScopeKeys = new Set(
+        retryScopes
+          .map((scope) => getGeminiRetryScopeKey(scope.company_number, scope.person_id))
+          .filter(Boolean)
+      );
+      const remainingRetryableScopeKeys = getGeminiRetryable429ScopeKeySet(
+        completed?.response || mergedPayload,
+        targetedScopeKeys
+      );
+      const unresolvedScopes = retryScopes.filter((scope) => {
+        const scopeKey = getGeminiRetryScopeKey(scope.company_number, scope.person_id);
+        return remainingRetryableScopeKeys.has(scopeKey);
+      });
+      const unresolvedScopeCount = unresolvedScopes.length;
+      const resolvedScopeCount = Math.max(0, retryScopes.length - unresolvedScopeCount);
+      const remainingRetryable429Count = countGeminiRetryable429Errors(completed?.response || mergedPayload);
+
+      addGeminiHandoffEvent(requestId, "retry_429_completed", "transport", {
+        retry_count: completed?.retry_count || updated?.retry_count || Number(record?.retry_count || 0) + 1,
+        targeted_scope_count: retryScopes.length,
+        resolved_scope_count: resolvedScopeCount,
+        unresolved_scope_count: unresolvedScopeCount,
+        remaining_retryable_429_count: remainingRetryable429Count,
+        imported_sequences: Number(sequenceImportSummary.imported || 0),
+        skipped_sequences: Number(sequenceImportSummary.skipped || 0),
+      });
+
+      return res.status(202).json({
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: requestId,
+        status: completed?.status || "partial",
+        retry_count: completed?.retry_count || updated?.retry_count || Number(record?.retry_count || 0) + 1,
+        response_id: getStoredGeminiResponseId(completed),
+        completed_at: completed?.completed_at || completed?.response?.completed_at || null,
+        transport: {
+          attempted: true,
+          success: true,
+          status_code: dispatchResult.status_code,
+        },
+        sequence_import: sequenceImportSummary,
+        retry_429: {
+          max_scopes: maxScopes,
+          targeted_scope_count: retryScopes.length,
+          resolved_scope_count: resolvedScopeCount,
+          unresolved_scope_count: unresolvedScopeCount,
+          unresolved_scopes: unresolvedScopes,
+          remaining_retryable_429_count: remainingRetryable429Count,
+          cooldown_ms: GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS,
+        },
+        next_action: unresolvedScopeCount > 0 ? "retry_429_partial" : "request_completed",
+      });
+    }
+
+    addGeminiHandoffEvent(requestId, "retry_429_invalid_response", "transport", {
+      retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+      status_code: dispatchResult.status_code || null,
+      request_id_match: responseRequestId === requestId,
+      validation_errors: responseValidation.valid ? [] : formatSchemaErrors(responseValidation.errors),
+    });
+
+    if (!transportRuntime.fail_open) {
+      return res.status(502).json({
+        error: "transport_invalid_response",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: requestId,
+        status: updated?.status || "retry_requested",
+        retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+        transport: {
+          attempted: true,
+          success: true,
+          status_code: dispatchResult.status_code,
+        },
+        details: responseValidation.valid
+          ? ["request_id mismatch in transport response"]
+          : formatSchemaErrors(responseValidation.errors),
+      });
+    }
+
+    return res.status(202).json({
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      status: updated?.status || "retry_requested",
+      retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+      requested_at: updated?.last_retry_requested_at || new Date().toISOString(),
+      targeted_scope_count: retryScopes.length,
+      transport: {
+        attempted: true,
+        success: true,
+        status_code: dispatchResult.status_code,
+        invalid_response: true,
+      },
+      next_action: "retry_requested",
+    });
+  }
+
+  if (dispatchResult?.attempted && !dispatchResult.success) {
+    addGeminiHandoffEvent(requestId, "retry_429_dispatch_failed", "transport", {
+      reason: dispatchResult.error_code || "transport_error",
+      retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+      targeted_scope_count: retryScopes.length,
+    });
+    if (!transportRuntime.fail_open) {
+      return res.status(502).json({
+        error: "transport_dispatch_failed",
+        contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+        request_id: requestId,
+        status: updated?.status || "retry_requested",
+        retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+        targeted_scope_count: retryScopes.length,
+        transport: {
+          attempted: true,
+          success: false,
+          status_code: dispatchResult.status_code || null,
+          code: dispatchResult.error_code || "transport_error",
+          message: dispatchResult.error_message || "Gemini transport request failed",
+        },
+      });
+    }
+
+    return res.status(202).json({
+      contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+      request_id: requestId,
+      status: updated?.status || "retry_requested",
+      retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+      requested_at: updated?.last_retry_requested_at || new Date().toISOString(),
+      targeted_scope_count: retryScopes.length,
+      transport: {
+        attempted: true,
+        success: false,
+        status_code: dispatchResult.status_code || null,
+        code: dispatchResult.error_code || "transport_error",
+      },
+      next_action: "retry_requested",
+    });
+  }
+
+  return res.status(202).json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    request_id: requestId,
+    status: updated?.status || "retry_requested",
+    retry_count: updated?.retry_count || Number(record?.retry_count || 0) + 1,
+    requested_at: updated?.last_retry_requested_at || new Date().toISOString(),
+    targeted_scope_count: retryScopes.length,
+    transport: {
+      attempted: false,
+      success: false,
+      skipped: true,
+      reason: "transport_disabled_or_unavailable",
+    },
+    next_action: "retry_requested",
+  });
+});
+
 app.post("/api/gemini/sheets/sync-approvals", (req, res) => {
   const payload = req.body && typeof req.body === "object" ? req.body : {};
   const validation = validateJsonSchema(GEMINI_APPROVALS_SYNC_SCHEMA, payload);
@@ -8411,6 +10472,15 @@ app.post("/api/gemini/sheets/sync-approvals", (req, res) => {
     synced_at: new Date().toISOString(),
     approvals_revision: Number(replaced?.approvals_revision || Number(record?.approvals_revision || 0)),
     counts,
+  });
+});
+
+app.post("/api/gemini/gem-instructions/reload", (_req, res) => {
+  const runtime = reloadGemInstructionsConfig();
+  return res.json({
+    contract_version: GEMINI_HANDOFF_CONTRACT_VERSION,
+    reloaded_at: new Date().toISOString(),
+    runtime,
   });
 });
 
@@ -8556,12 +10626,6 @@ app.get("/api/integrations/status", (_req, res) => {
       env_var: "PHANTOMBUSTER_URL_TEMPLATE (+ optional PHANTOMBUSTER_API_KEY)",
       purpose: "Workflow automation exports used for hiring/tech/traffic signal ingestion",
     },
-    cursor: {
-      configured: hasTemplate(process.env.CURSOR_URL_TEMPLATE),
-      required: false,
-      env_var: "CURSOR_URL_TEMPLATE (+ optional CURSOR_API_KEY)",
-      purpose: "Workflow automation exports used for hiring/tech/traffic signal ingestion",
-    },
     similarweb: {
       configured: hasConfiguredSecret(process.env.SIMILARWEB_API_KEY) && hasTemplate(process.env.SIMILARWEB_URL_TEMPLATE),
       required: false,
@@ -8642,13 +10706,19 @@ app.get("/api/integrations/status", (_req, res) => {
     gemini_google_api_bridge: {
       configured: GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED && !!GEMINI_API_KEY,
       required: false,
-      env_var: "ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE, GEMINI_API_KEY (or GOOGLE_API_KEY), GEMINI_API_MODEL, GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS",
+      env_var: "ENABLE_GEMINI_HANDOFF_GOOGLE_API_BRIDGE, GEMINI_API_KEY (or GOOGLE_API_KEY), GEMINI_API_MODEL, GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS, GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES, GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS, GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS, GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS, GEMINI_HANDOFF_RETRY_429_MAX_SCOPES, GEMINI_GEM_INSTRUCTIONS_PATH, GEMINI_GEM_INSTRUCTIONS, GEMINI_GEM_INSTRUCTIONS_MAX_CHARS",
       purpose: "Local contract bridge that calls Gemini API when used as the transport URL",
       runtime: {
         enabled: GEMINI_HANDOFF_GOOGLE_API_BRIDGE_ENABLED,
         api_key_configured: !!GEMINI_API_KEY,
         model: GEMINI_API_MODEL,
         timeout_ms: GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS,
+        max_retries: GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES,
+        retry_base_ms: GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS,
+        retry_max_ms: GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS,
+        retry_429_cooldown_ms: GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS,
+        retry_429_max_scopes: GEMINI_HANDOFF_RETRY_429_MAX_SCOPES,
+        ...getGemInstructionsRuntimeInfo(),
       },
     },
   };
@@ -8697,8 +10767,6 @@ app.get("/api/integrations/status", (_req, res) => {
       "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
       "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
       "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
-      "CURSOR_API_KEY=optional_cursor_key",
-      "CURSOR_URL_TEMPLATE=https://example.com/cursor?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
       "SIMILARWEB_URL_TEMPLATE=https://example.com/similarweb?domain={company_domain}",
       "BUILTWITH_API_KEY=optional_builtwith_key",
@@ -8738,6 +10806,14 @@ app.get("/api/integrations/status", (_req, res) => {
       "# Optional alias supported: GOOGLE_API_KEY=your_google_gemini_api_key",
       "GEMINI_API_MODEL=gemini-2.5-flash",
       "GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS=30000",
+      "GEMINI_HANDOFF_GOOGLE_API_MAX_RETRIES=2",
+      "GEMINI_HANDOFF_GOOGLE_API_RETRY_BASE_MS=750",
+      "GEMINI_HANDOFF_GOOGLE_API_RETRY_MAX_MS=6000",
+      "GEMINI_HANDOFF_RETRY_429_COOLDOWN_MS=45000",
+      "GEMINI_HANDOFF_RETRY_429_MAX_SCOPES=25",
+      "GEMINI_GEM_INSTRUCTIONS_PATH=prompts/gemini-gem-instructions.txt",
+      "GEMINI_GEM_INSTRUCTIONS=optional_inline_override",
+      "GEMINI_GEM_INSTRUCTIONS_MAX_CHARS=12000",
     ],
   });
 });
@@ -9720,7 +11796,7 @@ app.get("/api/stakeholders/:companyId", (req, res) => {
     const monitored = getMonitoredCompany(companyNumber);
     if (monitored) company = { id: companyId, name: formatMonitorName(monitored.company_name, companyNumber), turnover: monitored.latest_turnover };
   }
-  if (!company) company = { name: pendingCompanyName() };
+  if (!company) company = { name: pendingCompanyName(companyNumber) };
   const assessment = buildStakeholderAssessment(companyId, company, analysis, score);
 
   res.json({
@@ -9752,7 +11828,7 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   const monitored = getMonitoredCompany(companyNumber);
   const companies = loadCompanies();
   const company = companies.find((c) => c.id === req.params.id || c.company_number === companyNumber);
-  const companyName = company?.name || monitored?.company_name || pendingCompanyName();
+  const companyName = company?.name || monitored?.company_name || pendingCompanyName(companyNumber);
   const analysis = getSetting(`analysis_${companyNumber}`, null);
   const filingText = getFilingsForCompany(companyNumber, 3).find((f) => f.raw_data)?.raw_data || "";
 
@@ -9773,6 +11849,85 @@ app.get("/api/company/:id/supplementary-context", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Failed to build supplementary context", detail: err.message });
   }
+});
+
+app.get("/api/company/:id/score-diagnostics", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const includeRaw = parseBooleanInput(req.query.include_raw, false);
+  const refresh = parseBooleanInput(req.query.refresh, false);
+  const analysis = getSetting(`analysis_${context.company_number}`, null);
+
+  let score = getStoredScore(context.company_number);
+  let scoreSource = score ? "stored_score" : "none";
+  let refreshApplied = false;
+
+  if (!score || refresh) {
+    const rescored = scoreCompany(context.company_number);
+    if (rescored) {
+      score = analysis ? integrateAnalysis(rescored, analysis) : rescored;
+      scoreSource = analysis ? "rescored_with_analysis" : "rescored";
+      refreshApplied = true;
+    }
+  }
+
+  if (!score) {
+    return res.status(404).json({
+      error: "score_not_available",
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      message: "No monitor-backed score is available for this company.",
+    });
+  }
+
+  const nameResolution = resolveCompanyNameDisplay(context.company_name, context.company_number);
+  const history = getSetting(`score_history_${context.company_number}`, []);
+  const scoreHistory = Array.isArray(history) ? history.slice(-10) : [];
+
+  const diagnostics = {
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: nameResolution.display_name,
+    unresolved_company_name: nameResolution.unresolved_company_name,
+    unresolved_company_name_reason: nameResolution.unresolved_company_name_reason,
+    generated_at: new Date().toISOString(),
+    refresh_applied: refreshApplied,
+    score_source: scoreSource,
+    score_snapshot: {
+      composite_score: toOptionalNumber(score.composite_score),
+      fit_score: toOptionalNumber(score.fit_score),
+      propensity_score: toOptionalNumber(score.propensity_score),
+      best_motion: String(score?.layers?.product_fit?.best_motion || "").trim() || null,
+      confidence_interval: score.confidence_interval || null,
+      volatility: score.volatility || null,
+      llm_integrated: score.llm_integrated === true,
+      scored_at: String(score.scored_at || "").trim() || null,
+    },
+    score_deltas: buildScoreDeltaBreakdown(score),
+    layer_breakdown: buildScoreLayerBreakdown(score),
+    motion_impacts: buildScoreMotionImpactBreakdown(score),
+    signal_snapshots: buildScoreSignalSnapshots(context.company_number, includeRaw),
+    analysis_snapshot: {
+      available: !!analysis,
+      source: String(analysis?.source || "").trim() || null,
+      analysed_at: String(analysis?.analysed_at || analysis?.updated_at || "").trim() || null,
+      summary: String(analysis?.summary || "").trim() || null,
+      opportunities_count: Array.isArray(analysis?.opportunities) ? analysis.opportunities.length : 0,
+      pain_indicators_count: Array.isArray(analysis?.pain_indicators) ? analysis.pain_indicators.length : 0,
+      competitors_detected_count: Array.isArray(analysis?.competitors_detected) ? analysis.competitors_detected.length : 0,
+    },
+    score_history: scoreHistory,
+  };
+
+  if (includeRaw) {
+    diagnostics.raw = {
+      score,
+      analysis,
+    };
+  }
+
+  res.json(diagnostics);
 });
 
 app.get("/api/company/:id/enrichment", (req, res) => {

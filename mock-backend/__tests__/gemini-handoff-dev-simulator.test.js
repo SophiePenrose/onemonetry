@@ -229,4 +229,67 @@ describe("Gemini handoff dev simulator transport", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("emits multi-step YAMM rows and summary for simulator responses", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "onemonetry-gemini-dev-sim-"));
+    const testDatabasePath = path.join(tempDir, "gemini-dev-simulator-steps.db");
+    const testCompaniesPath = path.join(tempDir, "companies.json");
+    fs.copyFileSync(sourceCompaniesPath, testCompaniesPath);
+
+    const requestId = "req_dev_simulator_steps_001";
+    const stepCount = 5;
+    const port = randomPort(26000);
+    const server = await startApiServer({
+      port,
+      testDatabasePath,
+      testCompaniesPath,
+    });
+
+    try {
+      const accepted = await fetchJSON(server.baseUrl, "/api/gemini/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildGeminiHandoffRequestPayload({
+          request_id: requestId,
+          campaign: {
+            campaign_id: "cmp_test_dev_sim_steps",
+            campaign_name: "Simulator Step Depth Campaign",
+            sequence_template: "v7",
+            max_touches: stepCount,
+            approval_required: true,
+          },
+          generation_policy: {
+            provider: "gemini",
+            voice_profile: "sophie_v7",
+            forbidden_phrases_enforced: true,
+            max_steps_per_sequence: stepCount,
+            require_citations: true,
+            fail_closed_on_qc: true,
+          },
+        })),
+      });
+
+      assert.equal(accepted.status, 202);
+      assert.equal(accepted.data.request_id, requestId);
+      assert.equal(accepted.data.status, "completed");
+
+      const rows = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows`);
+      assert.equal(rows.status, 200);
+      assert.equal(Array.isArray(rows.data.rows), true);
+      assert.equal(rows.data.rows.length, stepCount);
+      assert.deepEqual(rows.data.rows.map((row) => Number(row.StepNumber)), [1, 2, 3, 4, 5]);
+      assert.deepEqual(rows.data.rows.map((row) => String(row.StepType || "")), ["proof", "nudge_1", "depth", "nudge_2", "provocation"]);
+      assert.equal(rows.data.rows.every((row) => String(row.ApprovalStatus || "").toLowerCase() === "pending"), true);
+      assert.equal(rows.data.rows.every((row) => Number.isInteger(Number(row.DayOffset))), true);
+
+      const summary = await fetchJSON(server.baseUrl, `/api/gemini/handoff/${requestId}/yamm-rows/summary`);
+      assert.equal(summary.status, 200);
+      assert.equal(summary.data.totals.rows, stepCount);
+      assert.equal(summary.data.by_approval_status.pending, stepCount);
+      assert.equal(summary.data.totals.send_eligible, 0);
+    } finally {
+      await server.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
