@@ -36,6 +36,8 @@ cd "$REPO_ROOT"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 BACKEND_PORT="${PORT:-8000}"
+BACKEND_PID_FILE="/tmp/onemonetry-backend.pid"
+FRONTEND_PID_FILE="/tmp/onemonetry-frontend.pid"
 
 # Load local environment variables for this shell session (if present)
 if [ -f "$REPO_ROOT/.env" ]; then
@@ -91,6 +93,8 @@ for port in "$BACKEND_PORT" "$FRONTEND_PORT" 5173 5174; do
   fi
 done
 
+rm -f "$BACKEND_PID_FILE" "$FRONTEND_PID_FILE"
+
 # Start backend
 echo "Starting backend on port $BACKEND_PORT..."
 cd "$REPO_ROOT"
@@ -100,6 +104,7 @@ NODE_MAX_OLD_SPACE_MB="${NODE_MAX_OLD_SPACE_MB:-1024}"
 EMAIL_LLM_FAIL_CLOSED="${EMAIL_LLM_FAIL_CLOSED:-false}"
 nohup env LIGHTWEIGHT_RUNTIME="${LIGHTWEIGHT_RUNTIME}" IGNORE_RUNTIME_SIGTERM="${IGNORE_RUNTIME_SIGTERM}" EMAIL_LLM_FAIL_CLOSED="${EMAIL_LLM_FAIL_CLOSED}" NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_MB}" node mock-backend/server.js > /tmp/onemonetry-backend.log 2>&1 &
 BACKEND_PID=$!
+echo "$BACKEND_PID" > "$BACKEND_PID_FILE"
 
 # Wait for backend
 sleep 3
@@ -116,6 +121,7 @@ echo "Starting frontend on port $FRONTEND_PORT..."
 cd "$REPO_ROOT/frontend"
 nohup npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" > /tmp/onemonetry-frontend.log 2>&1 &
 FRONTEND_PID=$!
+echo "$FRONTEND_PID" > "$FRONTEND_PID_FILE"
 
 sleep 3
 echo "✅ Frontend running (PID $FRONTEND_PID)"
@@ -125,6 +131,8 @@ echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "Backend:  http://localhost:$BACKEND_PORT"
 echo "Backend logs: /tmp/onemonetry-backend.log"
 echo "Frontend logs: /tmp/onemonetry-frontend.log"
+echo "Backend PID file: $BACKEND_PID_FILE"
+echo "Frontend PID file: $FRONTEND_PID_FILE"
 echo ""
 echo "Environment:"
 if is_configured_secret "${COMPANIES_HOUSE_API_KEY:-}"; then

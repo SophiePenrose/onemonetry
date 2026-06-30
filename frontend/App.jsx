@@ -176,7 +176,7 @@ export default function App() {
             <span>
               {runtimeStatus.backendReachable
                 ? `OPENAI_API_KEY is not configured, so generation is running in fallback mode. Configure the key in Settings for true LLM output${runtimeStatus.openaiModel ? ` (${runtimeStatus.openaiModel})` : ""}.${missingRequiredMessage}`
-                : "The frontend cannot reach the backend API right now, so data and LLM generation are unavailable until it reconnects."}
+                : "The frontend cannot reach the backend API right now, so data and LLM generation are unavailable until it reconnects. Start services with npm run start:dev and check health with npm run status:dev."}
             </span>
           </div>
           <div className="app-status-banner-actions">

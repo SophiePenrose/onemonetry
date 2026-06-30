@@ -747,10 +747,15 @@ function inferInternationalExposureFromProfile(profile) {
 
 function normalizeIncomingLevel5Shape(rawAnalysis = {}) {
   const safe = { ...rawAnalysis };
-  const modelCompanySnapshot = safe.company_snapshot || null;
-  const modelPainRegister = Array.isArray(safe.pain_register) ? safe.pain_register : null;
-  const modelOpportunity = safe.revolut_opportunity || null;
-  const modelSequenceInputs = safe.sequence_inputs || null;
+  const nestedLevel5 = safe.level5_extraction && typeof safe.level5_extraction === "object"
+    ? safe.level5_extraction
+    : null;
+  const modelCompanySnapshot = safe.company_snapshot || nestedLevel5?.company_snapshot || null;
+  const modelPainRegister = Array.isArray(safe.pain_register)
+    ? safe.pain_register
+    : (Array.isArray(nestedLevel5?.pain_register) ? nestedLevel5.pain_register : null);
+  const modelOpportunity = safe.revolut_opportunity || nestedLevel5?.revolut_opportunity || null;
+  const modelSequenceInputs = safe.sequence_inputs || nestedLevel5?.sequence_inputs || null;
 
   const hasModelLevel5Shape = !!(modelCompanySnapshot || modelPainRegister || modelOpportunity || modelSequenceInputs);
   if (!hasModelLevel5Shape) return safe;
@@ -782,6 +787,33 @@ function normalizeIncomingLevel5Shape(rawAnalysis = {}) {
         estimated_value: item.priority || "Medium",
       }))
       .slice(0, 8);
+  }
+
+  if ((!safe.themes || safe.themes.length === 0) && modelCompanySnapshot) {
+    const inferredThemes = [];
+    if (modelCompanySnapshot.operating_model) {
+      inferredThemes.push({
+        theme: "Operating model context",
+        evidence: String(modelCompanySnapshot.operating_model),
+      });
+    }
+    if (modelCompanySnapshot.international_profile) {
+      inferredThemes.push({
+        theme: "International profile",
+        evidence: String(modelCompanySnapshot.international_profile),
+      });
+    }
+    safe.themes = inferredThemes.slice(0, 6);
+  }
+
+  if ((!safe.key_people || safe.key_people.length === 0) && Array.isArray(safe?.supplementary_context?.people_research)) {
+    safe.key_people = safe.supplementary_context.people_research
+      .map((entry) => ({
+        name: String(entry?.name || "").trim(),
+        role: String(entry?.role || "").trim() || "Stakeholder",
+      }))
+      .filter((entry) => entry.name || entry.role)
+      .slice(0, 10);
   }
 
   if (!safe.recommended_approach && modelOpportunity?.pitch_summary) {
@@ -829,8 +861,25 @@ function normalizeIncomingLevel5Shape(rawAnalysis = {}) {
   return safe;
 }
 
-function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
+export function ensureHolisticAnalysisShape(analysis, filingText, context = {}) {
   const safe = normalizeIncomingLevel5Shape(analysis || {});
+
+  safe.summary = String(safe.summary || "").trim() || "No summary available";
+  safe.themes = Array.isArray(safe.themes) ? safe.themes : [];
+  safe.pain_indicators = Array.isArray(safe.pain_indicators) ? safe.pain_indicators : [];
+  safe.opportunities = Array.isArray(safe.opportunities) ? safe.opportunities : [];
+  safe.key_people = Array.isArray(safe.key_people) ? safe.key_people : [];
+  safe.risks = Array.isArray(safe.risks) ? safe.risks : [];
+  safe.current_financial_products = Array.isArray(safe.current_financial_products)
+    ? safe.current_financial_products
+    : [];
+
+  if (safe.key_people.length === 0) {
+    const inferredPeople = extractKeyPeopleFromText(String(filingText || ""));
+    if (inferredPeople.length > 0) {
+      safe.key_people = inferredPeople;
+    }
+  }
 
   const inferredCompetitors = inferCompetitorsFromFilingText(filingText, 8);
   const signalInferredCompetitors = inferCompetitorsFromSignals(
@@ -1451,6 +1500,38 @@ function generateFallbackAnalysis(companyName, companyNumber, turnover, filingTe
   }, filingText, { companyName, turnover });
 }
 
+const GENERIC_PERSON_NAME_TOKENS = new Set([
+  "company",
+  "information",
+  "introduction",
+  "strategic",
+  "report",
+  "accounts",
+  "limited",
+  "ltd",
+  "plc",
+  "group",
+  "holdings",
+  "international",
+  "the",
+  "board",
+  "statement",
+]);
+const ROLE_LIKE_NAME_PATTERN = /\b(chief|director|officer|manager|head|finance|treasury|operations|procurement|controller|executive)\b/i;
+
+function isLikelyGenericPersonName(name, roles = []) {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) return true;
+  if (roles.some((role) => String(role).toLowerCase() === normalized)) return true;
+  if (ROLE_LIKE_NAME_PATTERN.test(normalized)) return true;
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+
+  const meaningfulTokenCount = tokens.filter((token) => !GENERIC_PERSON_NAME_TOKENS.has(token)).length;
+  return meaningfulTokenCount < 2;
+}
+
 function extractKeyPeopleFromText(filingText) {
   const people = [];
   const seen = new Set();
@@ -1487,7 +1568,10 @@ function extractKeyPeopleFromText(filingText) {
       const name = (nameFirst ? first : second).trim();
       const role = (nameFirst ? second : first).trim();
       const key = `${name}:${role}`.toLowerCase();
-      if (!seen.has(key) && name.length < 80 && role.length < 80) {
+      if (!seen.has(key)
+        && name.length < 80
+        && role.length < 80
+        && !isLikelyGenericPersonName(name, roles)) {
         seen.add(key);
         people.push({ name, role });
       }
