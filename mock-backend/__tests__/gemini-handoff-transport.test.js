@@ -1,10 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
-const MODULE_PATH = path.resolve(process.cwd(), "gemini-handoff-transport.js");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MODULE_PATH = path.resolve(__dirname, "..", "gemini-handoff-transport.js");
 
 function withTempEnv(next, fn) {
   const previous = new Map();
