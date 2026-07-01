@@ -343,6 +343,162 @@ describe("external signal connectors", () => {
     assert.ok((tech.technologies || []).includes("Stripe"));
   });
 
+  it("uses Prospeo search-person POST payload and maps relevant person candidates", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/search-person";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://api.prospeo.io/search-person");
+      assert.equal(String(options?.method || ""), "POST");
+      assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
+      assert.equal(String(options?.headers?.["Content-Type"] || ""), "application/json");
+
+      const parsedBody = JSON.parse(String(options?.body || "{}"));
+      assert.equal(Array.isArray(parsedBody?.filters?.company?.websites?.include), true);
+      assert.equal(parsedBody.filters.company.websites.include[0], "search-prospeo.example");
+      assert.equal(Array.isArray(parsedBody?.filters?.person_job_title?.include), true);
+      assert.equal(parsedBody.filters.person_job_title.include.length > 0, true);
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              total_results: 2,
+              results: [
+                {
+                  first_name: "Ava",
+                  last_name: "Stone",
+                  job_title: "Finance Director",
+                  email: "ava@example.com",
+                  linkedin_url: "https://linkedin.com/in/ava-stone",
+                },
+                {
+                  full_name: "Noah Price",
+                  title: "Head of Treasury",
+                  email: "noah@example.com",
+                },
+              ],
+            },
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111124",
+      companyName: "Example Prospeo Search Co",
+      companyDomain: "search-prospeo.example",
+      connectors: ["prospeo"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+
+    const hiring = db.getSetting("hiring_signals_99111124", null);
+    assert.equal(Array.isArray(hiring?.person_candidates), true);
+    assert.equal(hiring.person_candidates.length >= 2, true);
+    assert.equal(
+      hiring.person_candidates.some((entry) => String(entry?.full_name || "") === "Ava Stone"),
+      true
+    );
+    assert.equal(
+      hiring.person_candidates.some((entry) => String(entry?.email || "") === "ava@example.com"),
+      true
+    );
+  });
+
+  it("retries Prospeo search-person with reduced filters when PLAN_REQUIRED is returned", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/search-person";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    let callCount = 0;
+    global.fetch = async (url, options = {}) => {
+      callCount += 1;
+      assert.equal(String(url), "https://api.prospeo.io/search-person");
+      assert.equal(String(options?.method || ""), "POST");
+
+      const parsedBody = JSON.parse(String(options?.body || "{}"));
+      if (callCount === 1) {
+        assert.equal(Array.isArray(parsedBody?.filters?.person_job_title?.include), true);
+        return {
+          ok: false,
+          status: 400,
+          async text() {
+            return JSON.stringify({
+              error_code: "PLAN_REQUIRED",
+              filter_error: ["person_job_title (PRO+)"],
+              message: "Plan upgrade required",
+            });
+          },
+        };
+      }
+
+      assert.equal(Object.hasOwn(parsedBody?.filters || {}, "person_job_title"), false);
+      assert.equal(Object.hasOwn(parsedBody?.filters || {}, "company"), true);
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              results: [
+                {
+                  full_name: "Jordan Case",
+                  role: "Treasury Manager",
+                  email: "jordan@example.com",
+                },
+              ],
+            },
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111125",
+      companyName: "Example Prospeo Plan Co",
+      companyDomain: "plan-prospeo.example",
+      connectors: ["prospeo"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    assert.equal(callCount, 2);
+
+    const connector = (result.connectors || []).find((entry) => entry.id === "prospeo");
+    assert.ok(connector);
+    assert.equal(connector.request_attempts >= 2, true);
+    assert.equal(connector.retry_attempts >= 1, true);
+
+    const hiring = db.getSetting("hiring_signals_99111125", null);
+    assert.equal(Number(hiring?.person_candidates_count || 0) >= 1, true);
+  });
+
   it("maps nested PhantomBuster export payload using provider-specific parser", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;

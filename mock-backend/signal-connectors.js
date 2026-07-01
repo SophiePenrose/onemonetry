@@ -119,6 +119,46 @@ const CONNECTOR_DEFINITIONS = [
   },
 ];
 
+const PROSPEO_DEFAULT_PERSON_JOB_TITLES = [
+  "Chief Financial Officer",
+  "Finance Director",
+  "Head of Finance",
+  "Head of Treasury",
+  "Treasury Manager",
+  "VP Finance",
+  "Controller",
+  "Head of Payments",
+  "Payments Manager",
+  "Procurement Manager",
+];
+
+const PROSPEO_DEFAULT_PERSON_SENIORITIES = [
+  "C-Suite",
+  "Vice President",
+  "Head",
+  "Director",
+  "Manager",
+];
+
+const PROSPEO_PLAN_FALLBACK_FILTERS = new Set([
+  "person_job_change",
+  "company_revenue",
+  "company_funding",
+  "company_technology",
+  "company_job_posting_hiring_for",
+  "company_job_posting_quantity",
+  "company_headcount_by_location",
+  "company_key_customers",
+  "company_icp",
+  "company_integrations",
+  "company_awards",
+  "company_intent",
+  "company_key_execs",
+  "company_website_traffic",
+  "company_website_search",
+  "company_google_discovery",
+]);
+
 function hasConfiguredSecret(value) {
   const key = String(value || "").trim();
   if (!key) return false;
@@ -353,6 +393,15 @@ function uniqueStrings(values) {
   return result;
 }
 
+function parseDelimitedStringList(value) {
+  return uniqueStrings(
+    String(value || "")
+      .split(/[;,\n]/)
+      .map((token) => token.trim())
+      .filter(Boolean)
+  );
+}
+
 function interpolateTemplate(template, context) {
   return String(template || "").replace(/\{([a-z_]+)\}/gi, (_match, token) => {
     const key = String(token || "").toLowerCase();
@@ -485,6 +534,16 @@ function buildConnectorRequestUrls(definition, context, options = {}) {
     const interpolated = interpolateTemplate(template, context);
     if (isValidHttpUrl(interpolated)) {
       urls.push(interpolated);
+      // For Prospeo, also add search-person endpoint if base template is configured
+      if (definition.id === "prospeo" && !isProspeoBulkCompanyEndpoint(interpolated)) {
+        const baseUrl = String(interpolated || "").split(/[?#]/)[0].trim();
+        if (baseUrl && baseUrl.includes("api.prospeo.io")) {
+          const searchPersonUrl = baseUrl.replace(/\/bulk-enrich-company(?:\/?|$)/i, "/search-person");
+          if (searchPersonUrl !== baseUrl && isValidHttpUrl(searchPersonUrl)) {
+            urls.push(searchPersonUrl);
+          }
+        }
+      }
     }
   }
 
@@ -513,6 +572,208 @@ function buildConnectorHeaders(definition) {
 
 function isProspeoBulkCompanyEndpoint(url) {
   return /https?:\/\/api\.prospeo\.io\/bulk-enrich-company(?:$|[/?#])/i.test(String(url || ""));
+}
+
+function isProspeoSearchPersonEndpoint(url) {
+  return /https?:\/\/api\.prospeo\.io\/search-person(?:$|[/?#])/i.test(String(url || ""));
+}
+
+function buildProspeoCompanyFilter(context = {}) {
+  const companyDomain = normalizeCompanyDomain(context?.company_domain);
+  const companyName = String(context?.company_name || "").trim();
+  const companyNumber = String(context?.company_number || "").trim();
+
+  const filter = {};
+  if (companyName) {
+    filter.names = { include: [companyName] };
+  } else if (companyNumber) {
+    filter.names = { include: [companyNumber] };
+  }
+
+  if (companyDomain) {
+    filter.websites = { include: [companyDomain] };
+  }
+
+  return filter;
+}
+
+function buildProspeoSearchPersonPayload(context = {}, options = {}) {
+  const minimal = options?.minimal === true;
+  const companyFilter = buildProspeoCompanyFilter(context);
+  const companyFilterConfigured = Object.keys(companyFilter).length > 0;
+
+  if (!companyFilterConfigured) {
+    return {
+      filters: {},
+      page: 1,
+    };
+  }
+
+  const configuredJobTitles = parseDelimitedStringList(process.env.PROSPEO_SEARCH_PERSON_JOB_TITLES);
+  const configuredSeniorities = parseDelimitedStringList(process.env.PROSPEO_SEARCH_PERSON_SENIORITIES);
+  const configuredDepartments = parseDelimitedStringList(process.env.PROSPEO_SEARCH_PERSON_DEPARTMENTS);
+
+  const jobTitles = minimal
+    ? []
+    : (configuredJobTitles.length > 0 ? configuredJobTitles : PROSPEO_DEFAULT_PERSON_JOB_TITLES);
+  const seniorities = minimal
+    ? []
+    : (configuredSeniorities.length > 0 ? configuredSeniorities : PROSPEO_DEFAULT_PERSON_SENIORITIES);
+  const departments = minimal ? [] : configuredDepartments;
+  const maxPeopleRaw = Number.parseInt(String(process.env.PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY || "8"), 10);
+  const maxPeoplePerCompany = Number.isFinite(maxPeopleRaw)
+    ? Math.max(1, Math.min(maxPeopleRaw, 100))
+    : 8;
+  const requireVerifiedEmail = minimal
+    ? false
+    : parseBooleanFlag(process.env.PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL, false);
+
+  const filters = {
+    company: companyFilter,
+    max_person_per_company: maxPeoplePerCompany,
+  };
+
+  if (jobTitles.length > 0) {
+    filters.person_job_title = {
+      include: jobTitles.slice(0, 100),
+      match_mode: "CONTAINS",
+    };
+  }
+
+  if (seniorities.length > 0) {
+    filters.person_seniority = {
+      include: seniorities.slice(0, 11),
+    };
+  }
+
+  if (departments.length > 0) {
+    filters.person_department = {
+      include: departments.slice(0, 500),
+    };
+  }
+
+  if (requireVerifiedEmail) {
+    filters.person_contact_details = {
+      email: ["VERIFIED"],
+      operator: "OR",
+      hide_people_with_details_already_revealed: false,
+    };
+  }
+
+  return {
+    filters,
+    page: 1,
+  };
+}
+
+function isProspeoPlanRequiredError(status, payload = {}) {
+  if (Number(status) !== 400) return false;
+  const code = String(payload?.error_code || payload?.code || "").trim().toUpperCase();
+  if (code === "PLAN_REQUIRED") return true;
+  const message = String(payload?.message || payload?.error || "").trim().toUpperCase();
+  return message.includes("PLAN_REQUIRED");
+}
+
+function parseProspeoPlanRequiredFilterKeys(payload = {}) {
+  const keys = new Set();
+  const list = Array.isArray(payload?.filter_error)
+    ? payload.filter_error
+    : Array.isArray(payload?.errors)
+      ? payload.errors
+      : [];
+
+  for (const item of list) {
+    const token = typeof item === "string"
+      ? item
+      : String(item?.filter || item?.field || item?.name || "");
+    const match = /^([a-z_][a-z0-9_]*)/i.exec(String(token || "").trim());
+    if (!match?.[1]) continue;
+    keys.add(match[1].toLowerCase());
+  }
+
+  return keys;
+}
+
+function hasProspeoPositiveFilter(filters = {}) {
+  if (!filters || typeof filters !== "object") return false;
+
+  for (const [filterKey, value] of Object.entries(filters)) {
+    if (value === undefined || value === null) continue;
+    if (filterKey === "max_person_per_company") continue;
+
+    if (filterKey === "company") {
+      const namesInclude = Array.isArray(value?.names?.include) ? value.names.include.length : 0;
+      const websitesInclude = Array.isArray(value?.websites?.include) ? value.websites.include.length : 0;
+      if (namesInclude > 0 || websitesInclude > 0) return true;
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > 0) return true;
+      continue;
+    }
+
+    if (typeof value === "object") {
+      const includeCount = Array.isArray(value?.include) ? value.include.length : 0;
+      if (includeCount > 0) return true;
+      const entriesCount = Array.isArray(value?.entries) ? value.entries.length : 0;
+      if (entriesCount > 0) return true;
+      if (typeof value?.boolean_search === "string" && value.boolean_search.trim()) return true;
+      continue;
+    }
+
+    if (typeof value === "string" && value.trim()) return true;
+    if (typeof value === "number" && Number.isFinite(value)) return true;
+  }
+
+  return false;
+}
+
+function buildProspeoPlanFallbackPayload(context = {}, requestOptions = {}, responsePayload = {}) {
+  let parsedBody = null;
+  try {
+    parsedBody = JSON.parse(String(requestOptions?.body || "{}"));
+  } catch {
+    parsedBody = null;
+  }
+
+  const base = parsedBody && typeof parsedBody === "object"
+    ? parsedBody
+    : buildProspeoSearchPersonPayload(context);
+  const currentFilters = (base?.filters && typeof base.filters === "object") ? base.filters : {};
+  const reportedFilterKeys = parseProspeoPlanRequiredFilterKeys(responsePayload);
+  const filtered = {};
+
+  for (const [key, value] of Object.entries(currentFilters)) {
+    const normalizedKey = String(key || "").trim().toLowerCase();
+    if (reportedFilterKeys.has(normalizedKey)) continue;
+    if (PROSPEO_PLAN_FALLBACK_FILTERS.has(normalizedKey)) continue;
+    filtered[key] = value;
+  }
+
+  const nextPayload = {
+    ...base,
+    filters: filtered,
+    page: Number.parseInt(String(base?.page || 1), 10) || 1,
+  };
+
+  if (hasProspeoPositiveFilter(nextPayload.filters)) {
+    return nextPayload;
+  }
+
+  return buildProspeoSearchPersonPayload(context, { minimal: true });
+}
+
+function buildProspeoPlanFallbackRequestOptions(context = {}, requestOptions = {}, responsePayload = {}) {
+  const nextPayload = buildProspeoPlanFallbackPayload(context, requestOptions, responsePayload);
+  const nextBody = JSON.stringify(nextPayload);
+  if (!nextBody || nextBody === String(requestOptions?.body || "")) return null;
+
+  return {
+    ...requestOptions,
+    method: "POST",
+    body: nextBody,
+  };
 }
 
 function buildProspeoBulkCompanyPayload(context = {}) {
@@ -546,10 +807,16 @@ function buildConnectorRequestOptions(definition, context, url) {
   let method = "GET";
   let body;
 
-  if (definition.id === "prospeo" && isProspeoBulkCompanyEndpoint(url)) {
-    method = "POST";
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(buildProspeoBulkCompanyPayload(context));
+  if (definition.id === "prospeo") {
+    if (isProspeoSearchPersonEndpoint(url)) {
+      method = "POST";
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(buildProspeoSearchPersonPayload(context));
+    } else if (isProspeoBulkCompanyEndpoint(url)) {
+      method = "POST";
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(buildProspeoBulkCompanyPayload(context));
+    }
   }
 
   return {
@@ -675,6 +942,128 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context
           timed_out: false,
           duration_ms: durationMs,
         });
+
+        const canRetryProspeoPlanFallback = definition.id === "prospeo"
+          && isProspeoSearchPersonEndpoint(url)
+          && String(requestOptions?.method || "GET").toUpperCase() === "POST"
+          && isProspeoPlanRequiredError(response.status, payload);
+
+        if (canRetryProspeoPlanFallback) {
+          const fallbackRequestOptions = buildProspeoPlanFallbackRequestOptions(context, requestOptions, payload || {});
+
+          if (fallbackRequestOptions) {
+            const fallbackAttemptStartedAt = Date.now();
+            const fallbackController = new AbortController();
+            const fallbackTimer = setTimeout(() => fallbackController.abort(), timeoutMs);
+
+            try {
+              const fallbackResponse = await fetch(url, {
+                ...fallbackRequestOptions,
+                signal: fallbackController.signal,
+              });
+
+              const fallbackRawText = await fallbackResponse.text();
+              let fallbackPayload = null;
+
+              if (fallbackRawText) {
+                try {
+                  fallbackPayload = JSON.parse(fallbackRawText);
+                } catch {
+                  fallbackPayload = { raw_text: fallbackRawText };
+                }
+              }
+
+              const fallbackDurationMs = Math.max(0, Date.now() - fallbackAttemptStartedAt);
+
+              if (!fallbackResponse.ok) {
+                const fallbackError = fallbackPayload?.error || fallbackPayload?.message || `http_${fallbackResponse.status}`;
+                attempts.push({
+                  url,
+                  method: fallbackRequestOptions.method,
+                  ok: false,
+                  status: fallbackResponse.status,
+                  error: fallbackError,
+                  timed_out: false,
+                  duration_ms: fallbackDurationMs,
+                });
+
+                lastError = {
+                  ok: false,
+                  status: fallbackResponse.status,
+                  error: fallbackError,
+                  request_url: url,
+                  request_method: fallbackRequestOptions.method,
+                  payload: fallbackPayload,
+                  attempted_urls: attemptedUrls,
+                  attempts,
+                  attempt_count: attempts.length,
+                  retry_count: Math.max(0, attempts.length - 1),
+                  failed_attempt_count: attempts.length,
+                  request_duration_ms: Math.max(0, Date.now() - startedAt),
+                };
+                continue;
+              }
+
+              attempts.push({
+                url,
+                method: fallbackRequestOptions.method,
+                ok: true,
+                status: fallbackResponse.status,
+                error: null,
+                timed_out: false,
+                duration_ms: fallbackDurationMs,
+              });
+
+              const failedAttemptCount = attempts.filter((entry) => entry.ok === false).length;
+
+              return {
+                ok: true,
+                status: fallbackResponse.status,
+                request_url: url,
+                request_method: fallbackRequestOptions.method,
+                attempted_urls: attemptedUrls,
+                payload: fallbackPayload,
+                attempts,
+                attempt_count: attempts.length,
+                retry_count: Math.max(0, attempts.length - 1),
+                failed_attempt_count: failedAttemptCount,
+                request_duration_ms: Math.max(0, Date.now() - startedAt),
+              };
+            } catch (fallbackErr) {
+              const fallbackError = fallbackErr?.name === "AbortError"
+                ? "request_timeout"
+                : (fallbackErr?.message || "request_failed");
+              const fallbackDurationMs = Math.max(0, Date.now() - fallbackAttemptStartedAt);
+
+              attempts.push({
+                url,
+                method: fallbackRequestOptions.method,
+                ok: false,
+                status: null,
+                error: fallbackError,
+                timed_out: fallbackError === "request_timeout",
+                duration_ms: fallbackDurationMs,
+              });
+
+              lastError = {
+                ok: false,
+                status: null,
+                error: fallbackError,
+                request_url: url,
+                request_method: fallbackRequestOptions.method,
+                attempted_urls: attemptedUrls,
+                attempts,
+                attempt_count: attempts.length,
+                retry_count: Math.max(0, attempts.length - 1),
+                failed_attempt_count: attempts.length,
+                request_duration_ms: Math.max(0, Date.now() - startedAt),
+              };
+              continue;
+            } finally {
+              clearTimeout(fallbackTimer);
+            }
+          }
+        }
 
         lastError = {
           ok: false,
@@ -1091,6 +1480,159 @@ function roleBucketForText(role) {
   return null;
 }
 
+function normalizeHiringPersonaBucket(role) {
+  const token = String(role || "").trim().toLowerCase();
+  if (!token) return "finance_operator";
+  if (token.includes("cfo") || token.includes("chief financial") || token.includes("finance director")) {
+    return "finance_director";
+  }
+  if (token.includes("treasury") || token.includes("treasurer")) {
+    return "treasury_lead";
+  }
+  if (token.includes("founder") || token.includes("ceo") || token.includes("chief executive")) {
+    return "executive_sponsor";
+  }
+  if (token.includes("payments") || token.includes("ecommerce") || token.includes("procurement") || token.includes("operations")) {
+    return "operations_lead";
+  }
+  return "finance_operator";
+}
+
+function extractPersonNameFromRecord(record) {
+  const direct = readStringField(record, [
+    "full_name",
+    "name",
+    "person_name",
+    "contact_name",
+    "display_name",
+    "personName",
+  ]);
+  if (direct) return direct;
+
+  const firstName = readStringField(record, ["first_name", "firstname", "firstName", "given_name"]);
+  const lastName = readStringField(record, ["last_name", "lastname", "lastName", "family_name", "surname"]);
+  const combined = [firstName, lastName].filter(Boolean).join(" ").trim();
+  return combined || null;
+}
+
+function extractPersonEmailFromRecord(record) {
+  return readStringField(record, [
+    "email",
+    "work_email",
+    "professional_email",
+    "email_address",
+    "business_email",
+    "contact_email",
+  ]);
+}
+
+function extractPersonLinkedinFromRecord(record) {
+  const url = readStringField(record, [
+    "linkedin_url",
+    "linkedin",
+    "linkedin_profile",
+    "profile_url",
+    "public_profile_url",
+  ]);
+  if (!url) return null;
+  if (/linkedin\.com/i.test(url)) return url;
+  return null;
+}
+
+function normalizeHiringEmailStatus(record = {}, email) {
+  const explicit = String(
+    record?.email_status
+      || record?.emailStatus
+      || record?.email_validation_status
+      || record?.email_validation
+      || ""
+  ).trim().toLowerCase();
+  if (explicit) return explicit;
+  return email ? "provided" : "missing";
+}
+
+function normalizeHiringConfidence(record = {}, email) {
+  const explicit = String(record?.confidence || record?.confidence_level || "").trim().toLowerCase();
+  if (["high", "medium", "low"].includes(explicit)) return explicit;
+  return email ? "high" : "medium";
+}
+
+function buildHiringPersonCandidate(record = {}, sourceId = "", fallbackIndex = 1) {
+  if (!record || typeof record !== "object") return null;
+
+  const fullName = extractPersonNameFromRecord(record);
+  const role = extractRoleTitleFromRecord(record);
+  const email = extractPersonEmailFromRecord(record);
+  const linkedinUrl = extractPersonLinkedinFromRecord(record);
+
+  if (!fullName && !role && !email && !linkedinUrl) return null;
+
+  const explicitPersonId = String(record?.person_id || record?.id || record?.oid || "").trim();
+  const idSeed = explicitPersonId || fullName || email || role || `person_${fallbackIndex}`;
+  const normalizedPersonId = String(idSeed)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+
+  return {
+    person_id: normalizedPersonId || `person_${fallbackIndex}`,
+    full_name: fullName || null,
+    role: role || null,
+    email: email || null,
+    email_status: normalizeHiringEmailStatus(record, email),
+    confidence: normalizeHiringConfidence(record, email),
+    persona_bucket: String(record?.persona_bucket || "").trim() || normalizeHiringPersonaBucket(role),
+    linkedin_url: linkedinUrl || null,
+    source: sourceId ? `${sourceId}_api` : null,
+  };
+}
+
+function buildHiringPersonCandidateKey(candidate = {}) {
+  const personId = String(candidate?.person_id || "").trim().toLowerCase();
+  if (personId) return `id:${personId}`;
+
+  const email = String(candidate?.email || "").trim().toLowerCase();
+  if (email) return `email:${email}`;
+
+  const name = String(candidate?.full_name || "").trim().toLowerCase();
+  const role = String(candidate?.role || "").trim().toLowerCase();
+  if (name || role) return `name:${name}::role:${role}`;
+
+  return "";
+}
+
+function mergePersonCandidates(primary = [], secondary = []) {
+  const map = new Map();
+
+  for (const candidate of [...primary, ...secondary]) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const key = buildHiringPersonCandidateKey(candidate);
+    if (!key) continue;
+
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, { ...candidate });
+      continue;
+    }
+
+    map.set(key, {
+      ...current,
+      person_id: current.person_id || candidate.person_id || null,
+      full_name: current.full_name || candidate.full_name || null,
+      role: current.role || candidate.role || null,
+      email: current.email || candidate.email || null,
+      email_status: current.email_status || candidate.email_status || "missing",
+      confidence: current.confidence || candidate.confidence || "medium",
+      persona_bucket: current.persona_bucket || candidate.persona_bucket || null,
+      linkedin_url: current.linkedin_url || candidate.linkedin_url || null,
+      source: current.source || candidate.source || null,
+    });
+  }
+
+  return [...map.values()].slice(0, 20);
+}
+
 function parseHiringEnvelope(payload, sourceId) {
   const keyNames = new Set(["jobs", "open_roles", "roles", "vacancies", "positions", "results"]);
   const arrays = collectArraysByKeys(payload, keyNames, 5);
@@ -1105,10 +1647,23 @@ function parseHiringEnvelope(payload, sourceId) {
   }
 
   const uniqueRoleNames = uniqueStrings(roleNames).slice(0, 40);
+  const directPeople = asObjectArray(getFirstArrayByPaths(payload || {}, [
+    "person_candidates",
+    "relevant_individuals",
+    "people",
+    "contacts",
+    "results",
+  ]));
+  const personCandidates = mergePersonCandidates(
+    [],
+    directPeople
+      .map((row, index) => buildHiringPersonCandidate(row, sourceId, index + 1))
+      .filter(Boolean)
+  );
   const explicitOpenRoles = readNumericField(payload || {}, ["open_roles", "jobs_open", "vacancies", "active_jobs", "total_results"]);
   const totalOpenRoles = Math.max(uniqueRoleNames.length, Number(explicitOpenRoles || 0));
 
-  if (totalOpenRoles <= 0) return null;
+  if (totalOpenRoles <= 0 && personCandidates.length < 1) return null;
 
   const nowIso = new Date().toISOString();
   const openRoles = uniqueRoleNames.map((role) => ({ role }));
@@ -1116,7 +1671,14 @@ function parseHiringEnvelope(payload, sourceId) {
   const treasuryRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "treasury");
   const internationalRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "international");
   const ecommerceRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "ecommerce");
-  const score = Math.max(0, Math.min(totalOpenRoles / 20, 1));
+  const score = Math.max(0, Math.min((totalOpenRoles / 20) + (personCandidates.length / 30), 1));
+  const evidence = [];
+  if (totalOpenRoles > 0) {
+    evidence.push(`${sourceId} reports ${totalOpenRoles} active roles`);
+  }
+  if (personCandidates.length > 0) {
+    evidence.push(`${sourceId} returned ${personCandidates.length} relevant people`);
+  }
 
   return {
     updated_at: nowIso,
@@ -1128,9 +1690,11 @@ function parseHiringEnvelope(payload, sourceId) {
     treasury_roles_open: treasuryRoles,
     international_roles_open: internationalRoles,
     ecommerce_roles_open: ecommerceRoles,
+    person_candidates: personCandidates,
+    person_candidates_count: personCandidates.length,
     hiring_signal_score: Math.round(score * 100) / 100,
     hiring_intensity: score >= 0.7 ? "high" : score >= 0.35 ? "medium" : "low",
-    evidence: [`${sourceId} reports ${totalOpenRoles} active roles`],
+    evidence,
     confidence: score >= 0.5 ? "high" : "medium",
     confidence_score: Math.round(score * 100) / 100,
   };
@@ -1612,25 +2176,34 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     "result.matched.0.company",
   ]) || matchedCompanies[0] || {};
 
-  const contactRows = asObjectArray(collectArraysFromPaths(root, [
+  // Extract people from search-person endpoint results separately
+  const searchPersonResults = asObjectArray(collectArraysFromPaths(root, [
+    "results",
+    "data",
     "people",
+    "matched_people",
+    "rows",
+  ]));
+
+  const contactRows = asObjectArray(collectArraysFromPaths(root, [
     "contacts",
     "employees",
     "prospects",
     "matches",
     "leads",
-    "results",
-    "rows",
     "items",
-    "data.results",
-    "data.rows",
     "data.items",
-    "data.people",
     "data.contacts",
     "response.results",
     "response.data",
     "organization.people",
-  ]));
+  ])).concat(searchPersonResults);
+  const personCandidates = mergePersonCandidates(
+    [],
+    contactRows
+      .map((row, index) => buildHiringPersonCandidate(row, sourceId, index + 1))
+      .filter(Boolean)
+  );
   const explicitJobRows = asObjectArray(collectArraysFromPaths(root, [
     "jobs",
     "open_roles",
@@ -1654,6 +2227,11 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
   const jobs = [...contactRows, ...explicitJobRows, ...matchedJobRows]
     .map((row) => ({ title: extractRoleTitleFromRecord(row) }))
     .filter((row) => row.title);
+
+  // Build person candidates from search-person results, prioritizing them over generic extraction
+  const searchPersonCandidates = searchPersonResults
+    .map((row, index) => buildHiringPersonCandidate(row, `${sourceId}_search_person`, index + 1))
+    .filter(Boolean);
 
   const roleCountFromCompany = getFirstNumericByPaths(companyNode, [
     "open_roles",
@@ -1706,6 +2284,7 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
 
   const normalizedPayload = {
     jobs,
+    person_candidates: searchPersonCandidates,
     open_roles: getFirstNumericByPaths(root, [
       "open_roles",
       "jobs_open",
@@ -1761,6 +2340,8 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "reviews.checkout_related_complaints",
       "company.checkout_related_complaints",
     ]),
+    person_candidates: personCandidates,
+    person_candidates_count: personCandidates.length,
   };
 
   return {
@@ -2662,6 +3243,8 @@ function mergeHiringEnvelope(existing, incoming) {
   merged.treasury_roles_open = mergeRoleArray(existing?.treasury_roles_open, incoming?.treasury_roles_open);
   merged.international_roles_open = mergeRoleArray(existing?.international_roles_open, incoming?.international_roles_open);
   merged.ecommerce_roles_open = mergeRoleArray(existing?.ecommerce_roles_open, incoming?.ecommerce_roles_open);
+  merged.person_candidates = mergePersonCandidates(existing?.person_candidates, incoming?.person_candidates);
+  merged.person_candidates_count = merged.person_candidates.length;
   return merged;
 }
 
