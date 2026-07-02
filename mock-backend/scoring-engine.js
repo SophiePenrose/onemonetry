@@ -861,6 +861,18 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function asBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  const token = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "y", "available", "found", "present"].includes(token)) return true;
+  if (["0", "false", "no", "n", "missing", "absent", "not_found"].includes(token)) return false;
+  return fallback;
+}
+
 function extractApproxNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const raw = String(value || "").trim().toLowerCase();
@@ -1159,6 +1171,41 @@ function scoreTechStackSignals(techStack, freshnessScale = 1) {
     adjustments.push({ source: "site_currencies", currencies: siteCurrencies.slice(0, 8) });
   }
 
+  const technologyCategories = extractTextEntries(techStack, ["technology_categories", "tech_categories", "categories"]);
+  for (const category of technologyCategories) {
+    const token = normalizeLookupToken(category);
+    if (!token) continue;
+
+    if (token.includes("payment") || token.includes("checkout") || token.includes("commerce")) {
+      motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.08;
+      motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.06;
+      b2cConfirmed = b2cConfirmed || token.includes("commerce") || token.includes("checkout");
+      adjustments.push({ source: "technology_category", category, motion: "payments" });
+    } else if (token.includes("ecommerce") || token.includes("shop") || token.includes("retail")) {
+      motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.10;
+      motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.08;
+      b2cConfirmed = true;
+      adjustments.push({ source: "technology_category", category, motion: "ecommerce" });
+    } else if (token.includes("accounting") || token.includes("erp") || token.includes("finance")) {
+      motionBoosts["API Integrations"] = (motionBoosts["API Integrations"] || 0) + 0.08;
+      motionBoosts["Spend Management"] = (motionBoosts["Spend Management"] || 0) + 0.06;
+      integrationReady = true;
+      adjustments.push({ source: "technology_category", category, motion: "finance_stack" });
+    } else if (token.includes("api") || token.includes("developer") || token.includes("integration")) {
+      motionBoosts["API Integrations"] = (motionBoosts["API Integrations"] || 0) + 0.10;
+      integrationReady = true;
+      adjustments.push({ source: "technology_category", category, motion: "api" });
+    } else if (token.includes("marketing") || token.includes("crm") || token.includes("email")) {
+      motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.04;
+      adjustments.push({ source: "technology_category", category, motion: "growth_stack" });
+    }
+  }
+
+  const emailTechnologies = extractTextEntries(techStack, ["email_technologies", "email_tech"]);
+  if (emailTechnologies.length > 0) {
+    adjustments.push({ source: "email_technology", count: emailTechnologies.length });
+  }
+
   const scaledMotionBoosts = {};
   const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
   for (const [motion, boost] of Object.entries(motionBoosts)) {
@@ -1394,6 +1441,8 @@ function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
       motion_boosts: {},
       pain_boost: 0,
       commercial_value_boost: 0,
+      urgency_boost: 0,
+      integration_ready: false,
       adjustments: [],
     };
   }
@@ -1402,6 +1451,8 @@ function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
   const motionBoosts = {};
   let painBoost = 0;
   let commercialValueBoost = 0;
+  let urgencyBoost = 0;
+  let integrationReady = false;
   const adjustments = [];
 
   const monthlyTraffic = toFiniteNumber(
@@ -1444,6 +1495,90 @@ function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
     adjustments.push({ source: "international_traffic", uk_pct: ukShare });
   }
 
+  const attributes = marketingData.company_attributes && typeof marketingData.company_attributes === "object"
+    ? marketingData.company_attributes
+    : {};
+  const websiteSignals = marketingData.website_signals && typeof marketingData.website_signals === "object"
+    ? marketingData.website_signals
+    : {};
+
+  const customerType = normalizeLookupToken(
+    attributes.customer_type
+      || marketingData.customer_type
+      || marketingData.business_model
+      || ""
+  );
+  const b2cAttribute = asBoolean(attributes.b2c, false)
+    || customerType.includes("b2c")
+    || customerType.includes("consumer")
+    || customerType.includes("hybrid");
+  if (b2cAttribute || asBoolean(websiteSignals.has_checkout, false)) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.10;
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.08;
+    adjustments.push({ source: "company_attributes", type: "b2c_or_checkout" });
+  }
+
+  if (asBoolean(attributes.has_mobile_app, false) || asBoolean(websiteSignals.has_mobile_app, false)) {
+    motionBoosts["Revolut Pay"] = (motionBoosts["Revolut Pay"] || 0) + 0.06;
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.04;
+    adjustments.push({ source: "company_attributes", type: "mobile_app" });
+  }
+
+  if (asBoolean(attributes.has_pricing, false) || asBoolean(websiteSignals.has_pricing_page, false)) {
+    motionBoosts["Merchant Acquiring"] = (motionBoosts["Merchant Acquiring"] || 0) + 0.04;
+    commercialValueBoost += 0.02;
+    adjustments.push({ source: "website_search", type: "pricing_page" });
+  }
+
+  if (
+    asBoolean(attributes.has_api, false)
+    || asBoolean(websiteSignals.has_developer_docs, false)
+    || asBoolean(websiteSignals.has_security_page, false)
+    || asBoolean(websiteSignals.has_status_page, false)
+  ) {
+    motionBoosts["API Integrations"] = (motionBoosts["API Integrations"] || 0) + 0.12;
+    integrationReady = true;
+    adjustments.push({ source: "website_search", type: "api_readiness" });
+  }
+
+  if (asBoolean(attributes.has_enterprise_plan, false)) {
+    motionBoosts["API Integrations"] = (motionBoosts["API Integrations"] || 0) + 0.05;
+    motionBoosts["Spend Management"] = (motionBoosts["Spend Management"] || 0) + 0.04;
+    commercialValueBoost += 0.03;
+    adjustments.push({ source: "company_attributes", type: "enterprise_plan" });
+  }
+
+  const funding = marketingData.funding && typeof marketingData.funding === "object"
+    ? marketingData.funding
+    : {};
+  const latestFundingAmount = toFiniteNumber(funding.latest_amount, toFiniteNumber(funding.total_amount, NaN));
+  const latestFundingAt = funding.latest_funding_at ? new Date(funding.latest_funding_at).getTime() : NaN;
+  const fundingAgeMonths = Number.isFinite(latestFundingAt)
+    ? Math.max(0, (Date.now() - latestFundingAt) / (30 * 86400000))
+    : null;
+  if (Number.isFinite(latestFundingAmount) && latestFundingAmount >= 5_000_000) {
+    commercialValueBoost += latestFundingAmount >= 25_000_000 ? 0.08 : 0.04;
+    adjustments.push({ source: "funding", amount: latestFundingAmount });
+  }
+  if (fundingAgeMonths !== null && fundingAgeMonths <= 12) {
+    urgencyBoost += fundingAgeMonths <= 6 ? 0.06 : 0.035;
+    adjustments.push({ source: "recent_funding", months_since: Math.round(fundingAgeMonths) });
+  }
+
+  const employeeCount = toFiniteNumber(marketingData.employee_count, NaN);
+  if (Number.isFinite(employeeCount) && employeeCount >= 200) {
+    commercialValueBoost += 0.04;
+    motionBoosts["Cards"] = (motionBoosts["Cards"] || 0) + 0.06;
+    motionBoosts["Spend Management"] = (motionBoosts["Spend Management"] || 0) + 0.05;
+    adjustments.push({ source: "prospeo_employee_count", value: employeeCount });
+  }
+
+  const revenueRange = normalizeLookupToken(marketingData.revenue_range);
+  if (/(?:50m|100m|250m|500m|1b|million|billion)/i.test(revenueRange)) {
+    commercialValueBoost += 0.03;
+    adjustments.push({ source: "prospeo_revenue_range", value: marketingData.revenue_range });
+  }
+
   const scaledMotionBoosts = {};
   for (const [motion, boost] of Object.entries(motionBoosts)) {
     scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
@@ -1454,6 +1589,8 @@ function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
     motion_boosts: scaledMotionBoosts,
     pain_boost: Math.min(painBoost * scaler, 0.10),
     commercial_value_boost: Math.max(0, commercialValueBoost * scaler),
+    urgency_boost: Math.min(urgencyBoost * scaler, 0.10),
+    integration_ready: integrationReady,
     adjustments,
   };
 }
@@ -2962,7 +3099,7 @@ export function scoreCompany(companyNumber) {
     {
       techStackSwitchingDelta: techSignals.switching_delta || 0,
       ownershipSwitchingDelta: ownershipSignals.switching_feasibility_delta || 0,
-      integrationReady: !!techSignals.integration_ready,
+      integrationReady: !!techSignals.integration_ready || !!mktSignals.integration_ready,
     },
     competitorContext
   );
@@ -2998,6 +3135,7 @@ export function scoreCompany(companyNumber) {
     + Number(hiringSignals.urgency_boost || 0)
     + Number(hiringSignals.headcount_urgency_boost || 0)
     + Number(ownershipSignals.urgency_boost || 0)
+    + Number(mktSignals.urgency_boost || 0)
   );
 
   let painScore = Math.min(

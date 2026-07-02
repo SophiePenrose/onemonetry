@@ -63,6 +63,24 @@ describe("Settings", () => {
         });
       }
 
+      if (url === "/api/integrations/prospeo/account") {
+        return jsonResponse({
+          ok: true,
+          configured: true,
+          status: 200,
+          account: {
+            plan: "Pro",
+            remaining_credits: 42,
+            used_credits: 8,
+            total_credits: 50,
+            renewal_date: "2026-07-15",
+            renewal_days: 13,
+            low_credit_threshold: 25,
+            low_credit: false,
+          },
+        });
+      }
+
       if (typeof url === "string" && url.startsWith("/api/signals/sync/") && method === "POST") {
         if (targetedSyncResponse && typeof targetedSyncResponse === "object") {
           return jsonResponse(targetedSyncResponse.body || {}, targetedSyncResponse.ok === true, targetedSyncResponse.status || 500);

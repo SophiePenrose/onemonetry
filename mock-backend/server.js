@@ -143,7 +143,12 @@ import {
   getCompanyEnrichmentSnapshot,
   getTechEnrichmentRuntimeConfig,
 } from "./tech-enrichment.js";
-import { syncExternalSignals } from "./signal-connectors.js";
+import {
+  enrichProspeoSelectedPerson,
+  fetchProspeoAccountInformation,
+  persistProspeoEnrichedPersonCandidate,
+  syncExternalSignals,
+} from "./signal-connectors.js";
 import {
   resolveCompanyWebsite,
   getWebsiteResolverRuntimeConfig,
@@ -11047,6 +11052,11 @@ app.get("/api/integrations/status", (_req, res) => {
       runtime: {
         official_api_template: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
         search_person_auto_fanout: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+        account_information_supported: true,
+        account_information_endpoint: "/api/integrations/prospeo/account",
+        selected_person_enrichment_endpoint: "/api/signals/prospeo/enrich-person",
+        selected_person_enrichment_manual_only: true,
+        enrich_mobile_default: false,
       },
     },
     phantombuster: {
@@ -11202,6 +11212,10 @@ app.get("/api/integrations/status", (_req, res) => {
       "PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL=false",
       "PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS=6",
       "PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS=180",
+      "PROSPEO_MIN_CREDITS_WARN=25",
+      "PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL=true",
+      "PROSPEO_ENRICH_PERSON_MOBILE=false",
+      "PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE=true",
       "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
       "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
@@ -11253,6 +11267,64 @@ app.get("/api/integrations/status", (_req, res) => {
       "GEMINI_GEM_INSTRUCTIONS_MAX_CHARS=12000",
     ],
   });
+});
+
+app.get("/api/integrations/prospeo/account", async (req, res) => {
+  try {
+    const account = await fetchProspeoAccountInformation({
+      timeout_ms: req.query?.timeout_ms,
+    });
+
+    if (!account.ok) {
+      const statusCode = account.error === "missing_prospeo_api_key" ? 400 : 502;
+      return res.status(statusCode).json(account);
+    }
+
+    return res.json(account);
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: "prospeo_account_information_failed",
+      detail: err?.message || "unknown_error",
+    });
+  }
+});
+
+app.post("/api/signals/prospeo/enrich-person", async (req, res) => {
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+
+  try {
+    const enrich = await enrichProspeoSelectedPerson(payload);
+
+    if (!enrich.ok) {
+      const statusCode = enrich.error === "missing_prospeo_api_key"
+        || enrich.error === "missing_person_identifier"
+        ? 400
+        : 502;
+      return res.status(statusCode).json(enrich);
+    }
+
+    const companyNumber = normalizeCompanyNumber(payload.company_number || payload.companyNumber);
+    const shouldPersist = !!companyNumber && parseBooleanInput(payload.persist, true);
+    const hiringSignals = shouldPersist
+      ? persistProspeoEnrichedPersonCandidate(companyNumber, enrich, payload)
+      : null;
+
+    return res.json({
+      status: hiringSignals ? "updated" : "enriched",
+      updated: !!hiringSignals,
+      persisted: !!hiringSignals,
+      company_number: companyNumber || null,
+      ...enrich,
+      hiring_signals: hiringSignals,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: "prospeo_person_enrichment_failed",
+      detail: err?.message || "unknown_error",
+    });
+  }
 });
 
 app.post("/api/signals/sync/:number", async (req, res) => {
