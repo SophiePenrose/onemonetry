@@ -1010,7 +1010,9 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
       assert.ok(data.env_template.includes("STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json"));
       assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
-      assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}"));
+      assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company"));
+      assert.ok(data.env_template.includes("PROSPEO_AUTH_HEADER=X-KEY"));
+      assert.ok(data.env_template.includes("PROSPEO_AUTH_SCHEME=none"));
       assert.ok(data.env_template.includes("PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
@@ -2882,6 +2884,64 @@ describe("API endpoints", () => {
       assert.ok(Array.isArray(weekly.data.payload?.ranked_companies));
       assert.equal(weekly.data.payload.ranked_companies.length >= 1, true);
       assert.equal(weekly.data.payload?.request_id, explicitRequestId);
+    });
+
+    it("includes connector-derived person candidates in weekly handoff stakeholders", async () => {
+      const companyNumber = await seedWeeklyReadyCompany();
+
+      const db = new Database(testDatabasePath);
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      ).run(`hiring_signals_${companyNumber}`, JSON.stringify({
+        source: "prospeo_api",
+        total_open_roles: 1,
+        open_roles: [{ role: "Head of Treasury" }],
+        person_candidates_count: 1,
+        person_candidates: [
+          {
+            full_name: "Taylor Quinn",
+            role: "Head of Treasury",
+            email: "connector.person@example.com",
+            email_status: "provided",
+            confidence: "high",
+            persona_bucket: "treasury_lead",
+            source: "prospeo_api",
+          },
+        ],
+      }));
+      db.close();
+
+      const weekLabel = new Date().toISOString().slice(0, 10);
+      const weekly = await fetchJSON("/api/gemini/weekly/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_label: weekLabel,
+          focus: "all",
+          limit: 100,
+          dry_run: true,
+          request_prefix: `api_weekly_connector_people_${Date.now()}`,
+        }),
+      });
+
+      assert.equal(weekly.status, 200);
+      assert.equal(weekly.data.dry_run, true);
+
+      const rankedCompanies = Array.isArray(weekly.data.payload?.ranked_companies)
+        ? weekly.data.payload.ranked_companies
+        : [];
+      const targetCompany = rankedCompanies.find((entry) => entry.company_number === companyNumber);
+      assert.ok(targetCompany);
+
+      const stakeholders = Array.isArray(targetCompany?.stakeholders) ? targetCompany.stakeholders : [];
+      assert.equal(
+        stakeholders.some((stakeholder) => String(stakeholder?.full_name || "") === "Taylor Quinn"),
+        true
+      );
+      assert.equal(
+        stakeholders.some((stakeholder) => String(stakeholder?.email || "") === "connector.person@example.com"),
+        true
+      );
     });
 
     it("treats duplicate weekly handoff requests as idempotent", async () => {
