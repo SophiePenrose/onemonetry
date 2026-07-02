@@ -144,6 +144,9 @@ const PROSPEO_DEFAULT_PERSON_SENIORITIES = [
   "Manager",
 ];
 
+const PROSPEO_ACCOUNT_INFORMATION_URL = "https://api.prospeo.io/account-information";
+const PROSPEO_ENRICH_PERSON_URL = "https://api.prospeo.io/enrich-person";
+
 const PROSPEO_PLAN_FALLBACK_FILTERS = new Set([
   "person_job_change",
   "person_time_in_current_role",
@@ -575,6 +578,56 @@ function buildConnectorHeaders(definition) {
   return { [header]: `${scheme} ${token}` };
 }
 
+function connectorDefinitionById(id) {
+  const normalized = normalizeConnectorId(id);
+  return CONNECTOR_DEFINITIONS.find((definition) => definition.id === normalized) || null;
+}
+
+function buildProspeoOfficialHeaders() {
+  const definition = connectorDefinitionById("prospeo");
+  if (!definition) return { Accept: "application/json" };
+  return {
+    Accept: "application/json",
+    ...buildConnectorHeaders(definition),
+  };
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    const rawText = await response.text();
+    let payload = {};
+    if (rawText) {
+      try {
+        payload = JSON.parse(rawText);
+      } catch {
+        payload = { raw_text: rawText };
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: null,
+      payload: {},
+      error: err?.name === "AbortError" ? "request_timeout" : (err?.message || "request_failed"),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function isProspeoBulkCompanyEndpoint(url) {
   return /https?:\/\/api\.prospeo\.io\/bulk-enrich-company(?:$|[/?#])/i.test(String(url || ""));
 }
@@ -901,6 +954,114 @@ function buildConnectorStatus(definition) {
 
 export function getExternalSignalConnectorStatus() {
   return CONNECTOR_DEFINITIONS.map((definition) => buildConnectorStatus(definition));
+}
+
+function normalizeProspeoAccountInformationPayload(payload = {}) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const lowCreditThreshold = Math.max(
+    0,
+    Number.parseInt(String(process.env.PROSPEO_MIN_CREDITS_WARN || "25"), 10) || 25
+  );
+
+  const plan = readStringField(root, [
+    "plan",
+    "plan_name",
+    "current_plan",
+    "subscription_plan",
+    "account_plan",
+  ]);
+  const renewalDate = parseIsoTimestamp(readStringField(root, [
+    "renewal_date",
+    "next_renewal_date",
+    "credits_renewal_date",
+    "next_quota_renewal_at",
+    "quota_renews_at",
+  ]));
+  const renewalDays = getFirstNumericByPaths(root, [
+    "renewal_days",
+    "days_until_renewal",
+    "next_quota_renewal_days",
+    "quota_renews_in_days",
+  ]);
+  const remainingCredits = getFirstNumericByPaths(root, [
+    "remaining_credits",
+    "credits_remaining",
+    "credits.available",
+    "credits.remaining",
+    "quota.remaining",
+    "quota.credits_remaining",
+    "email_credits.remaining",
+    "monthly_credits_remaining",
+  ]);
+  const usedCredits = getFirstNumericByPaths(root, [
+    "used_credits",
+    "credits_used",
+    "credits.used",
+    "quota.used",
+    "email_credits.used",
+    "monthly_credits_used",
+  ]);
+  const totalCredits = getFirstNumericByPaths(root, [
+    "total_credits",
+    "credits.total",
+    "quota.total",
+    "email_credits.total",
+    "monthly_credits",
+  ]);
+
+  return {
+    plan: plan || null,
+    remaining_credits: remainingCredits,
+    used_credits: usedCredits,
+    total_credits: totalCredits,
+    renewal_date: renewalDate,
+    renewal_days: Number.isFinite(renewalDays) ? renewalDays : null,
+    low_credit_threshold: lowCreditThreshold,
+    low_credit: Number.isFinite(remainingCredits) ? remainingCredits <= lowCreditThreshold : false,
+    raw: root,
+  };
+}
+
+export async function fetchProspeoAccountInformation(options = {}) {
+  const definition = connectorDefinitionById("prospeo");
+  const hasKey = definition
+    ? (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]))
+    : false;
+
+  if (!hasKey) {
+    return {
+      ok: false,
+      configured: false,
+      status: null,
+      error: "missing_prospeo_api_key",
+    };
+  }
+
+  const timeoutMs = Math.max(
+    1000,
+    Number.parseInt(String(options.timeoutMs || options.timeout_ms || DEFAULT_TIMEOUT_MS), 10) || DEFAULT_TIMEOUT_MS
+  );
+  const result = await fetchJsonWithTimeout(PROSPEO_ACCOUNT_INFORMATION_URL, {
+    method: "GET",
+    headers: buildProspeoOfficialHeaders(),
+  }, timeoutMs);
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      configured: true,
+      status: result.status,
+      error: result.error || `http_${result.status || "unknown"}`,
+      payload: result.payload,
+    };
+  }
+
+  return {
+    ok: true,
+    configured: true,
+    status: result.status,
+    account: normalizeProspeoAccountInformationPayload(result.payload),
+  };
 }
 
 function buildConnectorRuntimeStatus(definition, context, options = {}) {
@@ -1689,6 +1850,41 @@ function extractPersonStartDateFromRecord(record) {
   ]);
   if (direct) return parseIsoTimestamp(direct);
 
+  const startYear = readNumericField(record, [
+    "start_year",
+    "started_year",
+    "current_role_start_year",
+    "current_position_start_year",
+    "job_start_year",
+  ]) ?? getFirstNumericByPaths(record, [
+    "current_role.start_year",
+    "current_position.start_year",
+    "current_job.start_year",
+    "experience.0.start_year",
+    "experiences.0.start_year",
+    "positions.0.start_year",
+    "job_history.0.start_year",
+  ]);
+  const startMonth = readNumericField(record, [
+    "start_month",
+    "started_month",
+    "current_role_start_month",
+    "current_position_start_month",
+    "job_start_month",
+  ]) ?? getFirstNumericByPaths(record, [
+    "current_role.start_month",
+    "current_position.start_month",
+    "current_job.start_month",
+    "experience.0.start_month",
+    "experiences.0.start_month",
+    "positions.0.start_month",
+    "job_history.0.start_month",
+  ]);
+  if (Number.isFinite(startYear) && startYear >= 1900) {
+    const month = Number.isFinite(startMonth) ? Math.max(1, Math.min(12, Math.round(startMonth))) : 1;
+    return parseIsoTimestamp(`${Math.round(startYear)}-${String(month).padStart(2, "0")}-01`);
+  }
+
   return parseIsoTimestamp(getFirstByPaths(record, [
     "current_role.start_date",
     "current_role.started_at",
@@ -2103,8 +2299,24 @@ function parseMarketingEnvelope(payload, sourceId) {
   const trafficGeography = normalizeTrafficGeography(
     getFirstByPaths(root, ["traffic_geography", "geography", "geo_distribution", "countries", "distribution"])
   );
+  const companyAttributes = asPlainObject(root.company_attributes) || asPlainObject(root.attributes) || null;
+  const websiteSignals = asPlainObject(root.website_signals) || asPlainObject(root.website_search) || null;
+  const funding = asPlainObject(root.funding) || asPlainObject(root.funding_signals) || null;
+  const revenueRange = readStringField(root, ["revenue_range", "revenue_range_printed", "estimated_revenue_range"]);
+  const employeeCount = readNumericField(root, ["employee_count", "employees", "employee_count_on_prospeo", "headcount"]);
+  const employeeRange = readStringField(root, ["employee_range", "employees_range", "headcount_range"]);
 
-  if (!Number.isFinite(monthlyTraffic) && !Number.isFinite(adSpend) && Object.keys(trafficGeography).length === 0) {
+  if (
+    !Number.isFinite(monthlyTraffic)
+    && !Number.isFinite(adSpend)
+    && Object.keys(trafficGeography).length === 0
+    && !companyAttributes
+    && !websiteSignals
+    && !funding
+    && !revenueRange
+    && !Number.isFinite(employeeCount)
+    && !employeeRange
+  ) {
     return null;
   }
 
@@ -2118,6 +2330,12 @@ function parseMarketingEnvelope(payload, sourceId) {
     web_traffic: Number(monthlyTraffic || 0),
     estimated_monthly_ad_spend: Number(adSpend || 0),
     traffic_geography: trafficGeography,
+    company_attributes: companyAttributes || {},
+    website_signals: websiteSignals || {},
+    funding: funding || null,
+    revenue_range: revenueRange || null,
+    employee_count: Number.isFinite(employeeCount) ? employeeCount : null,
+    employee_range: employeeRange || null,
     evidence: [`${sourceId} traffic metric imported`],
     confidence: "medium",
     confidence_score: 0.55,
@@ -2143,10 +2361,20 @@ function parseTechEnvelope(payload, sourceId) {
   }
 
   const uniqueTechnologies = uniqueStrings(technologies).slice(0, 80);
-  if (uniqueTechnologies.length === 0) return null;
+  const technologyCategories = uniqueStrings([
+    ...splitDelimitedTextValues(getFirstByPaths(payload, ["technology_categories"])),
+    ...splitDelimitedTextValues(getFirstByPaths(payload, ["tech_categories"])),
+    ...splitDelimitedTextValues(getFirstByPaths(payload, ["categories"])),
+  ]).slice(0, 80);
+  const emailTechnologies = uniqueStrings([
+    ...splitDelimitedTextValues(getFirstByPaths(payload, ["email_technologies"])),
+    ...splitDelimitedTextValues(getFirstByPaths(payload, ["email_tech"])),
+  ]).slice(0, 20);
+  if (uniqueTechnologies.length === 0 && technologyCategories.length === 0 && emailTechnologies.length === 0) return null;
 
   const nowIso = new Date().toISOString();
-  const score = Math.max(0.35, Math.min(uniqueTechnologies.length / 20, 0.95));
+  const signalCount = uniqueTechnologies.length + technologyCategories.length + emailTechnologies.length;
+  const score = Math.max(0.35, Math.min(signalCount / 20, 0.95));
 
   return {
     updated_at: nowIso,
@@ -2155,9 +2383,11 @@ function parseTechEnvelope(payload, sourceId) {
     technologies: uniqueTechnologies,
     detected_technologies: uniqueTechnologies,
     stack: uniqueTechnologies,
+    technology_categories: technologyCategories,
+    email_technologies: emailTechnologies,
     confidence: score >= 0.7 ? "high" : "medium",
     confidence_score: Math.round(score * 100) / 100,
-    signal_count: uniqueTechnologies.length,
+    signal_count: signalCount,
     evidence: uniqueTechnologies.slice(0, 20).map((name) => ({ technology: name, source: `${sourceId}_api` })),
   };
 }
@@ -2447,6 +2677,202 @@ function splitDelimitedTextValues(value) {
   return [];
 }
 
+function asPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function getFirstObjectByPaths(root, paths) {
+  for (const path of paths || []) {
+    const candidate = getByPath(root, path);
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) return candidate;
+  }
+  return null;
+}
+
+function booleanFromUnknown(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  const token = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "y", "available", "found", "present"].includes(token)) return true;
+  if (["0", "false", "no", "n", "missing", "absent", "not_found"].includes(token)) return false;
+  return null;
+}
+
+function getFirstBooleanByPaths(root, paths) {
+  for (const path of paths || []) {
+    const parsed = booleanFromUnknown(getByPath(root, path));
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function collectProspeoCompanyKeywords(nodes = []) {
+  return uniqueStrings(nodes.flatMap((node) => splitDelimitedTextValues([
+    getByPath(node, "keywords"),
+    getByPath(node, "company_keywords"),
+    getByPath(node, "tags"),
+    getByPath(node, "attributes.keywords"),
+  ]))).slice(0, 40);
+}
+
+function extractProspeoCompanyAttributes(nodes = []) {
+  const combined = {};
+  const keywordValues = collectProspeoCompanyKeywords(nodes);
+
+  for (const node of nodes) {
+    const attributes = getFirstObjectByPaths(node, ["attributes", "company.attributes"]) || {};
+    for (const [key, value] of Object.entries(attributes)) {
+      if (value === undefined || value === null || typeof value === "object") continue;
+      const normalizedKey = String(key || "").trim();
+      if (!normalizedKey || combined[normalizedKey] !== undefined) continue;
+      combined[normalizedKey] = value;
+    }
+  }
+
+  const mappedBooleans = {
+    b2b: ["attributes.b2b", "attributes.is_b2b", "b2b", "is_b2b"],
+    b2c: ["attributes.b2c", "attributes.is_b2c", "b2c", "is_b2c"],
+    has_pricing: ["attributes.pricing", "attributes.has_pricing", "has_pricing", "pricing_available"],
+    has_free_trial: ["attributes.free_trial", "attributes.has_free_trial", "has_free_trial"],
+    has_enterprise_plan: ["attributes.enterprise_plan", "attributes.has_enterprise_plan", "has_enterprise_plan"],
+    has_mobile_app: ["attributes.mobile_app", "attributes.has_mobile_app", "has_mobile_app"],
+    has_api: ["attributes.api", "attributes.has_api", "has_api"],
+  };
+
+  for (const [key, paths] of Object.entries(mappedBooleans)) {
+    if (combined[key] !== undefined) continue;
+    for (const node of nodes) {
+      const parsed = getFirstBooleanByPaths(node, paths);
+      if (parsed !== null) {
+        combined[key] = parsed;
+        break;
+      }
+    }
+  }
+
+  const rawCustomerType = nodes
+    .map((node) => readStringField(node, ["customer_type", "business_model", "company_type", "audience"]))
+    .find(Boolean);
+  if (rawCustomerType && !combined.customer_type) {
+    combined.customer_type = rawCustomerType;
+  } else if (combined.b2c === true && combined.b2b === true) {
+    combined.customer_type = "hybrid";
+  } else if (combined.b2c === true) {
+    combined.customer_type = "B2C";
+  } else if (combined.b2b === true) {
+    combined.customer_type = "B2B";
+  }
+
+  if (keywordValues.length > 0) {
+    combined.keywords = keywordValues;
+  }
+
+  return Object.keys(combined).length > 0 ? combined : null;
+}
+
+function extractProspeoWebsiteSignals(nodes = []) {
+  const signals = {};
+  const mapping = {
+    has_pricing_page: ["website_search.pricing", "website_search.has_pricing_page", "pages.pricing", "has_pricing_page", "attributes.has_pricing"],
+    has_developer_docs: ["website_search.developer_docs", "website_search.api_docs", "website_search.has_developer_docs", "has_developer_docs", "attributes.has_api"],
+    has_status_page: ["website_search.status_page", "website_search.has_status_page", "has_status_page"],
+    has_security_page: ["website_search.security", "website_search.security_page", "website_search.has_security_page", "has_security_page"],
+    has_checkout: ["website_search.checkout", "website_search.cart", "website_search.has_checkout", "has_checkout"],
+    has_mobile_app: ["website_search.mobile_app", "attributes.has_mobile_app", "has_mobile_app"],
+  };
+
+  for (const [key, paths] of Object.entries(mapping)) {
+    for (const node of nodes) {
+      const parsed = getFirstBooleanByPaths(node, paths);
+      if (parsed !== null) {
+        signals[key] = parsed;
+        break;
+      }
+    }
+  }
+
+  const matchedTerms = uniqueStrings(nodes.flatMap((node) => splitDelimitedTextValues([
+    getByPath(node, "website_search.matched_terms"),
+    getByPath(node, "website_search.terms"),
+    getByPath(node, "matched_terms"),
+  ]))).slice(0, 30);
+  if (matchedTerms.length > 0) signals.matched_terms = matchedTerms;
+
+  return Object.keys(signals).length > 0 ? signals : null;
+}
+
+function extractProspeoFundingSignals(nodes = []) {
+  const fundingNodes = nodes
+    .map((node) => getFirstObjectByPaths(node, ["funding", "company.funding", "latest_funding"]))
+    .filter(Boolean);
+  const fundingRows = nodes.flatMap((node) => collectArraysFromPaths(node, [
+    "funding.rounds",
+    "funding_events",
+    "funding.events",
+    "investment_rounds",
+  ]));
+
+  const latestFundingAt = latestIsoTimestamp([
+    ...fundingNodes.flatMap((node) => [
+      readStringField(node, ["latest_funding_at", "last_funding_at", "funded_at", "date"]),
+      getByPath(node, "latest_round.date"),
+      getByPath(node, "last_round.date"),
+    ]),
+    ...fundingRows.map((row) => readStringField(row, ["date", "announced_at", "funded_at"])),
+  ]);
+  const latestRound = fundingNodes
+    .map((node) => readStringField(node, ["latest_round", "last_round", "round", "stage"]))
+    .find(Boolean)
+    || fundingRows.map((row) => readStringField(row, ["round", "stage", "type"])).find(Boolean)
+    || null;
+  const totalAmount = fundingNodes
+    .map((node) => readNumericField(node, ["total_amount", "total_funding", "funding_total", "amount_total"]))
+    .find((value) => Number.isFinite(value));
+  const latestAmount = fundingNodes
+    .map((node) => readNumericField(node, ["latest_amount", "last_amount", "amount"]))
+    .find((value) => Number.isFinite(value))
+    ?? fundingRows.map((row) => readNumericField(row, ["amount", "amount_usd", "value"])).find((value) => Number.isFinite(value));
+
+  if (!latestFundingAt && !latestRound && !Number.isFinite(totalAmount) && !Number.isFinite(latestAmount) && fundingRows.length === 0) {
+    return null;
+  }
+
+  return {
+    latest_funding_at: latestFundingAt,
+    latest_round: latestRound,
+    total_amount: Number.isFinite(totalAmount) ? totalAmount : null,
+    latest_amount: Number.isFinite(latestAmount) ? latestAmount : null,
+    events_count: fundingRows.length,
+  };
+}
+
+function extractProspeoTechnologyCategories(nodes = []) {
+  return uniqueStrings(nodes.flatMap((node) => [
+    ...splitDelimitedTextValues(getByPath(node, "technology.categories")),
+    ...splitDelimitedTextValues(getByPath(node, "technology.technology_categories")),
+    ...splitDelimitedTextValues(getByPath(node, "technology.category")),
+    ...asObjectArray(getByPath(node, "technology.technology_list"))
+      .map((entry) => readStringField(entry, ["category", "type"])),
+    ...asObjectArray(getByPath(node, "technologies"))
+      .map((entry) => (typeof entry === "object" ? readStringField(entry, ["category", "type"]) : null)),
+    ...asObjectArray(getByPath(node, "tech_stack"))
+      .map((entry) => (typeof entry === "object" ? readStringField(entry, ["category", "type"]) : null)),
+  ])).slice(0, 80);
+}
+
+function extractProspeoEmailTechnologies(nodes = []) {
+  return uniqueStrings(nodes.flatMap((node) => splitDelimitedTextValues([
+    getByPath(node, "email_tech"),
+    getByPath(node, "email_technology"),
+    getByPath(node, "email_provider"),
+    getByPath(node, "email_tech.provider"),
+    getByPath(node, "email_tech.esp"),
+  ]))).slice(0, 20);
+}
+
 function extractRoleTitleFromRecord(record) {
   const direct = readStringField(record, [
     "title",
@@ -2605,6 +3031,11 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "result.matched.0.company",
     ]))
     .find((entry) => entry && typeof entry === "object") || matchedCompanies[0] || {};
+  const companyLikeNodes = [
+    companyNode,
+    ...matchedCompanies,
+    ...payloadRoots.map(({ root: entryRoot }) => getFirstByPaths(entryRoot, ["company", "organization", "data.company", "result.company"])),
+  ].filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
 
   const searchPersonResults = asObjectArray(payloadRoots.flatMap(({ root: entryRoot, endpoint }) => {
     if (endpoint === "bulk_company") return [];
@@ -2718,6 +3149,11 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       row?.tools,
     ])),
   ]);
+  const technologyCategories = extractProspeoTechnologyCategories(companyLikeNodes);
+  const emailTechnologies = extractProspeoEmailTechnologies(companyLikeNodes);
+  const companyAttributes = extractProspeoCompanyAttributes(companyLikeNodes);
+  const websiteSignals = extractProspeoWebsiteSignals(companyLikeNodes);
+  const fundingSignals = extractProspeoFundingSignals(companyLikeNodes);
 
   const normalizedPayload = {
     jobs,
@@ -2733,6 +3169,8 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       ?? roleCountFromMatchedCompanies
       ?? (jobs.length > 0 ? jobs.length : null),
     technologies,
+    technology_categories: technologyCategories,
+    email_technologies: emailTechnologies,
     monthly_web_traffic: getFirstNumericByPaths(root, [
       "monthly_web_traffic",
       "monthly_visits",
@@ -2745,6 +3183,26 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     ])
       ?? getFirstNumericByPaths(companyNode, ["monthly_web_traffic", "monthly_visits", "traffic.monthly_visits"])
       ?? getFirstNumericFromRecords(contactRows, ["monthly_web_traffic", "monthly_visits", "web_traffic", "traffic"]),
+    employee_count: getFirstNumericByPaths(root, [
+      "employee_count",
+      "employees",
+      "employee_count_on_prospeo",
+      "company.employee_count",
+      "organization.employee_count",
+    ]) ?? getFirstNumericByPaths(companyNode, ["employee_count", "employees", "employee_count_on_prospeo"]),
+    employee_range: getFirstByPaths(root, [
+      "employee_range",
+      "employees_range",
+      "company.employee_range",
+      "organization.employee_range",
+    ]) || getFirstByPaths(companyNode, ["employee_range", "employees_range"]) || null,
+    revenue_range: getFirstByPaths(root, [
+      "revenue_range",
+      "revenue_range_printed",
+      "company.revenue_range",
+      "company.revenue_range_printed",
+      "organization.revenue_range",
+    ]) || getFirstByPaths(companyNode, ["revenue_range", "revenue_range_printed"]) || null,
     estimated_monthly_ad_spend: getFirstNumericByPaths(root, [
       "estimated_monthly_ad_spend",
       "estimated_ad_spend",
@@ -2776,6 +3234,9 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
       "reviews.checkout_related_complaints",
       "company.checkout_related_complaints",
     ]),
+    company_attributes: companyAttributes || {},
+    website_signals: websiteSignals || {},
+    funding: fundingSignals,
     person_candidates: personCandidates,
     person_candidates_count: personCandidates.length,
   };
@@ -3686,6 +4147,162 @@ function mergeHiringEnvelope(existing, incoming) {
   return merged;
 }
 
+function splitPersonName(value) {
+  const tokens = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { first_name: null, last_name: null };
+  if (tokens.length === 1) return { first_name: tokens[0], last_name: null };
+  return {
+    first_name: tokens[0],
+    last_name: tokens.slice(1).join(" "),
+  };
+}
+
+function buildProspeoEnrichPersonPayload(input = {}) {
+  const fullName = String(input.full_name || input.name || "").trim();
+  const splitName = splitPersonName(fullName);
+  const companyDomain = normalizeCompanyDomain(input.company_domain || input.company_website || input.domain);
+  const onlyVerifiedEmailDefault = parseBooleanFlag(process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL, true);
+  const enrichMobileDefault = parseBooleanFlag(process.env.PROSPEO_ENRICH_PERSON_MOBILE, false);
+  const onlyVerifiedMobileDefault = parseBooleanFlag(process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE, true);
+  const payload = {
+    email: normalizePersonEmailAddress(input.email) || undefined,
+    linkedin_url: String(input.linkedin_url || input.linkedin || input.profile_url || "").trim() || undefined,
+    first_name: String(input.first_name || splitName.first_name || "").trim() || undefined,
+    last_name: String(input.last_name || splitName.last_name || "").trim() || undefined,
+    full_name: fullName || undefined,
+    company_name: String(input.company_name || "").trim() || undefined,
+    company_website: companyDomain || undefined,
+    company_domain: companyDomain || undefined,
+    company_linkedin_url: String(input.company_linkedin_url || "").trim() || undefined,
+    only_verified_email: parseBooleanFlag(input.only_verified_email, onlyVerifiedEmailDefault),
+    enrich_mobile: parseBooleanFlag(input.enrich_mobile, enrichMobileDefault),
+    only_verified_mobile: parseBooleanFlag(input.only_verified_mobile, onlyVerifiedMobileDefault),
+  };
+
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined && value !== null && value !== "")
+  );
+}
+
+function normalizeProspeoEnrichedPersonCandidate(payload = {}, fallback = {}) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  const personNode = getFirstByPaths(root, ["person", "data.person", "result.person"]);
+  const record = personNode && typeof personNode === "object"
+    ? { ...fallback, person: personNode }
+    : { ...fallback, ...root };
+
+  const normalized = normalizeProspeoPersonCandidateRecord(record);
+  return buildHiringPersonCandidate(normalized, "prospeo_enrich_person", 1);
+}
+
+export async function enrichProspeoSelectedPerson(input = {}) {
+  const definition = connectorDefinitionById("prospeo");
+  const hasKey = definition
+    ? (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]))
+    : false;
+
+  if (!hasKey) {
+    return {
+      ok: false,
+      status: null,
+      error: "missing_prospeo_api_key",
+    };
+  }
+
+  const requestPayload = buildProspeoEnrichPersonPayload(input);
+  const hasIdentifier = !!(
+    requestPayload.email
+      || requestPayload.linkedin_url
+      || (requestPayload.first_name && requestPayload.last_name && (requestPayload.company_website || requestPayload.company_name))
+      || (requestPayload.full_name && (requestPayload.company_website || requestPayload.company_name))
+  );
+
+  if (!hasIdentifier) {
+    return {
+      ok: false,
+      status: null,
+      error: "missing_person_identifier",
+    };
+  }
+
+  const timeoutMs = Math.max(
+    1000,
+    Number.parseInt(String(input.timeoutMs || input.timeout_ms || DEFAULT_TIMEOUT_MS), 10) || DEFAULT_TIMEOUT_MS
+  );
+  const response = await fetchJsonWithTimeout(PROSPEO_ENRICH_PERSON_URL, {
+    method: "POST",
+    headers: {
+      ...buildProspeoOfficialHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestPayload),
+  }, timeoutMs);
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: response.error || `http_${response.status || "unknown"}`,
+      request_payload: requestPayload,
+      payload: response.payload,
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    request_payload: requestPayload,
+    payload: response.payload,
+    person_candidate: normalizeProspeoEnrichedPersonCandidate(response.payload, input),
+  };
+}
+
+export function persistProspeoEnrichedPersonCandidate(companyNumberInput, enrichResult = {}, fallback = {}) {
+  const companyNumber = normalizeCompanyNumber(companyNumberInput);
+  if (!companyNumber) return null;
+
+  const candidate = enrichResult?.person_candidate
+    || normalizeProspeoEnrichedPersonCandidate(enrichResult?.payload || {}, fallback);
+  if (!candidate) return null;
+
+  const nowIso = new Date().toISOString();
+  const newSeniorHire = candidate.is_new_hire || candidate.start_date
+    ? normalizeNewSeniorHireRecord(candidate, "prospeo_enrich_person", 1)
+    : null;
+  const incoming = {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: "prospeo_enrich_person_api",
+    total_open_roles: 0,
+    open_roles: [],
+    finance_roles_open: [],
+    treasury_roles_open: [],
+    international_roles_open: [],
+    ecommerce_roles_open: [],
+    person_candidates: [candidate],
+    person_candidates_count: 1,
+    new_senior_hires: newSeniorHire ? [newSeniorHire] : [],
+    new_senior_hires_count: newSeniorHire ? 1 : 0,
+    hiring_signal_score: 0.08,
+    hiring_intensity: "low",
+    evidence: ["prospeo_enrich_person returned selected contact details"],
+    confidence: candidate.email ? "high" : "medium",
+    confidence_score: candidate.email ? 0.75 : 0.55,
+  };
+
+  const existing = getSetting(`hiring_signals_${companyNumber}`, null);
+  const merged = mergeHiringEnvelope(existing, incoming);
+  setSetting(`hiring_signals_${companyNumber}`, merged);
+  setSetting(`external_signal_prospeo_person_enrichment_${companyNumber}_${candidate.person_id}`, {
+    updated_at: nowIso,
+    source: "prospeo_enrich_person_api",
+    request_payload: enrichResult?.request_payload || null,
+    payload: enrichResult?.payload || null,
+  });
+
+  return merged;
+}
+
 function mergeTechEnvelope(existing, incoming) {
   const merged = mergeEnvelopeWithEvidence(existing, incoming, { scoreField: "confidence_score" });
   const technologies = uniqueStrings([
@@ -3698,7 +4315,15 @@ function mergeTechEnvelope(existing, incoming) {
   merged.technologies = technologies;
   merged.detected_technologies = technologies;
   merged.stack = technologies;
-  merged.signal_count = technologies.length;
+  merged.technology_categories = uniqueStrings([
+    ...(existing?.technology_categories || []),
+    ...(incoming?.technology_categories || []),
+  ]).slice(0, 100);
+  merged.email_technologies = uniqueStrings([
+    ...(existing?.email_technologies || []),
+    ...(incoming?.email_technologies || []),
+  ]).slice(0, 50);
+  merged.signal_count = technologies.length + merged.technology_categories.length + merged.email_technologies.length;
   return merged;
 }
 

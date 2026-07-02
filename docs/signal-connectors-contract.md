@@ -178,6 +178,21 @@ Observed endpoint behavior (people discovery):
 - Default role targeting includes finance, treasury, payments, procurement, and ecommerce leaders, including Head/Director of Ecommerce.
 - Optional recent-role filters can be enabled with `PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS` or `PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS`; PLAN_REQUIRED responses are retried without gated filters so basic company-scoped people discovery can still succeed.
 
+Observed endpoint behavior (account preflight):
+
+- Method: `GET`
+- Path: `/account-information`
+- Used by `GET /api/integrations/prospeo/account` to display plan/credit status before manual sync or selected-contact enrichment.
+- `PROSPEO_MIN_CREDITS_WARN` controls the low-credit threshold shown by the backend/UI.
+
+Observed endpoint behavior (selected person enrichment):
+
+- Method: `POST`
+- Path: `/enrich-person`
+- Used by `POST /api/signals/prospeo/enrich-person` for manual, selected-contact enrichment only.
+- The app sends `only_verified_email=true` and `enrich_mobile=false` by default. Mobile enrichment requires an explicit override.
+- When a `company_number` is supplied and `persist` is not `false`, the enriched contact is merged into `hiring_signals_<company>.person_candidates`.
+
 Expected source structures accepted:
 
 - connector_payloads[].payload.matched[].company.* (combined official bulk + people responses)
@@ -187,12 +202,18 @@ Expected source structures accepted:
 - matched[].company.technology.technology_names[]
 - matched[].company.technology.technology_list[].name
 - matched[].company.technology.technology_list[].category
+- matched[].company.technology.categories[] / technology_categories[]
+- matched[].company.email_tech.provider / email_tech.esp
 - matched[].company.employee_count / employee_range
+- matched[].company.revenue_range / revenue_range_printed
 - matched[].company.funding.*
+- matched[].company.attributes.* (B2C/pricing/API/mobile/enterprise-plan flags)
+- matched[].company.website_search.* (developer docs, security, status, pricing, checkout flags)
 - matched[].company.location.*
 - data.results[].person / results[].person (search-person people)
 - data.results[].person.email.* (email value/status/revealed metadata)
 - data.results[].person current-role/job-change start dates, normalized into `person_candidates[].start_date`, `person_candidates[].is_new_hire`, and `new_senior_hires[]` when the role matches desired buyer personas.
+- enrich-person `person.*` payloads, normalized into the same selected-contact fields when manually persisted.
 
 Primary envelope targets:
 
@@ -200,7 +221,7 @@ Primary envelope targets:
 
 Operational note:
 
-- The app parses Prospeo `matched[].company` responses for company job/tech signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for YAMM/Gemini recipient review. Recent desired-role hires also populate `new_senior_hires[]`, which scoring uses as a bounded timing and motion-relevance boost after product-fit gating.
+- The app parses Prospeo `matched[].company` responses for company job/tech/attribute/funding signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for YAMM/Gemini recipient review. Recent desired-role hires also populate `new_senior_hires[]`, which scoring uses as a bounded timing and motion-relevance boost after product-fit gating.
 
 ### PhantomBuster
 

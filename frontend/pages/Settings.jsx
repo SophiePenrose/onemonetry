@@ -353,6 +353,20 @@ function formatIntervalLabel(intervalMs) {
   return `${displayHours} hr`;
 }
 
+function formatIntegerLabel(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return "Unknown";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "Unknown";
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(numeric);
+}
+
+function formatShortDateLabel(value) {
+  if (!value) return "Unknown";
+  const ts = Date.parse(String(value));
+  if (!Number.isFinite(ts)) return "Unknown";
+  return new Date(ts).toLocaleDateString("en-GB");
+}
+
 const WeightSlider = React.memo(function WeightSlider({ layer, value, color, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -435,6 +449,10 @@ export default function Settings({ onNavigateToCompany }) {
   const [integrationLoading, setIntegrationLoading] = useState(false);
   const [integrationError, setIntegrationError] = useState(null);
   const [integrationCheckedAt, setIntegrationCheckedAt] = useState(null);
+  const [prospeoAccountStatus, setProspeoAccountStatus] = useState(null);
+  const [prospeoAccountLoading, setProspeoAccountLoading] = useState(false);
+  const [prospeoAccountError, setProspeoAccountError] = useState(null);
+  const [prospeoAccountCheckedAt, setProspeoAccountCheckedAt] = useState(null);
   const [targetedSyncCompanyNumber, setTargetedSyncCompanyNumber] = useState("");
   const [targetedSyncLoading, setTargetedSyncLoading] = useState(false);
   const [targetedSyncMessage, setTargetedSyncMessage] = useState(null);
@@ -463,6 +481,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipCopyFallbackValue, setOwnershipCopyFallbackValue] = useState("");
   const [ownershipCopyFallbackType, setOwnershipCopyFallbackType] = useState(null);
   const integrationRequestRef = useRef(0);
+  const prospeoAccountRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
@@ -542,10 +561,18 @@ export default function Settings({ onNavigateToCompany }) {
   const targetedSyncConnectorEnv = targetedSyncConnector?.env_var
     || TARGETED_SYNC_CONNECTOR_ENV_HINTS[targetedSyncConnectorId]
     || TARGETED_SYNC_CONNECTOR_ENV_HINTS.prospeo;
+  const prospeoIntegration = integrationStatus?.integrations?.prospeo || null;
+  const prospeoConfigured = prospeoIntegration?.configured === true;
+  const prospeoAccount = prospeoAccountStatus?.account || null;
 
   const formattedCheckedAt = useMemo(
     () => (integrationCheckedAt ? new Date(integrationCheckedAt).toLocaleString("en-GB") : null),
     [integrationCheckedAt],
+  );
+
+  const formattedProspeoAccountCheckedAt = useMemo(
+    () => (prospeoAccountCheckedAt ? new Date(prospeoAccountCheckedAt).toLocaleString("en-GB") : null),
+    [prospeoAccountCheckedAt],
   );
 
   const formattedOwnershipCheckedAt = useMemo(
@@ -976,6 +1003,38 @@ export default function Settings({ onNavigateToCompany }) {
       });
   }, []);
 
+  const loadProspeoAccountStatus = useCallback(() => {
+    const requestId = prospeoAccountRequestRef.current + 1;
+    prospeoAccountRequestRef.current = requestId;
+
+    setProspeoAccountLoading(true);
+    setProspeoAccountError(null);
+    fetch("/api/integrations/prospeo/account")
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || payload.detail || `Failed to load Prospeo account status (${response.status})`);
+        }
+        return payload;
+      })
+      .then((payload) => {
+        if (prospeoAccountRequestRef.current !== requestId) return;
+        setProspeoAccountStatus(payload);
+        setProspeoAccountCheckedAt(new Date().toISOString());
+      })
+      .catch((err) => {
+        if (prospeoAccountRequestRef.current !== requestId) return;
+        setProspeoAccountStatus(null);
+        setProspeoAccountError(err?.message || "Prospeo account status unavailable");
+        setProspeoAccountCheckedAt(new Date().toISOString());
+      })
+      .finally(() => {
+        if (prospeoAccountRequestRef.current === requestId) {
+          setProspeoAccountLoading(false);
+        }
+      });
+  }, []);
+
   const runTargetedConnectorSync = useCallback(async () => {
     const companyNumber = normalizeCompanyNumberToken(targetedSyncCompanyNumber);
     if (!companyNumber) {
@@ -1327,6 +1386,17 @@ export default function Settings({ onNavigateToCompany }) {
   }, [loadIntegrationStatus]);
 
   useEffect(() => {
+    if (integrationStatus?.integrations?.prospeo?.configured === true) {
+      loadProspeoAccountStatus();
+      return;
+    }
+
+    setProspeoAccountStatus(null);
+    setProspeoAccountError(null);
+    setProspeoAccountCheckedAt(null);
+  }, [integrationStatus, loadProspeoAccountStatus]);
+
+  useEffect(() => {
     loadOwnershipChanges({ offset: 0 });
   }, [loadOwnershipChanges]);
 
@@ -1673,6 +1743,96 @@ export default function Settings({ onNavigateToCompany }) {
               {integrationStatus.ready_for_production
                 ? "Required integrations are configured."
                 : `Missing required: ${(integrationStatus.missing_required || []).join(", ")}`}
+            </div>
+
+            <div style={{
+              marginTop: 12,
+              border: "1px solid #e2e8f0",
+              background: "#f8fafc",
+              borderRadius: 6,
+              padding: "10px 12px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937" }}>Prospeo Credit Status</div>
+                  {formattedProspeoAccountCheckedAt && (
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      Last checked: {formattedProspeoAccountCheckedAt}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={loadProspeoAccountStatus}
+                  disabled={!prospeoConfigured || prospeoAccountLoading}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #d1d5db",
+                    background: "#fff",
+                    color: "#374151",
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: !prospeoConfigured || prospeoAccountLoading ? "not-allowed" : "pointer",
+                    opacity: !prospeoConfigured || prospeoAccountLoading ? 0.6 : 1,
+                  }}
+                >
+                  {prospeoAccountLoading ? "Checking..." : "Refresh Credits"}
+                </button>
+              </div>
+
+              {!prospeoConfigured && (
+                <div style={{ fontSize: 11, color: "#92400e" }}>
+                  Prospeo is not configured. Add {prospeoIntegration?.env_var || TARGETED_SYNC_CONNECTOR_ENV_HINTS.prospeo} to enable this check.
+                </div>
+              )}
+
+              {prospeoConfigured && prospeoAccountLoading && !prospeoAccount && (
+                <div style={{ fontSize: 12, color: "#64748b" }}>Checking Prospeo account...</div>
+              )}
+
+              {prospeoConfigured && prospeoAccountError && (
+                <div style={{ fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "7px 8px" }}>
+                  {prospeoAccountError}
+                </div>
+              )}
+
+              {prospeoConfigured && prospeoAccount && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Plan</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>{prospeoAccount.plan || "Unknown"}</div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Remaining</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: prospeoAccount.low_credit ? "#991b1b" : "#166534" }}>
+                        {formatIntegerLabel(prospeoAccount.remaining_credits)}
+                      </div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Used</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>{formatIntegerLabel(prospeoAccount.used_credits)}</div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Total</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>{formatIntegerLabel(prospeoAccount.total_credits)}</div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Renewal</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {prospeoAccount.renewal_date
+                          ? formatShortDateLabel(prospeoAccount.renewal_date)
+                          : (Number.isFinite(Number(prospeoAccount.renewal_days)) ? `${prospeoAccount.renewal_days} days` : "Unknown")}
+                      </div>
+                    </div>
+                  </div>
+                  {prospeoAccount.low_credit && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: "#991b1b", fontWeight: 700 }}>
+                      Low credits: remaining credits are at or below {formatIntegerLabel(prospeoAccount.low_credit_threshold)}.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={{

@@ -544,6 +544,7 @@ export default function CompanyDetail({ companyId }) {
       <EnrichmentSignalsPanel
         companyId={companyId}
         companyNumber={company.company_number}
+        companyDomain={company.company_domain || company.company_website || company.website || company.domain || ""}
       />
 
       <GeminiYammPanel

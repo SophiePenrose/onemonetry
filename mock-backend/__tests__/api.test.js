@@ -974,6 +974,11 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
       assert.equal(typeof data.integrations.email_generation_llm, "object");
       assert.equal(typeof data.integrations.prospeo, "object");
+      assert.equal(data.integrations.prospeo.runtime?.account_information_supported, true);
+      assert.equal(data.integrations.prospeo.runtime?.account_information_endpoint, "/api/integrations/prospeo/account");
+      assert.equal(data.integrations.prospeo.runtime?.selected_person_enrichment_endpoint, "/api/signals/prospeo/enrich-person");
+      assert.equal(data.integrations.prospeo.runtime?.selected_person_enrichment_manual_only, true);
+      assert.equal(data.integrations.prospeo.runtime?.enrich_mobile_default, false);
       assert.equal(typeof data.integrations.phantombuster, "object");
       assert.equal(typeof data.integrations.status_api, "object");
       assert.equal(typeof data.integrations.status_instatus, "object");
@@ -1013,6 +1018,10 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company"));
       assert.ok(data.env_template.includes("PROSPEO_AUTH_HEADER=X-KEY"));
       assert.ok(data.env_template.includes("PROSPEO_AUTH_SCHEME=none"));
+      assert.ok(data.env_template.includes("PROSPEO_MIN_CREDITS_WARN=25"));
+      assert.ok(data.env_template.includes("PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL=true"));
+      assert.ok(data.env_template.includes("PROSPEO_ENRICH_PERSON_MOBILE=false"));
+      assert.ok(data.env_template.includes("PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE=true"));
       assert.ok(data.env_template.includes("PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));

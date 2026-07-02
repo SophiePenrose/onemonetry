@@ -166,13 +166,15 @@ EnvelopeCard.propTypes = {
   envelope: PropTypes.object,
 };
 
-export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
+export default function EnrichmentSignalsPanel({ companyId, companyNumber, companyDomain }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [integrations, setIntegrations] = useState(null);
   const [syncLoading, setSyncLoading] = useState({ prospeo: false, phantombuster: false });
   const [syncMessage, setSyncMessage] = useState(null);
+  const [personEnrichLoadingKey, setPersonEnrichLoadingKey] = useState(null);
+  const [personEnrichMessage, setPersonEnrichMessage] = useState(null);
   const normalizedCompanyNumber = useMemo(() => {
     const raw = String(companyNumber || companyId || "").trim().toUpperCase();
     if (!raw) return "";
@@ -269,6 +271,69 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
   }, [integrations, loadSnapshot, normalizedCompanyNumber]);
 
   const envelope = snapshot?.enrichment || {};
+  const personCandidates = useMemo(() => {
+    const payload = snapshot?.enrichment?.hiring_signals?.data;
+    const candidates = Array.isArray(payload?.person_candidates) ? payload.person_candidates : [];
+    return candidates
+      .filter((person) => person && typeof person === "object")
+      .slice(0, 8);
+  }, [snapshot]);
+  const prospeoConfigured = integrations?.prospeo?.configured === true;
+
+  const runProspeoPersonEnrichment = useCallback(async (person) => {
+    if (!person || !normalizedCompanyNumber) return;
+
+    const personKey = String(
+      person.person_id
+        || person.linkedin_url
+        || person.email
+        || `${person.full_name || person.name || "person"}-${person.role || person.job_title || ""}`
+    );
+    const payload = {
+      company_number: normalizedCompanyNumber,
+      company_domain: companyDomain,
+      company_website: companyDomain,
+      full_name: person.full_name || person.name,
+      first_name: person.first_name,
+      last_name: person.last_name,
+      email: person.email,
+      linkedin_url: person.linkedin_url || person.linkedin,
+      persist: true,
+      enrich_mobile: false,
+    };
+
+    setPersonEnrichLoadingKey(personKey);
+    setPersonEnrichMessage(null);
+
+    try {
+      const response = await fetch("/api/signals/prospeo/enrich-person", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || data.detail || `Prospeo enrich-person failed (${response.status})`);
+      }
+
+      const enriched = data.person_candidate || null;
+      setPersonEnrichMessage({
+        type: "success",
+        text: enriched?.email
+          ? `Prospeo enriched ${enriched.full_name || person.full_name || "selected contact"} with ${enriched.email}.`
+          : `Prospeo enriched ${enriched?.full_name || person.full_name || "selected contact"}.`,
+      });
+      await loadSnapshot();
+    } catch (err) {
+      setPersonEnrichMessage({
+        type: "error",
+        text: err?.message || "Prospeo enrich-person failed",
+      });
+    } finally {
+      setPersonEnrichLoadingKey(null);
+    }
+  }, [companyDomain, loadSnapshot, normalizedCompanyNumber]);
+
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8 }}>
@@ -360,6 +425,92 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
         </div>
       )}
 
+      {personCandidates.length > 0 && (
+        <div style={{
+          marginBottom: 12,
+          border: "1px solid #dbeafe",
+          background: "#eff6ff",
+          borderRadius: 6,
+          overflow: "hidden",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", padding: "9px 10px", borderBottom: "1px solid #bfdbfe" }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#1e3a8a" }}>Prospeo Selected Contacts</div>
+              <div style={{ fontSize: 11, color: "#475569" }}>Manual enrich-person only; mobile enrichment stays off by default.</div>
+            </div>
+            <span style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: prospeoConfigured ? "#166534" : "#92400e",
+              background: prospeoConfigured ? "#dcfce7" : "#fef3c7",
+              borderRadius: 999,
+              padding: "2px 8px",
+              whiteSpace: "nowrap",
+            }}>
+              {prospeoConfigured ? "Ready" : "Not configured"}
+            </span>
+          </div>
+
+          {personCandidates.map((person) => {
+            const personKey = String(
+              person.person_id
+                || person.linkedin_url
+                || person.email
+                || `${person.full_name || person.name || "person"}-${person.role || person.job_title || ""}`
+            );
+            const hasIdentifier = Boolean(person.email || person.linkedin_url || person.linkedin || person.full_name || person.name);
+            const loadingPerson = personEnrichLoadingKey === personKey;
+            return (
+              <div key={personKey} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(120px, 0.8fr) auto", gap: 10, alignItems: "center", padding: "8px 10px", borderBottom: "1px solid #dbeafe" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {person.full_name || person.name || "Unnamed contact"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {person.role || person.job_title || "Role unknown"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "#475569", minWidth: 0 }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {person.email || "Email not revealed"}
+                  </div>
+                  <div>{person.email_status || person.confidence || "status n/a"}</div>
+                </div>
+                <button
+                  onClick={() => runProspeoPersonEnrichment(person)}
+                  disabled={!prospeoConfigured || !hasIdentifier || !normalizedCompanyNumber || loadingPerson}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: "#1d4ed8",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    cursor: !prospeoConfigured || !hasIdentifier || !normalizedCompanyNumber || loadingPerson ? "not-allowed" : "pointer",
+                    opacity: !prospeoConfigured || !hasIdentifier || !normalizedCompanyNumber || loadingPerson ? 0.6 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {loadingPerson ? "Enriching..." : "Enrich"}
+                </button>
+              </div>
+            );
+          })}
+
+          {personEnrichMessage && (
+            <div style={{
+              padding: "8px 10px",
+              fontSize: 12,
+              color: personEnrichMessage.type === "success" ? "#065f46" : "#991b1b",
+              background: personEnrichMessage.type === "success" ? "#d1fae5" : "#fee2e2",
+            }}>
+              {personEnrichMessage.text}
+            </div>
+          )}
+        </div>
+      )}
+
       {error && (
         <div style={{ color: "#991b1b", fontSize: 12, marginBottom: 10 }}>
           {error}
@@ -386,4 +537,5 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
 EnrichmentSignalsPanel.propTypes = {
   companyId: PropTypes.string.isRequired,
   companyNumber: PropTypes.string,
+  companyDomain: PropTypes.string,
 };

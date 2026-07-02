@@ -85,6 +85,60 @@ describe("enrichment-aware scoring", () => {
     );
   });
 
+  it("applies Prospeo company attributes, technology categories, and funding as bounded refinements", () => {
+    const baselineCompany = "90000008";
+    const enrichedCompany = "90000009";
+
+    seedScorableCompany(baselineCompany);
+    seedScorableCompany(enrichedCompany);
+
+    const baselineScore = scoring.scoreCompany(baselineCompany);
+
+    db.setSetting(`tech_stack_${enrichedCompany}`, {
+      updated_at: isoDaysAgo(1),
+      technologies: ["Stripe", "Shopify"],
+      technology_categories: ["Payments", "Ecommerce", "Accounting"],
+      email_technologies: ["Mailchimp"],
+    });
+
+    db.setSetting(`marketing_intelligence_${enrichedCompany}`, {
+      updated_at: isoDaysAgo(1),
+      company_attributes: {
+        b2c: true,
+        has_api: true,
+        has_pricing: true,
+        has_enterprise_plan: true,
+        has_mobile_app: true,
+      },
+      website_signals: {
+        has_developer_docs: true,
+        has_security_page: true,
+        has_status_page: true,
+        has_checkout: true,
+      },
+      funding: {
+        latest_round: "Series B",
+        latest_amount: 12000000,
+        latest_funding_at: isoDaysAgo(45),
+      },
+      employee_count: 260,
+      revenue_range: "$50M-$100M",
+    });
+
+    const enrichedScore = scoring.scoreCompany(enrichedCompany);
+
+    assert.equal(enrichedScore.enrichment.tech_stack.applied, true);
+    assert.equal(enrichedScore.enrichment.marketing.applied, true);
+    assert.equal(enrichedScore.enrichment.marketing.integration_ready, true);
+    assert.ok(Number(enrichedScore.enrichment.marketing.urgency_boost || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.marketing.commercial_value_boost || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.tech_stack.motion_boosts["Merchant Acquiring"] || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.tech_stack.motion_boosts["API Integrations"] || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.marketing.motion_boosts["Revolut Pay"] || 0) > 0);
+    assert.equal(enrichedScore.layers.switching_feasibility.integration_ready_stack, true);
+    assert.ok(enrichedScore.layers.urgency.score > baselineScore.layers.urgency.score);
+  });
+
   it("ignores expired enrichment payloads after max-age window", () => {
     const companyNumber = "90000002";
     seedScorableCompany(companyNumber);

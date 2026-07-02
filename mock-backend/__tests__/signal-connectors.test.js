@@ -21,6 +21,10 @@ const originalEnv = {
   PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL: process.env.PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL,
   PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS: process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS,
   PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS: process.env.PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS,
+  PROSPEO_MIN_CREDITS_WARN: process.env.PROSPEO_MIN_CREDITS_WARN,
+  PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL: process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL,
+  PROSPEO_ENRICH_PERSON_MOBILE: process.env.PROSPEO_ENRICH_PERSON_MOBILE,
+  PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE: process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE,
   PHANTOMBUSTER_API_KEY: process.env.PHANTOMBUSTER_API_KEY,
   PHANTOMBUSTER_URL_TEMPLATE: process.env.PHANTOMBUSTER_URL_TEMPLATE,
   PHANTOMBUSTER_AUTH_HEADER: process.env.PHANTOMBUSTER_AUTH_HEADER,
@@ -72,6 +76,10 @@ describe("external signal connectors", () => {
     delete process.env.PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL;
     delete process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS;
     delete process.env.PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS;
+    delete process.env.PROSPEO_MIN_CREDITS_WARN;
+    delete process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL;
+    delete process.env.PROSPEO_ENRICH_PERSON_MOBILE;
+    delete process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE;
     delete process.env.PHANTOMBUSTER_API_KEY;
     delete process.env.PHANTOMBUSTER_URL_TEMPLATE;
     delete process.env.PHANTOMBUSTER_AUTH_HEADER;
@@ -301,6 +309,7 @@ describe("external signal connectors", () => {
     process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS = "6";
     process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
     const recentHireStartDate = new Date(Date.now() - (28 * 86400000)).toISOString();
+    const recentFundingDate = new Date(Date.now() - (60 * 86400000)).toISOString();
 
     const requestedUrls = [];
     global.fetch = async (url, options = {}) => {
@@ -333,7 +342,37 @@ describe("external signal connectors", () => {
                   company: {
                     technology: {
                       technology_names: ["Stripe", "HubSpot"],
+                      technology_list: [
+                        { name: "Stripe", category: "Payments" },
+                        { name: "Shopify", category: "Ecommerce" },
+                      ],
+                      categories: ["Payments", "Ecommerce"],
                     },
+                    email_tech: {
+                      provider: "Google Workspace",
+                      esp: "Mailchimp",
+                    },
+                    attributes: {
+                      b2c: true,
+                      has_pricing: true,
+                      has_enterprise_plan: true,
+                      has_mobile_app: true,
+                      has_api: true,
+                    },
+                    website_search: {
+                      has_developer_docs: true,
+                      has_status_page: true,
+                      has_security_page: true,
+                      has_checkout: true,
+                    },
+                    funding: {
+                      latest_round: "Series B",
+                      latest_amount: 12000000,
+                      latest_funding_at: recentFundingDate,
+                    },
+                    employee_count: 260,
+                    employee_range: "201-500",
+                    revenue_range_printed: "$50M-$100M",
                     job_postings: {
                       active_count: 2,
                       active_titles: ["Treasury Operations Manager", "Finance Analyst"],
@@ -415,10 +454,23 @@ describe("external signal connectors", () => {
     assert.equal(raw.payload.connector_payloads.length, 2);
 
     const hiring = db.getSetting("hiring_signals_99111123", null);
+    const marketing = db.getSetting("marketing_intelligence_99111123", null);
     const tech = db.getSetting("tech_stack_99111123", null);
 
     assert.equal(hiring.total_open_roles >= 2, true);
     assert.ok((tech.technologies || []).includes("Stripe"));
+    assert.ok((tech.technology_categories || []).includes("Payments"));
+    assert.ok((tech.technology_categories || []).includes("Ecommerce"));
+    assert.ok((tech.email_technologies || []).includes("Google Workspace"));
+    assert.ok((tech.email_technologies || []).includes("Mailchimp"));
+    assert.equal(marketing.company_attributes?.b2c, true);
+    assert.equal(marketing.company_attributes?.has_enterprise_plan, true);
+    assert.equal(marketing.website_signals?.has_developer_docs, true);
+    assert.equal(marketing.website_signals?.has_checkout, true);
+    assert.equal(marketing.funding?.latest_round, "Series B");
+    assert.equal(marketing.funding?.latest_amount, 12000000);
+    assert.equal(marketing.employee_count, 260);
+    assert.equal(marketing.revenue_range, "$50M-$100M");
 
     const person = (hiring.person_candidates || []).find((entry) => entry.full_name === "Mia Taylor");
     assert.ok(person);
@@ -512,6 +564,132 @@ describe("external signal connectors", () => {
     );
     assert.equal(
       hiring.person_candidates.some((entry) => entry?.full_name === "Ava Stone" && entry?.source === "prospeo_search_person_api"),
+      true
+    );
+  });
+
+  it("fetches Prospeo account information with official auth headers", async () => {
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/bulk-enrich-company";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.PROSPEO_MIN_CREDITS_WARN = "50";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://api.prospeo.io/account-information");
+      assert.equal(String(options?.method || ""), "GET");
+      assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            plan: "Pro",
+            remaining_credits: 42,
+            used_credits: 8,
+            total_credits: 50,
+            renewal_date: "2026-07-15",
+          });
+        },
+      };
+    };
+
+    const result = await connectors.fetchProspeoAccountInformation();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.configured, true);
+    assert.equal(result.account.plan, "Pro");
+    assert.equal(result.account.remaining_credits, 42);
+    assert.equal(result.account.low_credit_threshold, 50);
+    assert.equal(result.account.low_credit, true);
+  });
+
+  it("enriches one selected Prospeo person and persists the candidate into hiring signals", async () => {
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/bulk-enrich-company";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL = "true";
+    process.env.PROSPEO_ENRICH_PERSON_MOBILE = "false";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://api.prospeo.io/enrich-person");
+      assert.equal(String(options?.method || ""), "POST");
+      assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
+      assert.equal(String(options?.headers?.["Content-Type"] || ""), "application/json");
+
+      const parsedBody = JSON.parse(String(options?.body || "{}"));
+      assert.equal(parsedBody.full_name, "Riley Reed");
+      assert.equal(parsedBody.company_website, "selected-prospeo.example");
+      assert.equal(parsedBody.only_verified_email, true);
+      assert.equal(parsedBody.enrich_mobile, false);
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            person: {
+              id: "prospeo-person-2",
+              full_name: "Riley Reed",
+              job_title: "Head of Payments",
+              linkedin_url: "https://linkedin.com/in/riley-reed",
+              current_position: {
+                start_year: 2026,
+                start_month: 5,
+              },
+              email: {
+                email: "riley@example.com",
+                status: "VERIFIED",
+                revealed: true,
+              },
+            },
+          });
+        },
+      };
+    };
+
+    db.setSetting("hiring_signals_99111126", {
+      updated_at: new Date().toISOString(),
+      source: "unit_test",
+      person_candidates: [
+        {
+          person_id: "existing-contact",
+          full_name: "Existing Contact",
+          role: "Finance Director",
+          source: "unit_test",
+        },
+      ],
+      person_candidates_count: 1,
+      new_senior_hires: [],
+    });
+
+    const enrich = await connectors.enrichProspeoSelectedPerson({
+      company_number: "99111126",
+      full_name: "Riley Reed",
+      company_domain: "selected-prospeo.example",
+    });
+    const merged = connectors.persistProspeoEnrichedPersonCandidate("99111126", enrich, {
+      full_name: "Riley Reed",
+      company_domain: "selected-prospeo.example",
+    });
+
+    assert.equal(enrich.ok, true);
+    assert.equal(enrich.person_candidate.full_name, "Riley Reed");
+    assert.equal(enrich.person_candidate.email, "riley@example.com");
+    assert.equal(enrich.person_candidate.role, "Head of Payments");
+    assert.equal(enrich.person_candidate.start_date, "2026-05-01T00:00:00.000Z");
+    assert.equal(enrich.person_candidate.is_new_hire, true);
+
+    assert.ok(merged);
+    assert.equal(merged.person_candidates_count, 2);
+    assert.equal(
+      merged.person_candidates.some((person) => person.full_name === "Riley Reed" && person.email === "riley@example.com"),
+      true
+    );
+    assert.equal(
+      merged.new_senior_hires.some((person) => person.full_name === "Riley Reed" && person.role === "Head of Payments"),
       true
     );
   });

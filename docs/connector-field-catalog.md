@@ -35,11 +35,15 @@ Recent-hire metadata is preserved inside `RelevantIndividualsJSON` when availabl
 
 - Company endpoint: `POST https://api.prospeo.io/bulk-enrich-company`
 - People endpoint: `POST https://api.prospeo.io/search-person`
+- Account endpoint: `GET https://api.prospeo.io/account-information`
+- Selected-contact endpoint: `POST https://api.prospeo.io/enrich-person`
 - Headers:
   - `Content-Type: application/json`
   - `X-KEY: <api_key>`
 
 When `PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company`, the backend calls both official endpoints and merges the payloads before envelope parsing.
+The account endpoint is exposed as a Settings preflight so operators can check credits before running manual Prospeo actions.
+The enrich-person endpoint is intentionally manual and selected-contact only; the backend defaults to verified email enrichment and keeps mobile enrichment off unless explicitly overridden.
 
 ### Request fields (high-confidence)
 
@@ -78,7 +82,9 @@ Relevant-individual and persona signals:
 - `data.results[].person.email.email`
 - `data.results[].person.email.status` / `revealed`
 - current-role/job-change dates such as `data.results[].person.current_position.start_date`, `job_start_date`, or `job_change.date`
+- current-role start month/year values such as `current_position.start_year` and `current_position.start_month`
 - new-hire flags such as `recent_hire`, `new_hire`, or `job_change`
+- enrich-person `person.*` details for a reviewer-selected contact
 
 Scoring note:
 
@@ -90,11 +96,24 @@ Tech and stack context:
 - `company.technology.technology_names[]`
 - `company.technology.technology_list[].name`
 - `company.technology.technology_list[].category`
+- `company.technology.categories[]`
+- `company.email_tech.provider` / `company.email_tech.esp`
 
 Commercial/change context:
 
 - `company.funding.*`
-- `company.attributes.*` (for example B2B, free trial, pricing availability)
+- `company.attributes.*` (for example B2C, API, mobile app, enterprise plan, pricing availability)
+- `company.website_search.*` (developer docs, status, security, pricing, checkout)
+- `company.revenue_range` / `company.revenue_range_printed`
+- `company.employee_count` / `company.employee_range`
+
+Operational fields:
+
+- account plan and credit/quota counts from `account-information`
+- `PROSPEO_MIN_CREDITS_WARN` for the Settings low-credit threshold
+- `PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_EMAIL=true`
+- `PROSPEO_ENRICH_PERSON_MOBILE=false`
+- `PROSPEO_ENRICH_PERSON_ONLY_VERIFIED_MOBILE=true`
 
 ## PhantomBuster
 
