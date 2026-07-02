@@ -151,6 +151,49 @@ describe("enrichment-aware scoring", () => {
     assert.equal(enrichedScore.confidence_interval.reasons.includes("enrichment_supported"), true);
   });
 
+  it("boosts qualified companies when a desired ecommerce leader was newly hired", () => {
+    const baselineCompany = "90000006";
+    const enrichedCompany = "90000007";
+
+    seedScorableCompany(baselineCompany);
+    seedScorableCompany(enrichedCompany);
+
+    const baselineScore = scoring.scoreCompany(baselineCompany);
+
+    db.setSetting(`hiring_signals_${enrichedCompany}`, {
+      updated_at: isoDaysAgo(1),
+      new_senior_hires: [
+        {
+          full_name: "Morgan Lane",
+          role: "Director of Ecommerce",
+          start_date: isoDaysAgo(20),
+          is_new_hire: true,
+        },
+      ],
+      person_candidates_count: 1,
+      person_candidates: [
+        {
+          full_name: "Morgan Lane",
+          role: "Director of Ecommerce",
+          email_status: "verified",
+          confidence: "high",
+          persona_bucket: "operations_lead",
+          start_date: isoDaysAgo(20),
+          is_new_hire: true,
+        },
+      ],
+    });
+
+    const enrichedScore = scoring.scoreCompany(enrichedCompany);
+
+    assert.equal(enrichedScore.enrichment.hiring.applied, true);
+    assert.equal(enrichedScore.enrichment.hiring.velocity_triggers.includes("new_ecommerce_leader"), true);
+    assert.ok(Number(enrichedScore.enrichment.hiring.urgency_boost || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.hiring.motion_boosts["Merchant Acquiring"] || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.hiring.motion_boosts["Revolut Pay"] || 0) > 0);
+    assert.ok(enrichedScore.layers.urgency.score > baselineScore.layers.urgency.score);
+  });
+
   it("applies normalized status incident severity to reputation boosts", () => {
     const companyNumber = "90000005";
     seedScorableCompany(companyNumber, {

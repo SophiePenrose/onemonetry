@@ -590,6 +590,14 @@ const HIRING_SIGNAL_WEIGHTS = {
     "Head of Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
     "VP Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
     "Financial Controller": { boost: 0.12, velocity_trigger: null },
+    "Head of Treasury": { boost: 0.16, velocity_trigger: "new_treasury_leader" },
+    "Treasury Manager": { boost: 0.10, velocity_trigger: "new_treasury_leader" },
+    "Head of Payments": { boost: 0.14, velocity_trigger: "new_payments_leader" },
+    "Payments Manager": { boost: 0.10, velocity_trigger: "new_payments_leader" },
+    "Procurement Manager": { boost: 0.08, velocity_trigger: "new_procurement_leader" },
+    "Head of Ecommerce": { boost: 0.14, velocity_trigger: "new_ecommerce_leader" },
+    "Director of Ecommerce": { boost: 0.14, velocity_trigger: "new_ecommerce_leader" },
+    "Ecommerce Manager": { boost: 0.09, velocity_trigger: "new_ecommerce_leader" },
   },
   motion_signals: {
     "Treasury Manager": { motions: { "FX": 0.20, "FX Forwards": 0.18 }, pain_boost: 0.10 },
@@ -599,7 +607,11 @@ const HIRING_SIGNAL_WEIGHTS = {
     "Accounts Payable": { motions: { "Cards": 0.10, "Spend Management": 0.12 }, pain_boost: 0.05 },
     "Accounts Receivable": { motions: { "Merchant Acquiring": 0.08 }, pain_boost: 0.04 },
     "Procurement Manager": { motions: { "FX": 0.08, "Cards": 0.10, "Spend Management": 0.15 }, pain_boost: 0.06 },
+    "Head of Payments": { motions: { "Merchant Acquiring": 0.12, "Revolut Pay": 0.12, "API Integrations": 0.06 }, pain_boost: 0.06 },
+    "Payments Manager": { motions: { "Merchant Acquiring": 0.10, "Revolut Pay": 0.10 }, pain_boost: 0.05 },
     "Ecommerce Manager": { motions: { "Merchant Acquiring": 0.15, "Revolut Pay": 0.12 }, pain_boost: 0.06 },
+    "Head of Ecommerce": { motions: { "Merchant Acquiring": 0.18, "Revolut Pay": 0.16, "API Integrations": 0.08 }, pain_boost: 0.08 },
+    "Director of Ecommerce": { motions: { "Merchant Acquiring": 0.18, "Revolut Pay": 0.16, "API Integrations": 0.08 }, pain_boost: 0.08 },
     "Head of Digital": { motions: { "Merchant Acquiring": 0.12, "Revolut Pay": 0.10, "API Integrations": 0.10 }, pain_boost: 0.05 },
     "International Manager": { motions: { "FX": 0.15, "FX Forwards": 0.10 }, pain_boost: 0.08 },
     "EMEA Director": { motions: { "FX": 0.12, "FX Forwards": 0.08 }, pain_boost: 0.06 },
@@ -719,6 +731,7 @@ function asArray(value) {
 function normalizeLookupToken(value) {
   return String(value || "")
     .toLowerCase()
+    .replace(/\be[\s-]*commerce\b/g, "ecommerce")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1199,6 +1212,16 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
       urgencyBoost += delta;
       if (config.velocity_trigger) velocityTriggers.push(config.velocity_trigger);
       adjustments.push({ type: "new_senior_hire", role, months_since: Math.round(monthsSinceHire), boost: Math.round(delta * 100) / 100 });
+      break;
+    }
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.motion_signals)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      for (const [motion, boost] of Object.entries(config.motions || {})) {
+        motionBoosts[motion] = (motionBoosts[motion] || 0) + (Number(boost || 0) * 0.8);
+      }
+      painBoost += Number(config.pain_boost || 0) * 0.8;
+      adjustments.push({ type: "new_hire_motion_signal", role, pattern });
       break;
     }
   }
@@ -2891,6 +2914,14 @@ export function scoreCompany(companyNumber) {
      for (const trigger of hiringSignals.velocity_triggers || []) {
        if (trigger === "new_finance_leader") {
          qualSignals.positive.push({ signal: "New CFO/FD", weight: 0.15, source: "hiring" });
+       } else if (trigger === "new_treasury_leader") {
+         qualSignals.positive.push({ signal: "New treasury leader", weight: 0.1, source: "hiring" });
+       } else if (trigger === "new_payments_leader") {
+         qualSignals.positive.push({ signal: "New payments leader", weight: 0.09, source: "hiring" });
+       } else if (trigger === "new_ecommerce_leader") {
+         qualSignals.positive.push({ signal: "New ecommerce leader", weight: 0.1, source: "hiring" });
+       } else if (trigger === "new_procurement_leader") {
+         qualSignals.positive.push({ signal: "New procurement leader", weight: 0.08, source: "hiring" });
        } else if (trigger === "headcount_growth") {
          qualSignals.positive.push({ signal: "Headcount growth", weight: 0.1, source: "hiring" });
        }

@@ -61,6 +61,8 @@ Minimum normalized outputs:
 - treasury_roles_open[]
 - international_roles_open[]
 - ecommerce_roles_open[]
+- person_candidates[]
+- new_senior_hires[]
 - hiring_signal_score
 
 ### reputation_{company_number}
@@ -156,18 +158,29 @@ Primary envelope targets:
 
 Configuration note:
 
-- PROSPEO_URL_TEMPLATE is required
-- PROSPEO_API_KEY is optional (used when provided)
+- PROSPEO_URL_TEMPLATE is required. For the official live integration, use `https://api.prospeo.io/bulk-enrich-company`.
+- PROSPEO_API_KEY is required for the official Prospeo API; it remains optional only for mock/proxy templates.
+- Official auth uses `PROSPEO_AUTH_HEADER=X-KEY` and `PROSPEO_AUTH_SCHEME=none`.
 
 Observed endpoint behavior (bulk company enrichment):
 
 - Method: `POST`
 - Path: `/bulk-enrich-company`
-- Header auth commonly uses `X-KEY`
+- Header auth uses `X-KEY`
 - `data[]` rows require an `identifier` plus one or more company resolvers (`company_website`, `company_linkedin_url`)
+
+Observed endpoint behavior (people discovery):
+
+- Method: `POST`
+- Path: `/search-person`
+- Official bulk configuration automatically fans out to this endpoint.
+- Company targeting is sent under `filters.company.websites.include[]` and role targeting under `filters.person_job_title`, `filters.person_seniority`, and optional `filters.person_department`.
+- Default role targeting includes finance, treasury, payments, procurement, and ecommerce leaders, including Head/Director of Ecommerce.
+- Optional recent-role filters can be enabled with `PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS` or `PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS`; PLAN_REQUIRED responses are retried without gated filters so basic company-scoped people discovery can still succeed.
 
 Expected source structures accepted:
 
+- connector_payloads[].payload.matched[].company.* (combined official bulk + people responses)
 - matched[].company.job_postings.active_count
 - matched[].company.job_postings.active_titles[]
 - matched[].company.technology.count
@@ -177,6 +190,9 @@ Expected source structures accepted:
 - matched[].company.employee_count / employee_range
 - matched[].company.funding.*
 - matched[].company.location.*
+- data.results[].person / results[].person (search-person people)
+- data.results[].person.email.* (email value/status/revealed metadata)
+- data.results[].person current-role/job-change start dates, normalized into `person_candidates[].start_date`, `person_candidates[].is_new_hire`, and `new_senior_hires[]` when the role matches desired buyer personas.
 
 Primary envelope targets:
 
@@ -184,7 +200,7 @@ Primary envelope targets:
 
 Operational note:
 
-- The app currently parses Prospeo `matched[].company` responses and maps job/tech signals into enrichment envelopes.
+- The app parses Prospeo `matched[].company` responses for company job/tech signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for YAMM/Gemini recipient review. Recent desired-role hires also populate `new_senior_hires[]`, which scoring uses as a bounded timing and motion-relevance boost after product-fit gating.
 
 ### PhantomBuster
 

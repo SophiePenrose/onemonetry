@@ -27,15 +27,19 @@ The Gemini YAMM export now supports person-focused columns in addition to core s
 - `RelevantIndividualsJSON`
 
 These fields are intended to create a clear place for "relevant individuals" data before/after approval.
+Recent-hire metadata is preserved inside `RelevantIndividualsJSON` when available.
 
 ## Prospeo
 
 ### Endpoint and auth
 
-- Endpoint: `POST https://api.prospeo.io/bulk-enrich-company`
+- Company endpoint: `POST https://api.prospeo.io/bulk-enrich-company`
+- People endpoint: `POST https://api.prospeo.io/search-person`
 - Headers:
   - `Content-Type: application/json`
   - `X-KEY: <api_key>`
+
+When `PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company`, the backend calls both official endpoints and merges the payloads before envelope parsing.
 
 ### Request fields (high-confidence)
 
@@ -68,6 +72,17 @@ Relevant-individual and persona signals:
 
 - `company.job_postings.active_count`
 - `company.job_postings.active_titles[]`
+- `data.results[].person.first_name` / `last_name` / `full_name`
+- `data.results[].person.job_title`
+- `data.results[].person.linkedin_url`
+- `data.results[].person.email.email`
+- `data.results[].person.email.status` / `revealed`
+- current-role/job-change dates such as `data.results[].person.current_position.start_date`, `job_start_date`, or `job_change.date`
+- new-hire flags such as `recent_hire`, `new_hire`, or `job_change`
+
+Scoring note:
+
+- Recent desired-role hires, including Head/Director of Ecommerce, are normalized into `hiring_signals_<company>.new_senior_hires[]` and used as a bounded timing/motion boost. This reorders otherwise qualified accounts; it does not override the product-fit gate.
 
 Tech and stack context:
 

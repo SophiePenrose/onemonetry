@@ -2137,28 +2137,58 @@ function extractStakeholderFirstName(value) {
   return firstToken || "there";
 }
 
+function normalizeGeminiStakeholderConfidence(value, fallback = "medium") {
+  const token = String(value || "").trim().toLowerCase();
+  if (["high", "medium", "low"].includes(token)) return token;
+  return fallback;
+}
+
+function extractGeminiStakeholderEmail(scoredStakeholder = {}) {
+  return String(
+    scoredStakeholder?.email
+      || scoredStakeholder?.email_address
+      || scoredStakeholder?.work_email
+      || scoredStakeholder?.professional_email
+      || scoredStakeholder?.email_guess?.patterns?.[0]
+      || ""
+  ).trim();
+}
+
 function buildGeminiStakeholderFromScored(entry, scoredStakeholder, rank) {
   const fallbackCompanyNumber = normalizeCompanyNumber(entry?.company_number);
-  const personName = String(scoredStakeholder?.name || "").trim();
+  const personName = String(scoredStakeholder?.name || scoredStakeholder?.full_name || "").trim();
   const normalizedName = normalizeGeminiStakeholderName(personName);
-  const role = String(scoredStakeholder?.role || "").trim();
+  const role = String(scoredStakeholder?.role || scoredStakeholder?.title || "").trim();
+  const explicitPersonId = String(scoredStakeholder?.person_id || "").trim();
   const personSeed = normalizedName !== "there" ? normalizedName : (role || `stakeholder_${rank}`);
   const companySeed = fallbackCompanyNumber || "company";
-  const personId = `st_${companySeed}_${personSeed}`
+  const generatedPersonId = `st_${companySeed}_${personSeed}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 64) || `st_${companySeed}_${rank}`;
-  const emailGuess = String(scoredStakeholder?.email_guess?.patterns?.[0] || "").trim();
-  const confidence = String(scoredStakeholder?.confidence_level || "medium").trim().toLowerCase() || "medium";
+  const personId = explicitPersonId || generatedPersonId;
+  const stakeholderEmail = extractGeminiStakeholderEmail(scoredStakeholder);
+  const emailStatus = String(
+    scoredStakeholder?.email_status
+      || (stakeholderEmail ? (scoredStakeholder?.email ? "provided" : "guessed") : "missing")
+  ).trim().toLowerCase() || (stakeholderEmail ? "provided" : "missing");
+  const confidence = normalizeGeminiStakeholderConfidence(
+    scoredStakeholder?.confidence_level || scoredStakeholder?.confidence,
+    stakeholderEmail ? "high" : "medium"
+  );
 
   return {
     person_id: personId,
     full_name: normalizedName,
     role: role || "Finance stakeholder",
-    email: emailGuess,
-    email_status: emailGuess ? "guessed" : "missing",
-    persona_bucket: normalizeGeminiPersonaBucket(role || scoredStakeholder?.buying_role),
+    email: stakeholderEmail,
+    email_status: emailStatus,
+    persona_bucket: normalizeGeminiPersonaBucket(
+      scoredStakeholder?.persona_bucket
+        || scoredStakeholder?.buying_role
+        || role
+    ),
     confidence,
   };
 }
@@ -2179,6 +2209,58 @@ function dedupeGeminiStakeholders(stakeholders = []) {
   }
 
   return deduped;
+}
+
+function buildGeminiStakeholderIdentityKey(stakeholder = {}) {
+  const personId = String(stakeholder?.person_id || "").trim().toLowerCase();
+  if (personId) return `id:${personId}`;
+
+  const rawName = String(stakeholder?.name || stakeholder?.full_name || "").trim();
+  const normalizedName = rawName ? normalizeGeminiStakeholderName(rawName).toLowerCase() : "";
+  const role = String(stakeholder?.role || stakeholder?.title || "").trim().toLowerCase();
+  const email = String(stakeholder?.email || stakeholder?.email_guess?.patterns?.[0] || "").trim().toLowerCase();
+
+  if (!normalizedName && !role && !email) return "";
+  return `${normalizedName}::${role}::${email}`;
+}
+
+function buildGeminiConnectorStakeholders(companyNumber = "") {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  if (!normalizedCompanyNumber) return [];
+
+  const hiringSignals = getSetting(`hiring_signals_${normalizedCompanyNumber}`, null);
+  const candidates = Array.isArray(hiringSignals?.person_candidates) ? hiringSignals.person_candidates : [];
+  const mapped = [];
+  const seen = new Set();
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+
+    const name = String(candidate?.full_name || candidate?.name || "").trim();
+    const role = String(candidate?.role || candidate?.title || "").trim() || "Finance stakeholder";
+    const email = String(candidate?.email || "").trim();
+    if (!name && !email && !role) continue;
+
+    const connectorStakeholder = {
+      name: name || "there",
+      role,
+      confidence_level: normalizeGeminiStakeholderConfidence(candidate?.confidence, email ? "high" : "medium"),
+      buying_role: String(candidate?.persona_bucket || "").trim() || null,
+      email_status: String(candidate?.email_status || (email ? "provided" : "missing")).trim().toLowerCase() || (email ? "provided" : "missing"),
+      email,
+      email_guess: email ? { patterns: [email] } : { patterns: [] },
+      source: String(candidate?.source || "connector_people").trim() || "connector_people",
+    };
+
+    const identity = buildGeminiStakeholderIdentityKey(connectorStakeholder);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    mapped.push(connectorStakeholder);
+
+    if (mapped.length >= GEMINI_HANDOFF_MAX_STAKEHOLDERS) break;
+  }
+
+  return mapped;
 }
 
 function normalizeGeminiRequestStakeholders(stakeholders = [], fallbackCompanyNumber = "") {
@@ -2841,7 +2923,10 @@ function getGeminiWeeklySelectionCandidates({
   const enriched = [];
   for (const entry of readyOnly.slice(0, safeLimit)) {
     const analysis = getSetting(`analysis_${entry.company_number}`, null);
-    if (!analysis?.key_people || !Array.isArray(analysis.key_people) || analysis.key_people.length < 1) {
+    const connectorStakeholders = buildGeminiConnectorStakeholders(entry.company_number);
+    const analysisKeyPeople = Array.isArray(analysis?.key_people) ? analysis.key_people : [];
+
+    if (analysisKeyPeople.length < 1 && connectorStakeholders.length < 1) {
       continue;
     }
     const companyContext = {
@@ -2851,21 +2936,38 @@ function getGeminiWeeklySelectionCandidates({
       turnover: entry.turnover,
       segment: entry.segment,
     };
-    const scoredStakeholders = scoreAllStakeholders(analysis.key_people, {
-      company: companyContext,
-      analysis,
-      motion: entry.score?.layers?.product_fit?.best_motion || "FX",
-      filingDate: analysis.analysed_at || analysis.scored_at || null,
-    });
+    const scoredStakeholders = analysisKeyPeople.length > 0
+      ? scoreAllStakeholders(analysisKeyPeople, {
+        company: companyContext,
+        analysis,
+        motion: entry.score?.layers?.product_fit?.best_motion || "FX",
+        filingDate: analysis?.analysed_at || analysis?.scored_at || null,
+      })
+      : [];
 
-    if (!Array.isArray(scoredStakeholders) || scoredStakeholders.length < 1) {
+    const baseStakeholders = Array.isArray(scoredStakeholders) ? scoredStakeholders : [];
+    if (baseStakeholders.length < 1 && connectorStakeholders.length < 1) {
       continue;
+    }
+
+    const mergedStakeholders = [...baseStakeholders];
+    const seenStakeholders = new Set(
+      baseStakeholders
+        .map((stakeholder) => buildGeminiStakeholderIdentityKey(stakeholder))
+        .filter(Boolean)
+    );
+
+    for (const connectorStakeholder of connectorStakeholders) {
+      const identity = buildGeminiStakeholderIdentityKey(connectorStakeholder);
+      if (!identity || seenStakeholders.has(identity)) continue;
+      seenStakeholders.add(identity);
+      mergedStakeholders.push(connectorStakeholder);
     }
 
     enriched.push({
       ...entry,
       analysis,
-      stakeholders: scoredStakeholders,
+      stakeholders: mergedStakeholders,
     });
   }
 
@@ -10823,6 +10925,7 @@ app.get("/api/integrations/status", (_req, res) => {
     return !looksPlaceholder;
   };
   const hasTemplate = (value) => String(value || "").trim().length > 0;
+  const isOfficialProspeoTemplate = (value) => /https?:\/\/api\.prospeo\.io\//i.test(String(value || ""));
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
@@ -10936,10 +11039,15 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Cross-jurisdiction corporate registry enrichment",
     },
     prospeo: {
-      configured: hasTemplate(process.env.PROSPEO_URL_TEMPLATE),
+      configured: hasTemplate(process.env.PROSPEO_URL_TEMPLATE)
+        && (!isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE) || hasConfiguredSecret(process.env.PROSPEO_API_KEY)),
       required: false,
-      env_var: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
+      env_var: "PROSPEO_URL_TEMPLATE, PROSPEO_API_KEY, PROSPEO_AUTH_HEADER, PROSPEO_AUTH_SCHEME",
       purpose: "Contact and company intelligence enrichment",
+      runtime: {
+        official_api_template: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+        search_person_auto_fanout: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+      },
     },
     phantombuster: {
       configured: hasTemplate(process.env.PHANTOMBUSTER_URL_TEMPLATE),
@@ -11084,8 +11192,16 @@ app.get("/api/integrations/status", (_req, res) => {
       "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
       "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
       "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
-      "PROSPEO_API_KEY=optional_prospeo_key",
-      "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
+      "PROSPEO_API_KEY=replace_with_prospeo_api_key",
+      "PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company",
+      "PROSPEO_AUTH_HEADER=X-KEY",
+      "PROSPEO_AUTH_SCHEME=none",
+      "PROSPEO_SEARCH_PERSON_JOB_TITLES=Chief Financial Officer,Finance Director,Head of Finance,Head of Treasury,Treasury Manager,VP Finance,Controller,Head of Payments,Payments Manager,Procurement Manager,Head of Ecommerce,Director of Ecommerce,Head of E-commerce,Director of E-commerce",
+      "PROSPEO_SEARCH_PERSON_SENIORITIES=C-Suite,Vice President,Head,Director,Manager",
+      "PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY=8",
+      "PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL=false",
+      "PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS=6",
+      "PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS=180",
       "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
       "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",
