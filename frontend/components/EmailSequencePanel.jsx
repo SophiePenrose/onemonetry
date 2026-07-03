@@ -102,7 +102,7 @@ CopyButton.propTypes = {
   footer: PropTypes.string,
 };
 
-export default function EmailSequencePanel({ companyId, companyName: _companyName, stakeholders, keyPeople, motions: _motions }) {
+export default function EmailSequencePanel({ companyId, companyName: _companyName, stakeholders, keyPeople, prospectPeople, motions: _motions }) {
   const [sequences, setSequences] = useState([]);
   const [templates, setTemplates] = useState({});
   const [guidance, setGuidance] = useState(null);
@@ -258,9 +258,15 @@ export default function EmailSequencePanel({ companyId, companyName: _companyNam
   }
 
   const allPeople = [
+    ...(prospectPeople || []).map((p) => ({
+      name: p.full_name || p.name,
+      role: p.role || p.title,
+      email: p.email || "",
+      source: "Workspace",
+    })),
     ...(keyPeople || []).map((p) => ({ ...p, source: "LLM" })),
     ...(stakeholders || []).map((s) => ({ name: s.name, role: s.role || s.title, source: "Manual" })),
-  ];
+  ].filter((person) => person.name || person.role || person.email);
 
   const staleSequenceCount = sequences.filter((seq) => {
     const ageDays = sequenceAgeDays(seq);
@@ -329,7 +335,7 @@ export default function EmailSequencePanel({ companyId, companyName: _companyNam
                   <button
                     key={idx}
                     type="button"
-                    onClick={() => setForm({ ...form, name: p.name, role: p.role || "" })}
+                    onClick={() => setForm({ ...form, name: p.name || "", role: p.role || "", email: p.email || "" })}
                     style={{
                       padding: "3px 10px", borderRadius: 12, border: "1px solid #ddd",
                       background: form.name === p.name ? "#0075EB" : "#fff",
@@ -608,5 +614,6 @@ EmailSequencePanel.propTypes = {
   companyName: PropTypes.string,
   stakeholders: PropTypes.array,
   keyPeople: PropTypes.array,
+  prospectPeople: PropTypes.array,
   motions: PropTypes.array,
 };

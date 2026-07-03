@@ -11,6 +11,7 @@ import EvidencePanel from "../components/EvidencePanel";
 import EmailSequencePanel from "../components/EmailSequencePanel";
 import MerchantSpendPanel from "../components/MerchantSpendPanel";
 import EnrichmentSignalsPanel from "../components/EnrichmentSignalsPanel";
+import ProspectWorkspacePanel from "../components/ProspectWorkspacePanel";
 import GeminiYammPanel from "../components/GeminiYammPanel";
 import StakeholderAlertsPanel from "../components/StakeholderAlertsPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
@@ -136,6 +137,7 @@ export default function CompanyDetail({ companyId }) {
   const [ownershipRefreshing, setOwnershipRefreshing] = useState(false);
   const [ownershipRefreshError, setOwnershipRefreshError] = useState(null);
   const [transitions, setTransitions] = useState({});
+  const [selectedProspects, setSelectedProspects] = useState([]);
   const companyRequestRef = useRef(0);
   const companyPendingRequestsRef = useRef(0);
 
@@ -546,6 +548,12 @@ export default function CompanyDetail({ companyId }) {
         companyNumber={company.company_number}
       />
 
+      <ProspectWorkspacePanel
+        companyId={companyId}
+        companyNumber={company.company_number}
+        onSelectedProspectsChange={setSelectedProspects}
+      />
+
       <GeminiYammPanel
         companyId={companyId}
         companyNumber={company.company_number}
@@ -556,6 +564,7 @@ export default function CompanyDetail({ companyId }) {
         companyName={company.name}
         stakeholders={stakeholders}
         keyPeople={keyPeople}
+        prospectPeople={selectedProspects}
         motions={allMotionScores}
       />
 

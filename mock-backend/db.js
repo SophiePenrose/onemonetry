@@ -246,6 +246,39 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_type_value ON suppression_list(type, value_normalized);
   CREATE INDEX IF NOT EXISTS idx_suppression_type ON suppression_list(type);
 
+  CREATE TABLE IF NOT EXISTS prospect_workspace (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id TEXT NOT NULL,
+    company_number TEXT,
+    identity_key TEXT NOT NULL,
+    person_id TEXT,
+    full_name TEXT,
+    role TEXT,
+    email TEXT,
+    email_status TEXT,
+    linkedin_url TEXT,
+    persona_bucket TEXT,
+    confidence TEXT,
+    source TEXT,
+    availability_status TEXT NOT NULL DEFAULT 'unknown',
+    crm_checked INTEGER NOT NULL DEFAULT 0,
+    selected_for_sequence INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    role_change_type TEXT,
+    role_change_at TEXT,
+    previous_company_name TEXT,
+    current_company_name TEXT,
+    last_job_change_detected_at TEXT,
+    raw_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(company_id, identity_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_prospect_workspace_company ON prospect_workspace(company_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_prospect_workspace_number ON prospect_workspace(company_number, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_prospect_workspace_selected ON prospect_workspace(company_id, selected_for_sequence, availability_status);
+
   CREATE TABLE IF NOT EXISTS gemini_handoff_requests (
     request_id TEXT PRIMARY KEY,
     contract_version TEXT NOT NULL,
@@ -860,6 +893,355 @@ export function isContactSuppressed({ company_number, email, domain } = {}) {
   }
 
   return null;
+}
+
+// --- Prospect Workspace ---
+
+const PROSPECT_WORKSPACE_STATUSES = new Set([
+  "unknown",
+  "available",
+  "owned_in_crm",
+  "unavailable",
+  "needs_email",
+  "do_not_contact",
+]);
+
+function normalizeProspectBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (value === undefined || value === null || value === "") return fallback;
+  const token = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(token)) return true;
+  if (["0", "false", "no", "n", "off"].includes(token)) return false;
+  return fallback;
+}
+
+function normalizeProspectNullableText(value, maxLength = 500) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return text.slice(0, maxLength);
+}
+
+function normalizeProspectEmail(value) {
+  const text = normalizeProspectNullableText(value, 254);
+  if (!text) return null;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(text) ? text.toLowerCase() : text;
+}
+
+function normalizeProspectStatus(value, fallback = "unknown") {
+  const token = String(value || "").trim().toLowerCase();
+  if (PROSPECT_WORKSPACE_STATUSES.has(token)) return token;
+  return fallback;
+}
+
+function normalizeProspectCompanyId(value, fallbackNumber = null) {
+  const text = normalizeProspectNullableText(value, 80);
+  if (text) return text;
+  const normalizedNumber = normalizeCompanyNumber(fallbackNumber);
+  return normalizedNumber ? `ch-${normalizedNumber}` : null;
+}
+
+export function buildProspectWorkspaceIdentityKey(candidate = {}) {
+  const personId = normalizeProspectNullableText(candidate?.person_id || candidate?.id || candidate?.oid, 160);
+  if (personId) return `person:${personId.toLowerCase()}`;
+
+  const email = normalizeProspectEmail(candidate?.email || candidate?.work_email || candidate?.professional_email);
+  if (email) return `email:${email.toLowerCase()}`;
+
+  const linkedinUrl = normalizeProspectNullableText(candidate?.linkedin_url || candidate?.linkedin || candidate?.profile_url, 300);
+  if (linkedinUrl) return `linkedin:${linkedinUrl.toLowerCase()}`;
+
+  const fullName = normalizeProspectNullableText(candidate?.full_name || candidate?.name, 180);
+  const role = normalizeProspectNullableText(candidate?.role || candidate?.title || candidate?.job_title, 180);
+  if (fullName || role) return `name:${String(fullName || "").toLowerCase()}::role:${String(role || "").toLowerCase()}`;
+
+  return null;
+}
+
+function parseProspectWorkspaceRow(row) {
+  if (!row) return null;
+  let raw = null;
+  if (row.raw_json) {
+    try {
+      raw = JSON.parse(row.raw_json);
+    } catch {
+      raw = null;
+    }
+  }
+
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    company_number: row.company_number || null,
+    identity_key: row.identity_key,
+    person_id: row.person_id || null,
+    full_name: row.full_name || null,
+    role: row.role || null,
+    email: row.email || null,
+    email_status: row.email_status || null,
+    linkedin_url: row.linkedin_url || null,
+    persona_bucket: row.persona_bucket || null,
+    confidence: row.confidence || null,
+    source: row.source || null,
+    availability_status: row.availability_status || "unknown",
+    crm_checked: row.crm_checked === 1,
+    selected_for_sequence: row.selected_for_sequence === 1,
+    notes: row.notes || null,
+    role_change_type: row.role_change_type || null,
+    role_change_at: row.role_change_at || null,
+    previous_company_name: row.previous_company_name || null,
+    current_company_name: row.current_company_name || null,
+    last_job_change_detected_at: row.last_job_change_detected_at || null,
+    raw,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+function normalizeProspectWorkspacePayload(payload = {}, existing = null) {
+  const companyNumber = normalizeCompanyNumber(payload.company_number || payload.companyNumber || existing?.company_number);
+  const companyId = normalizeProspectCompanyId(payload.company_id || payload.companyId || existing?.company_id, companyNumber);
+  if (!companyId) return null;
+
+  const personId = normalizeProspectNullableText(payload.person_id || payload.personId || payload.id || existing?.person_id, 160);
+  const fullName = normalizeProspectNullableText(payload.full_name || payload.fullName || payload.name || existing?.full_name, 180);
+  const role = normalizeProspectNullableText(payload.role || payload.title || payload.job_title || payload.jobTitle || existing?.role, 180);
+  const email = normalizeProspectEmail(payload.email ?? payload.work_email ?? existing?.email);
+  const emailStatus = normalizeProspectNullableText(
+    payload.email_status || payload.emailStatus || payload.email_validation_status || existing?.email_status || (email ? "provided" : null),
+    80
+  );
+  const linkedinUrl = normalizeProspectNullableText(payload.linkedin_url || payload.linkedin || payload.linkedin_profile || existing?.linkedin_url, 300);
+  const identityKey = buildProspectWorkspaceIdentityKey({
+    person_id: personId,
+    email,
+    linkedin_url: linkedinUrl,
+    full_name: fullName,
+    role,
+  });
+  if (!identityKey) return null;
+
+  const rawCandidate = payload.raw && typeof payload.raw === "object"
+    ? payload.raw
+    : (payload.raw_json && typeof payload.raw_json === "object" ? payload.raw_json : null);
+  const rawJson = rawCandidate ? JSON.stringify(rawCandidate) : existing?.raw_json || null;
+
+  return {
+    company_id: companyId,
+    company_number: companyNumber,
+    identity_key: identityKey,
+    person_id: personId,
+    full_name: fullName,
+    role,
+    email,
+    email_status: emailStatus ? emailStatus.toLowerCase() : (email ? "provided" : null),
+    linkedin_url: linkedinUrl,
+    persona_bucket: normalizeProspectNullableText(payload.persona_bucket || payload.personaBucket || existing?.persona_bucket, 120),
+    confidence: normalizeProspectNullableText(payload.confidence || payload.confidence_level || existing?.confidence, 80),
+    source: normalizeProspectNullableText(payload.source || existing?.source, 120),
+    availability_status: normalizeProspectStatus(payload.availability_status || payload.availabilityStatus || existing?.availability_status, "unknown"),
+    crm_checked: normalizeProspectBoolean(payload.crm_checked ?? payload.crmChecked, existing?.crm_checked === 1),
+    selected_for_sequence: normalizeProspectBoolean(
+      payload.selected_for_sequence ?? payload.selectedForSequence ?? payload.selected,
+      existing?.selected_for_sequence === 1
+    ),
+    notes: normalizeProspectNullableText(payload.notes ?? existing?.notes, 1000),
+    role_change_type: normalizeProspectNullableText(payload.role_change_type || payload.roleChangeType || existing?.role_change_type, 80),
+    role_change_at: normalizeProspectNullableText(payload.role_change_at || payload.roleChangeAt || existing?.role_change_at, 80),
+    previous_company_name: normalizeProspectNullableText(payload.previous_company_name || payload.previousCompanyName || existing?.previous_company_name, 180),
+    current_company_name: normalizeProspectNullableText(payload.current_company_name || payload.currentCompanyName || existing?.current_company_name, 180),
+    last_job_change_detected_at: normalizeProspectNullableText(
+      payload.last_job_change_detected_at || payload.lastJobChangeDetectedAt || existing?.last_job_change_detected_at,
+      80
+    ),
+    raw_json: rawJson,
+  };
+}
+
+const stmtGetProspectWorkspaceById = db.prepare("SELECT * FROM prospect_workspace WHERE id = ?");
+const stmtGetProspectWorkspaceByCompanyIdentity = db.prepare(`
+  SELECT *
+  FROM prospect_workspace
+  WHERE company_id = ? AND identity_key = ?
+  LIMIT 1
+`);
+const stmtInsertProspectWorkspace = db.prepare(`
+  INSERT INTO prospect_workspace (
+    company_id,
+    company_number,
+    identity_key,
+    person_id,
+    full_name,
+    role,
+    email,
+    email_status,
+    linkedin_url,
+    persona_bucket,
+    confidence,
+    source,
+    availability_status,
+    crm_checked,
+    selected_for_sequence,
+    notes,
+    role_change_type,
+    role_change_at,
+    previous_company_name,
+    current_company_name,
+    last_job_change_detected_at,
+    raw_json
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const stmtUpdateProspectWorkspace = db.prepare(`
+  UPDATE prospect_workspace
+  SET
+    company_number = ?,
+    person_id = ?,
+    full_name = ?,
+    role = ?,
+    email = ?,
+    email_status = ?,
+    linkedin_url = ?,
+    persona_bucket = ?,
+    confidence = ?,
+    source = ?,
+    availability_status = ?,
+    crm_checked = ?,
+    selected_for_sequence = ?,
+    notes = ?,
+    role_change_type = ?,
+    role_change_at = ?,
+    previous_company_name = ?,
+    current_company_name = ?,
+    last_job_change_detected_at = ?,
+    raw_json = ?,
+    updated_at = datetime('now')
+  WHERE id = ?
+`);
+
+function runProspectWorkspaceUpdate(id, payload) {
+  stmtUpdateProspectWorkspace.run(
+    payload.company_number,
+    payload.person_id,
+    payload.full_name,
+    payload.role,
+    payload.email,
+    payload.email_status,
+    payload.linkedin_url,
+    payload.persona_bucket,
+    payload.confidence,
+    payload.source,
+    payload.availability_status,
+    payload.crm_checked ? 1 : 0,
+    payload.selected_for_sequence ? 1 : 0,
+    payload.notes,
+    payload.role_change_type,
+    payload.role_change_at,
+    payload.previous_company_name,
+    payload.current_company_name,
+    payload.last_job_change_detected_at,
+    payload.raw_json,
+    id
+  );
+}
+
+export function listProspectWorkspace({ companyId, companyNumber, selectedOnly = false } = {}) {
+  const normalizedNumber = normalizeCompanyNumber(companyNumber);
+  const normalizedCompanyId = normalizeProspectCompanyId(companyId, normalizedNumber);
+  if (!normalizedCompanyId && !normalizedNumber) return [];
+
+  const clauses = [];
+  const params = [];
+  if (normalizedCompanyId) {
+    clauses.push("company_id = ?");
+    params.push(normalizedCompanyId);
+  }
+  if (normalizedNumber) {
+    clauses.push("company_number = ?");
+    params.push(normalizedNumber);
+  }
+  const selectedSql = selectedOnly ? "AND selected_for_sequence = 1" : "";
+
+  return db.prepare(`
+    SELECT *
+    FROM prospect_workspace
+    WHERE (${clauses.join(" OR ")})
+      ${selectedSql}
+    ORDER BY
+      selected_for_sequence DESC,
+      crm_checked DESC,
+      datetime(COALESCE(role_change_at, last_job_change_detected_at, '1970-01-01')) DESC,
+      datetime(updated_at) DESC,
+      id DESC
+  `).all(...params).map(parseProspectWorkspaceRow);
+}
+
+export function getProspectWorkspacePerson(id) {
+  const parsedId = Number.parseInt(String(id), 10);
+  if (!Number.isFinite(parsedId)) return null;
+  return parseProspectWorkspaceRow(stmtGetProspectWorkspaceById.get(parsedId));
+}
+
+export function upsertProspectWorkspacePerson(payload = {}) {
+  const normalized = normalizeProspectWorkspacePayload(payload);
+  if (!normalized) return null;
+
+  const existing = stmtGetProspectWorkspaceByCompanyIdentity.get(normalized.company_id, normalized.identity_key);
+  if (existing) {
+    const merged = normalizeProspectWorkspacePayload({
+      ...existing,
+      ...payload,
+      company_id: existing.company_id,
+      company_number: payload.company_number ?? payload.companyNumber ?? existing.company_number,
+    }, existing);
+    if (!merged) return parseProspectWorkspaceRow(existing);
+    runProspectWorkspaceUpdate(existing.id, merged);
+    return getProspectWorkspacePerson(existing.id);
+  }
+
+  const result = stmtInsertProspectWorkspace.run(
+    normalized.company_id,
+    normalized.company_number,
+    normalized.identity_key,
+    normalized.person_id,
+    normalized.full_name,
+    normalized.role,
+    normalized.email,
+    normalized.email_status,
+    normalized.linkedin_url,
+    normalized.persona_bucket,
+    normalized.confidence,
+    normalized.source,
+    normalized.availability_status,
+    normalized.crm_checked ? 1 : 0,
+    normalized.selected_for_sequence ? 1 : 0,
+    normalized.notes,
+    normalized.role_change_type,
+    normalized.role_change_at,
+    normalized.previous_company_name,
+    normalized.current_company_name,
+    normalized.last_job_change_detected_at,
+    normalized.raw_json
+  );
+
+  return getProspectWorkspacePerson(result.lastInsertRowid);
+}
+
+export function updateProspectWorkspacePerson(id, patch = {}) {
+  const parsedId = Number.parseInt(String(id), 10);
+  if (!Number.isFinite(parsedId)) return null;
+  const existing = stmtGetProspectWorkspaceById.get(parsedId);
+  if (!existing) return null;
+
+  const normalized = normalizeProspectWorkspacePayload({
+    ...existing,
+    ...patch,
+    company_id: existing.company_id,
+  }, existing);
+  if (!normalized) return parseProspectWorkspaceRow(existing);
+
+  runProspectWorkspaceUpdate(parsedId, normalized);
+  return getProspectWorkspacePerson(parsedId);
 }
 
 // --- Settings ---

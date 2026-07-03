@@ -453,6 +453,14 @@ describe("external signal connectors", () => {
                       job_title: "Director of Ecommerce",
                       current_position: {
                         start_date: recentHireStartDate,
+                        company: { name: "Example Prospeo Bulk Co" },
+                      },
+                      previous_position: {
+                        company: { name: "Prior Retail Ltd" },
+                      },
+                      job_change: {
+                        type: "joined",
+                        detected_at: recentHireStartDate,
                       },
                       linkedin_url: "https://linkedin.com/in/mia-taylor",
                       email: {
@@ -509,12 +517,20 @@ describe("external signal connectors", () => {
     assert.equal(person.email_status, "verified");
     assert.equal(person.start_date, recentHireStartDate);
     assert.equal(person.is_new_hire, true);
+    assert.equal(person.role_change_type, "joined_relevant_company");
+    assert.equal(person.current_company_name, "Example Prospeo Bulk Co");
+    assert.equal(person.previous_company_name, "Prior Retail Ltd");
     assert.equal(person.source, "prospeo_search_person_api");
     const newHire = (hiring.new_senior_hires || []).find((entry) => entry.full_name === "Mia Taylor");
     assert.ok(newHire);
     assert.equal(newHire.role, "Director of Ecommerce");
     assert.equal(newHire.start_date, recentHireStartDate);
     assert.equal(newHire.is_new_hire, true);
+    const roleChange = (hiring.role_change_events || []).find((entry) => entry.full_name === "Mia Taylor");
+    assert.ok(roleChange);
+    assert.equal(roleChange.role_change_type, "joined_relevant_company");
+    assert.equal(roleChange.current_company_name, "Example Prospeo Bulk Co");
+    assert.equal(roleChange.previous_company_name, "Prior Retail Ltd");
   });
 
   it("fans out Prospeo configured intent topic names as IDs without suppressing people discovery", async () => {

@@ -136,6 +136,11 @@ import {
   listStakeholderAlertEvents,
   countStakeholderAlertEvents,
   getStakeholderAlertTypeCounts,
+  listProspectWorkspace,
+  getProspectWorkspacePerson,
+  upsertProspectWorkspacePerson,
+  updateProspectWorkspacePerson,
+  buildProspectWorkspaceIdentityKey,
 } from "./db.js";
 import { getSupplementaryContext } from "./supplementary-context.js";
 import {
@@ -2475,12 +2480,17 @@ function buildGeminiConnectorStakeholders(companyNumber = "") {
   const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
   if (!normalizedCompanyNumber) return [];
 
+  const workspaceProspects = listProspectWorkspace({
+    companyId: canonicalCompanyId(normalizedCompanyNumber),
+    companyNumber: normalizedCompanyNumber,
+    selectedOnly: true,
+  });
   const hiringSignals = getSetting(`hiring_signals_${normalizedCompanyNumber}`, null);
   const candidates = Array.isArray(hiringSignals?.person_candidates) ? hiringSignals.person_candidates : [];
   const mapped = [];
   const seen = new Set();
 
-  for (const candidate of candidates) {
+  for (const candidate of [...workspaceProspects, ...candidates]) {
     if (!candidate || typeof candidate !== "object") continue;
 
     const name = String(candidate?.full_name || candidate?.name || "").trim();
@@ -2489,10 +2499,14 @@ function buildGeminiConnectorStakeholders(companyNumber = "") {
     if (!name && !email && !role) continue;
 
     const connectorStakeholder = {
+      person_id: String(candidate?.person_id || "").trim() || null,
+      full_name: name || "there",
       name: name || "there",
       role,
       confidence_level: normalizeGeminiStakeholderConfidence(candidate?.confidence, email ? "high" : "medium"),
+      confidence: normalizeGeminiStakeholderConfidence(candidate?.confidence, email ? "high" : "medium"),
       buying_role: String(candidate?.persona_bucket || "").trim() || null,
+      persona_bucket: String(candidate?.persona_bucket || "").trim() || null,
       email_status: String(candidate?.email_status || (email ? "provided" : "missing")).trim().toLowerCase() || (email ? "provided" : "missing"),
       email,
       email_guess: email ? { patterns: [email] } : { patterns: [] },
@@ -4789,6 +4803,7 @@ function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
     || toOptionalString(overrides.website_url)
     || toOptionalString(company?.website)
     || toOptionalString(company?.website_url)
+    || toOptionalString(monitored?.company_website)
     || null;
 
   const companyDomain =
@@ -4797,6 +4812,7 @@ function resolveCompanyContextForEnrichment(companyId, overrides = {}) {
     || toOptionalString(overrides.domain_hint)
     || toOptionalString(company?.domain)
     || toOptionalString(company?.company_domain)
+    || toOptionalString(monitored?.company_domain)
     || null;
 
   const turnover =
@@ -6319,6 +6335,293 @@ function getProfileCompetitors(companyId, analysis, score) {
   }
 
   return merged;
+}
+
+function normalizeProspectCandidateForWorkspace(candidate = {}, context = {}, patch = {}) {
+  const source = candidate && typeof candidate === "object" ? candidate : {};
+  return {
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    person_id: source.person_id || source.personId || source.id || patch.person_id || patch.personId || null,
+    full_name: source.full_name || source.fullName || source.name || patch.full_name || patch.fullName || patch.name || null,
+    role: source.role || source.title || source.job_title || patch.role || patch.title || patch.job_title || null,
+    email: patch.email ?? source.email ?? null,
+    email_status: patch.email_status || patch.emailStatus || source.email_status || source.emailStatus || null,
+    linkedin_url: source.linkedin_url || source.linkedin || source.linkedin_profile || patch.linkedin_url || patch.linkedin || null,
+    persona_bucket: source.persona_bucket || source.personaBucket || patch.persona_bucket || patch.personaBucket || null,
+    confidence: source.confidence || source.confidence_level || patch.confidence || patch.confidence_level || null,
+    source: source.source || patch.source || "prospect_workspace",
+    availability_status: patch.availability_status || patch.availabilityStatus || source.availability_status || "unknown",
+    crm_checked: patch.crm_checked ?? patch.crmChecked ?? source.crm_checked ?? false,
+    selected_for_sequence: patch.selected_for_sequence ?? patch.selectedForSequence ?? patch.selected ?? source.selected_for_sequence ?? false,
+    notes: patch.notes ?? source.notes ?? null,
+    role_change_type: source.role_change_type || source.roleChangeType || patch.role_change_type || patch.roleChangeType || null,
+    role_change_at: source.role_change_at || source.roleChangeAt || patch.role_change_at || patch.roleChangeAt || null,
+    previous_company_name: source.previous_company_name || source.previousCompanyName || patch.previous_company_name || patch.previousCompanyName || null,
+    current_company_name: source.current_company_name || source.currentCompanyName || patch.current_company_name || patch.currentCompanyName || null,
+    last_job_change_detected_at: source.last_job_change_detected_at || source.lastJobChangeDetectedAt || patch.last_job_change_detected_at || patch.lastJobChangeDetectedAt || null,
+    raw: source,
+  };
+}
+
+function prospectRoleChangeRank(prospect = {}) {
+  const type = String(prospect?.role_change_type || "").trim().toLowerCase();
+  const typeScore = type === "joined_relevant_company"
+    ? 3
+    : type === "changed_role_at_relevant_company"
+      ? 2
+      : type === "left_relevant_company"
+        ? 1
+        : 0;
+  const dateValue = prospect?.role_change_at || prospect?.last_job_change_detected_at || prospect?.start_date;
+  const millis = Date.parse(String(dateValue || ""));
+  const recencyScore = Number.isFinite(millis) ? Math.max(0, 365 - Math.floor((Date.now() - millis) / 86400000)) / 365 : 0;
+  return typeScore + recencyScore;
+}
+
+function prospectSortScore(prospect = {}) {
+  return Number(prospect.selected_for_sequence === true) * 100
+    + Number(prospect.availability_status === "available") * 45
+    + Number(prospect.crm_checked === true) * 20
+    + Math.min(prospectRoleChangeRank(prospect) * 8, 28)
+    + Number(prospect.is_new_hire === true) * 16
+    + Number(String(prospect.email || "").trim().length > 0) * 5;
+}
+
+function buildProspectWorkspacePayload(context) {
+  const hiringSignals = getSetting(`hiring_signals_${context.company_number}`, null);
+  const connectorCandidates = Array.isArray(hiringSignals?.person_candidates) ? hiringSignals.person_candidates : [];
+  const storedProspects = listProspectWorkspace({
+    companyId: context.canonical_id,
+    companyNumber: context.company_number,
+  });
+  const storedByIdentity = new Map(
+    storedProspects
+      .map((prospect) => [prospect.identity_key, prospect])
+      .filter(([identity]) => identity)
+  );
+  const rows = [];
+  const seen = new Set();
+
+  for (const candidate of connectorCandidates) {
+    const normalized = normalizeProspectCandidateForWorkspace(candidate, context);
+    const identityKey = buildProspectWorkspaceIdentityKey(normalized);
+    if (!identityKey || seen.has(identityKey)) continue;
+    seen.add(identityKey);
+
+    const stored = storedByIdentity.get(identityKey) || null;
+    rows.push({
+      ...(candidate || {}),
+      ...(stored || {}),
+      workspace_id: stored?.id || null,
+      identity_key: identityKey,
+      persisted: !!stored,
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      person_id: stored?.person_id || candidate?.person_id || null,
+      full_name: stored?.full_name || candidate?.full_name || candidate?.name || null,
+      role: stored?.role || candidate?.role || candidate?.title || null,
+      email: stored?.email || candidate?.email || null,
+      email_status: stored?.email_status || candidate?.email_status || (candidate?.email ? "provided" : "missing"),
+      linkedin_url: stored?.linkedin_url || candidate?.linkedin_url || null,
+      persona_bucket: stored?.persona_bucket || candidate?.persona_bucket || null,
+      confidence: stored?.confidence || candidate?.confidence || null,
+      source: stored?.source || candidate?.source || "connector_people",
+      availability_status: stored?.availability_status || "unknown",
+      crm_checked: stored?.crm_checked === true,
+      selected_for_sequence: stored?.selected_for_sequence === true,
+      notes: stored?.notes || null,
+      role_change_type: stored?.role_change_type || candidate?.role_change_type || null,
+      role_change_at: stored?.role_change_at || candidate?.role_change_at || candidate?.start_date || null,
+      previous_company_name: stored?.previous_company_name || candidate?.previous_company_name || null,
+      current_company_name: stored?.current_company_name || candidate?.current_company_name || null,
+      last_job_change_detected_at: stored?.last_job_change_detected_at || candidate?.last_job_change_detected_at || null,
+      is_new_hire: candidate?.is_new_hire === true,
+      start_date: candidate?.start_date || null,
+    });
+  }
+
+  for (const stored of storedProspects) {
+    if (!stored?.identity_key || seen.has(stored.identity_key)) continue;
+    seen.add(stored.identity_key);
+    rows.push({
+      ...stored,
+      workspace_id: stored.id,
+      persisted: true,
+      is_new_hire: false,
+    });
+  }
+
+  const sorted = rows
+    .sort((a, b) => {
+      const scoreDelta = prospectSortScore(b) - prospectSortScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      return String(a.full_name || "").localeCompare(String(b.full_name || ""));
+    })
+    .slice(0, 100);
+
+  const counts = {
+    total: sorted.length,
+    connector_candidates: connectorCandidates.length,
+    persisted: sorted.filter((row) => row.persisted).length,
+    crm_checked: sorted.filter((row) => row.crm_checked).length,
+    selected_for_sequence: sorted.filter((row) => row.selected_for_sequence).length,
+    available: sorted.filter((row) => row.availability_status === "available").length,
+    missing_email: sorted.filter((row) => !String(row.email || "").trim()).length,
+    role_change: sorted.filter((row) => row.role_change_type || row.role_change_at || row.last_job_change_detected_at).length,
+  };
+
+  return {
+    prospects: sorted,
+    counts,
+    hiring_updated_at: hiringSignals?.updated_at || hiringSignals?.fetched_at || null,
+  };
+}
+
+function buildProspeoAuthHeaders() {
+  const apiKey = resolveConfiguredSecret(process.env.PROSPEO_API_KEY);
+  if (!apiKey) return null;
+
+  const headerName = String(process.env.PROSPEO_AUTH_HEADER || "X-KEY").trim() || "X-KEY";
+  const authScheme = String(process.env.PROSPEO_AUTH_SCHEME || "none").trim();
+  const authValue = authScheme.toLowerCase() === "none" ? apiKey : `${authScheme} ${apiKey}`;
+  return {
+    "Content-Type": "application/json",
+    [headerName]: authValue,
+  };
+}
+
+function findEmailInProspeoPayload(node, depth = 0) {
+  if (!node || depth > 6) return null;
+  if (typeof node === "string") {
+    const token = node.trim();
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(token) ? { email: token, status: null } : null;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findEmailInProspeoPayload(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof node !== "object") return null;
+
+  const status = String(
+    node.status
+      || node.email_status
+      || node.verification_status
+      || node.validation_status
+      || node.deliverability
+      || ""
+  ).trim().toLowerCase() || null;
+  const directEmail = node.email || node.value || node.address || node.email_address || node.work_email || node.professional_email;
+  if (typeof directEmail === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(directEmail.trim())) {
+    return { email: directEmail.trim(), status };
+  }
+
+  for (const value of Object.values(node)) {
+    const found = findEmailInProspeoPayload(value, depth + 1);
+    if (found) {
+      return {
+        email: found.email,
+        status: found.status || status,
+      };
+    }
+  }
+  return null;
+}
+
+function isAcceptedProspeoEmailStatus(status) {
+  const token = String(status || "").trim().toLowerCase();
+  if (!token) return true;
+  return ["verified", "valid", "deliverable", "provided"].includes(token);
+}
+
+async function requestProspeoEmailForProspect(prospect, context) {
+  const headers = buildProspeoAuthHeaders();
+  if (!headers) {
+    return {
+      ok: false,
+      statusCode: 503,
+      body: {
+        error: "prospeo_not_configured",
+        message: "PROSPEO_API_KEY is not configured for per-person email requests.",
+      },
+    };
+  }
+
+  const personId = String(prospect?.person_id || "").trim();
+  const linkedinUrl = String(prospect?.linkedin_url || "").trim();
+  const fullName = String(prospect?.full_name || "").trim();
+  if (!personId && !linkedinUrl && !fullName) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: {
+        error: "missing_person_identifier",
+        message: "A person_id, LinkedIn URL, or full name is required before requesting an email.",
+      },
+    };
+  }
+
+  const url = String(process.env.PROSPEO_ENRICH_PERSON_URL || "https://api.prospeo.io/enrich-person").trim();
+  const body = {
+    ...(personId ? { person_id: personId } : {}),
+    ...(linkedinUrl ? { linkedin_url: linkedinUrl } : {}),
+    ...(fullName ? { full_name: fullName } : {}),
+    ...(context.company_name ? { company_name: context.company_name } : {}),
+    ...(context.company_domain ? { company_domain: context.company_domain } : {}),
+    ...(context.company_website ? { company_website: context.company_website } : {}),
+    only_verified_email: true,
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text };
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      statusCode: response.status,
+      body: {
+        error: "prospeo_email_request_failed",
+        status: response.status,
+        detail: payload?.error || payload?.message || text || "Prospeo email request failed",
+      },
+    };
+  }
+
+  const found = findEmailInProspeoPayload(payload);
+  if (!found?.email || !isAcceptedProspeoEmailStatus(found.status)) {
+    return {
+      ok: false,
+      statusCode: 422,
+      body: {
+        error: "verified_email_not_found",
+        email_status: found?.status || null,
+        detail: "Prospeo did not return an accepted verified email for this person.",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    statusCode: 200,
+    body: {
+      email: found.email,
+      email_status: found.status || "verified",
+      provider: "prospeo",
+    },
+  };
 }
 
 // --- Routes ---
@@ -12665,6 +12968,106 @@ app.get("/api/company/:id/enrichment", (req, res) => {
     company_name: context.company_name,
     enrichment: snapshot,
   });
+});
+
+app.get("/api/company/:id/prospects", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.query || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const payload = buildProspectWorkspacePayload(context);
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    company_name: context.company_name,
+    ...payload,
+  });
+});
+
+app.post("/api/company/:id/prospects", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const candidate = req.body?.candidate && typeof req.body.candidate === "object"
+    ? req.body.candidate
+    : req.body;
+  const prospect = upsertProspectWorkspacePerson(
+    normalizeProspectCandidateForWorkspace(candidate, context, req.body || {})
+  );
+  if (!prospect) {
+    return res.status(400).json({
+      error: "invalid_prospect",
+      message: "Prospect requires at least a person id, email, LinkedIn URL, full name, or role.",
+    });
+  }
+
+  res.status(201).json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    prospect,
+    workspace: buildProspectWorkspacePayload(context),
+  });
+});
+
+app.patch("/api/company/:id/prospects/:prospectId", (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const existing = getProspectWorkspacePerson(req.params.prospectId);
+  if (!existing || (existing.company_id !== context.canonical_id && existing.company_number !== context.company_number)) {
+    return res.status(404).json({ error: "Prospect not found" });
+  }
+
+  const updated = updateProspectWorkspacePerson(req.params.prospectId, {
+    ...req.body,
+    company_id: existing.company_id,
+    company_number: existing.company_number || context.company_number,
+  });
+  if (!updated) return res.status(400).json({ error: "invalid_prospect_update" });
+
+  res.json({
+    company_id: context.canonical_id,
+    company_number: context.company_number,
+    prospect: updated,
+    workspace: buildProspectWorkspacePayload(context),
+  });
+});
+
+app.post("/api/company/:id/prospects/:prospectId/request-email", async (req, res) => {
+  const context = resolveCompanyContextForEnrichment(req.params.id, req.body || {});
+  if (!context) return res.status(404).json({ error: "Company not found" });
+
+  const existing = getProspectWorkspacePerson(req.params.prospectId);
+  if (!existing || (existing.company_id !== context.canonical_id && existing.company_number !== context.company_number)) {
+    return res.status(404).json({ error: "Prospect not found" });
+  }
+
+  try {
+    const result = await requestProspeoEmailForProspect(existing, context);
+    if (!result.ok) return res.status(result.statusCode || 500).json(result.body);
+
+    const updated = updateProspectWorkspacePerson(existing.id, {
+      email: result.body.email,
+      email_status: result.body.email_status,
+      availability_status: ["unknown", "needs_email"].includes(existing.availability_status) ? "available" : existing.availability_status,
+      notes: existing.notes,
+      company_id: existing.company_id,
+      company_number: existing.company_number || context.company_number,
+    });
+
+    return res.json({
+      company_id: context.canonical_id,
+      company_number: context.company_number,
+      prospect: updated,
+      email: result.body.email,
+      email_status: result.body.email_status,
+      workspace: buildProspectWorkspacePayload(context),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      error: "prospeo_email_request_error",
+      detail: err?.message || "Prospeo email request failed",
+    });
+  }
 });
 
 app.post("/api/company/:id/enrichment/refresh", async (req, res) => {

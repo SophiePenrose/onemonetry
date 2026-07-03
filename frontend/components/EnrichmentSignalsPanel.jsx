@@ -60,8 +60,10 @@ function summarizeEnvelope(key, envelope) {
     const openRoles = Array.isArray(payload.open_roles) ? payload.open_roles : [];
     const personCandidates = Array.isArray(payload.person_candidates) ? payload.person_candidates : [];
     const newSeniorHires = Array.isArray(payload.new_senior_hires) ? payload.new_senior_hires : [];
+    const roleChangeEvents = Array.isArray(payload.role_change_events) ? payload.role_change_events : [];
     const sampleCandidate = personCandidates[0] || null;
     const sampleHire = newSeniorHires[0] || null;
+    const sampleRoleChange = roleChangeEvents[0] || null;
     return [
       `signal score: ${payload.hiring_signal_score ?? "n/a"}`,
       `intensity: ${payload.hiring_intensity || "n/a"}`,
@@ -70,8 +72,10 @@ function summarizeEnvelope(key, envelope) {
       `treasury roles: ${treasuryRoles.length}`,
       `person candidates: ${personCandidates.length}`,
       `recent desired-role hires: ${newSeniorHires.length}`,
+      `recent role changes: ${roleChangeEvents.length}`,
       sampleCandidate ? `sample candidate: ${[sampleCandidate.full_name || sampleCandidate.name, sampleCandidate.title || sampleCandidate.job_title].filter(Boolean).join(" - ")}` : null,
       sampleHire ? `sample recent hire: ${[sampleHire.full_name || sampleHire.name, sampleHire.title || sampleHire.job_title].filter(Boolean).join(" - ")}` : null,
+      sampleRoleChange ? `sample role change: ${[sampleRoleChange.full_name || sampleRoleChange.name, sampleRoleChange.role_change_type].filter(Boolean).join(" - ")}` : null,
       financeRoles.length > 0 ? `sample finance role: ${financeRoles[0]?.name || financeRoles[0]?.role || "n/a"}` : null,
     ].filter(Boolean);
   }

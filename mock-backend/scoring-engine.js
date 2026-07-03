@@ -1222,6 +1222,45 @@ function scoreTechStackSignals(techStack, freshnessScale = 1) {
   };
 }
 
+function buildHiringPersonSignalKey(person = {}) {
+  const personId = String(person?.person_id || "").trim().toLowerCase();
+  if (personId) return `id:${personId}`;
+
+  const email = String(person?.email || "").trim().toLowerCase();
+  if (email) return `email:${email}`;
+
+  const name = String(person?.full_name || person?.name || "").trim().toLowerCase();
+  const role = String(person?.role || person?.title || "").trim().toLowerCase();
+  if (name || role) return `name:${name}::role:${role}`;
+
+  return "";
+}
+
+function roleChangeAgeMonths(event = {}) {
+  const dateValue = event?.role_change_at || event?.last_job_change_detected_at || event?.start_date;
+  if (!dateValue) return 6;
+  const millis = new Date(dateValue).getTime();
+  if (!Number.isFinite(millis)) return 6;
+  return Math.max(0, (Date.now() - millis) / (30 * 86400000));
+}
+
+function roleChangeRecencyMultiplier(monthsSinceChange) {
+  const months = Number(monthsSinceChange);
+  if (!Number.isFinite(months)) return 0.5;
+  if (months <= 3) return 1;
+  if (months <= 6) return 0.7;
+  if (months <= 12) return 0.4;
+  return 0;
+}
+
+function roleChangeTypeFactor(type) {
+  const token = String(type || "").trim().toLowerCase();
+  if (token === "joined_relevant_company") return { urgency: 0.45, motion: 0.35, pain: 0.3, propensity: 0.04 };
+  if (token === "changed_role_at_relevant_company") return { urgency: 0.35, motion: 0.28, pain: 0.22, propensity: 0.035 };
+  if (token === "left_relevant_company") return { urgency: 0.24, motion: 0.18, pain: 0.14, propensity: 0.025 };
+  return { urgency: 0.25, motion: 0.2, pain: 0.16, propensity: 0.025 };
+}
+
 function scoreHiringSignals(hiringData, freshnessScale = 1) {
   if (!hiringData || typeof hiringData !== "object") {
     return {
@@ -1230,6 +1269,7 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
       pain_boost: 0,
       propensity_boost: 0,
       headcount_urgency_boost: 0,
+      role_change_propensity_boost: 0,
       motion_boosts: {},
       velocity_triggers: [],
       adjustments: [],
@@ -1239,11 +1279,17 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
   const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
   let urgencyBoost = 0;
   let painBoost = 0;
+  let roleChangePropensityBoost = 0;
   const motionBoosts = {};
   const velocityTriggers = [];
   const adjustments = [];
 
   const newSeniorHires = asArray(hiringData.new_senior_hires);
+  const newSeniorHireKeys = new Set(
+    newSeniorHires
+      .map((hire) => buildHiringPersonSignalKey(hire))
+      .filter(Boolean)
+  );
   for (const hire of newSeniorHires) {
     const role = String(hire?.role || "").trim();
     if (!role) continue;
@@ -1269,6 +1315,81 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
       painBoost += Number(config.pain_boost || 0) * 0.8;
       adjustments.push({ type: "new_hire_motion_signal", role, pattern });
       break;
+    }
+  }
+
+  const roleChangeEvents = [
+    ...asArray(hiringData.role_change_events),
+    ...asArray(hiringData.person_candidates)
+      .filter((candidate) => candidate?.role_change_type || candidate?.role_change_at || candidate?.last_job_change_detected_at),
+  ];
+  const seenRoleChangeEvents = new Set();
+
+  for (const event of roleChangeEvents) {
+    const role = String(event?.role || event?.title || "").trim();
+    if (!role) continue;
+
+    const roleChangeType = String(event?.role_change_type || "changed_role_at_relevant_company").trim().toLowerCase();
+    const personKey = buildHiringPersonSignalKey(event);
+    const eventKey = `${personKey || role.toLowerCase()}::${roleChangeType}`;
+    if (seenRoleChangeEvents.has(eventKey)) continue;
+    seenRoleChangeEvents.add(eventKey);
+
+    if (roleChangeType === "joined_relevant_company" && personKey && newSeniorHireKeys.has(personKey)) {
+      continue;
+    }
+
+    const monthsSinceChange = roleChangeAgeMonths(event);
+    const recencyMultiplier = roleChangeRecencyMultiplier(monthsSinceChange);
+    if (recencyMultiplier <= 0) continue;
+
+    const typeFactor = roleChangeTypeFactor(roleChangeType);
+    const roleToken = normalizeLookupToken(role);
+    let matchedRolePattern = null;
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.urgency)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      matchedRolePattern = pattern;
+      const delta = Number(config.boost || 0) * typeFactor.urgency * recencyMultiplier;
+      urgencyBoost += delta;
+      roleChangePropensityBoost += Number(typeFactor.propensity || 0) * recencyMultiplier;
+      velocityTriggers.push("role_change_relevant_company");
+      adjustments.push({
+        type: "recent_role_change",
+        role,
+        role_change_type: roleChangeType,
+        months_since: Math.round(monthsSinceChange),
+        boost: Math.round(delta * 100) / 100,
+        previous_company_name: event?.previous_company_name || null,
+        current_company_name: event?.current_company_name || null,
+      });
+      break;
+    }
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.motion_signals)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      matchedRolePattern = matchedRolePattern || pattern;
+      for (const [motion, boost] of Object.entries(config.motions || {})) {
+        motionBoosts[motion] = (motionBoosts[motion] || 0) + (Number(boost || 0) * typeFactor.motion * recencyMultiplier);
+      }
+      painBoost += Number(config.pain_boost || 0) * typeFactor.pain * recencyMultiplier;
+      adjustments.push({
+        type: "role_change_motion_signal",
+        role,
+        role_change_type: roleChangeType,
+        pattern,
+      });
+      break;
+    }
+
+    if (!matchedRolePattern) {
+      roleChangePropensityBoost += Math.min(Number(typeFactor.propensity || 0) * 0.5 * recencyMultiplier, 0.02);
+      adjustments.push({
+        type: "recent_role_change_context",
+        role,
+        role_change_type: roleChangeType,
+        months_since: Math.round(monthsSinceChange),
+      });
     }
   }
 
@@ -1339,8 +1460,9 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
     applied: adjustments.length > 0,
     urgency_boost: Math.min(urgencyBoost * scaler, 0.25),
     pain_boost: Math.min(painBoost * scaler, 0.15),
-    propensity_boost: headcountPropensityBoost * scaler,
+    propensity_boost: Math.max(-0.06, Math.min((headcountPropensityBoost + roleChangePropensityBoost) * scaler, 0.16)),
     headcount_urgency_boost: headcountUrgencyBoost * scaler,
+    role_change_propensity_boost: Math.min(roleChangePropensityBoost * scaler, 0.08),
     motion_boosts: scaledMotionBoosts,
     velocity_triggers: [...new Set(velocityTriggers)],
     adjustments,
@@ -3099,6 +3221,8 @@ export function scoreCompany(companyNumber) {
          qualSignals.positive.push({ signal: "New procurement leader", weight: 0.08, source: "hiring" });
        } else if (trigger === "headcount_growth") {
          qualSignals.positive.push({ signal: "Headcount growth", weight: 0.1, source: "hiring" });
+       } else if (trigger === "role_change_relevant_company") {
+         qualSignals.positive.push({ signal: "Recent relevant role change", weight: 0.06, source: "hiring" });
        }
      }
    }

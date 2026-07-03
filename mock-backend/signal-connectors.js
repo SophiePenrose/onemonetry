@@ -1877,6 +1877,133 @@ function normalizeHiringIsNewHire(record = {}, startDate = null) {
   return Number.isFinite(daysOld) && daysOld <= 180;
 }
 
+function readStringByPaths(record, paths = []) {
+  for (const path of paths || []) {
+    const value = getFirstByPaths(record || {}, [path]);
+    if (value === undefined || value === null || typeof value === "object") continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function extractRoleChangeMetadataFromRecord(record = {}, startDate = null) {
+  if (!record || typeof record !== "object") {
+    return {
+      role_change_type: null,
+      role_change_at: startDate || null,
+      previous_company_name: null,
+      current_company_name: null,
+      last_job_change_detected_at: null,
+    };
+  }
+
+  const explicitType = readStringField(record, [
+    "role_change_type",
+    "role_change_direction",
+    "job_change_type",
+    "job_change_direction",
+    "change_type",
+    "event_type",
+  ]) || readStringByPaths(record, [
+    "job_change.type",
+    "job_change.direction",
+    "recent_job_change.type",
+    "recent_job_change.direction",
+    "person_job_change.type",
+    "person_job_change.direction",
+  ]);
+  const typeToken = normalizeRoleText(explicitType);
+  let roleChangeType = null;
+
+  if (/\b(left|departed|departure|exited|former|from)\b/.test(typeToken)) {
+    roleChangeType = "left_relevant_company";
+  } else if (/\b(joined|join|hired|new hire|started|to)\b/.test(typeToken)) {
+    roleChangeType = "joined_relevant_company";
+  } else if (/\b(changed|promotion|promoted|moved|role change|title change)\b/.test(typeToken)) {
+    roleChangeType = "changed_role_at_relevant_company";
+  }
+
+  const roleChangeAt = parseIsoTimestamp(readStringField(record, [
+    "role_change_at",
+    "role_changed_at",
+    "job_change_date",
+    "job_changed_at",
+    "changed_at",
+    "event_date",
+  ]) || readStringByPaths(record, [
+    "job_change.date",
+    "job_change.start_date",
+    "recent_job_change.date",
+    "recent_job_change.start_date",
+    "person_job_change.date",
+    "person_job_change.start_date",
+  ])) || startDate || null;
+  const lastDetectedAt = parseIsoTimestamp(readStringField(record, [
+    "last_job_change_detected_at",
+    "job_change_detected_at",
+    "detected_at",
+  ]) || readStringByPaths(record, [
+    "job_change.detected_at",
+    "recent_job_change.detected_at",
+    "person_job_change.detected_at",
+  ]));
+  const previousCompanyName = readStringField(record, [
+    "previous_company_name",
+    "previous_company",
+    "former_company_name",
+    "past_company_name",
+  ]) || readStringByPaths(record, [
+    "previous_company.name",
+    "former_company.name",
+    "past_company.name",
+    "previous_position.company.name",
+    "previous_job.company.name",
+    "job_change.previous_company.name",
+    "job_change.from_company.name",
+    "recent_job_change.previous_company.name",
+    "experience.1.company.name",
+    "experiences.1.company.name",
+    "positions.1.company.name",
+    "job_history.1.company.name",
+  ]);
+  const currentCompanyName = readStringField(record, [
+    "current_company_name",
+    "current_company",
+    "company_name",
+  ]) || readStringByPaths(record, [
+    "current_company.name",
+    "company.name",
+    "current_position.company.name",
+    "current_job.company.name",
+    "job_change.current_company.name",
+    "job_change.to_company.name",
+    "recent_job_change.current_company.name",
+    "experience.0.company.name",
+    "experiences.0.company.name",
+    "positions.0.company.name",
+    "job_history.0.company.name",
+  ]);
+
+  if (!roleChangeType) {
+    if (normalizeHiringIsNewHire(record, startDate)) {
+      roleChangeType = "joined_relevant_company";
+    } else if (roleChangeAt && previousCompanyName && currentCompanyName) {
+      roleChangeType = "joined_relevant_company";
+    } else if (roleChangeAt || lastDetectedAt) {
+      roleChangeType = "changed_role_at_relevant_company";
+    }
+  }
+
+  return {
+    role_change_type: roleChangeType,
+    role_change_at: roleChangeAt,
+    previous_company_name: previousCompanyName || null,
+    current_company_name: currentCompanyName || null,
+    last_job_change_detected_at: lastDetectedAt || null,
+  };
+}
+
 function normalizeHiringEmailStatus(record = {}, email) {
   const emailNode = record?.email && typeof record.email === "object" && !Array.isArray(record.email)
     ? record.email
@@ -1911,6 +2038,7 @@ function buildHiringPersonCandidate(record = {}, sourceId = "", fallbackIndex = 
   const email = extractPersonEmailFromRecord(record);
   const linkedinUrl = extractPersonLinkedinFromRecord(record);
   const startDate = extractPersonStartDateFromRecord(record);
+  const roleChange = extractRoleChangeMetadataFromRecord(record, startDate);
 
   if (!fullName && !role && !email && !linkedinUrl) return null;
 
@@ -1933,6 +2061,11 @@ function buildHiringPersonCandidate(record = {}, sourceId = "", fallbackIndex = 
     linkedin_url: linkedinUrl || null,
     start_date: startDate || null,
     is_new_hire: normalizeHiringIsNewHire(record, startDate),
+    role_change_type: roleChange.role_change_type,
+    role_change_at: roleChange.role_change_at,
+    previous_company_name: roleChange.previous_company_name,
+    current_company_name: roleChange.current_company_name,
+    last_job_change_detected_at: roleChange.last_job_change_detected_at,
     source: String(record?.source || "").trim() || (sourceId ? `${sourceId}_api` : null),
   };
 }
@@ -1977,6 +2110,11 @@ function mergePersonCandidates(primary = [], secondary = []) {
       linkedin_url: current.linkedin_url || candidate.linkedin_url || null,
       start_date: current.start_date || candidate.start_date || null,
       is_new_hire: current.is_new_hire === true || candidate.is_new_hire === true,
+      role_change_type: current.role_change_type || candidate.role_change_type || null,
+      role_change_at: current.role_change_at || candidate.role_change_at || null,
+      previous_company_name: current.previous_company_name || candidate.previous_company_name || null,
+      current_company_name: current.current_company_name || candidate.current_company_name || null,
+      last_job_change_detected_at: current.last_job_change_detected_at || candidate.last_job_change_detected_at || null,
       source: current.source || candidate.source || null,
     });
   }
@@ -2079,6 +2217,90 @@ function mergeNewSeniorHires(primary = [], secondary = []) {
   return [...map.values()].slice(0, 20);
 }
 
+function normalizeRoleChangeEventRecord(record = {}, sourceId = "", fallbackIndex = 1) {
+  if (!record || typeof record !== "object") return null;
+
+  const fullName = extractPersonNameFromRecord(record);
+  const role = extractRoleTitleFromRecord(record);
+  const email = extractPersonEmailFromRecord(record);
+  const startDate = extractPersonStartDateFromRecord(record);
+  const roleChange = extractRoleChangeMetadataFromRecord(record, startDate);
+  if (!roleChange.role_change_type && !roleChange.role_change_at && !roleChange.last_job_change_detected_at) return null;
+
+  const explicitPersonId = String(record?.person_id || record?.id || record?.oid || "").trim();
+  const idSeed = explicitPersonId || fullName || email || role || `role_change_${fallbackIndex}`;
+  const normalizedPersonId = String(idSeed)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+
+  return {
+    person_id: normalizedPersonId || `role_change_${fallbackIndex}`,
+    full_name: fullName || null,
+    role: role || null,
+    email: email || null,
+    persona_bucket: String(record?.persona_bucket || "").trim() || normalizeHiringPersonaBucket(role),
+    role_change_type: roleChange.role_change_type || "changed_role_at_relevant_company",
+    role_change_at: roleChange.role_change_at || roleChange.last_job_change_detected_at || null,
+    previous_company_name: roleChange.previous_company_name,
+    current_company_name: roleChange.current_company_name,
+    last_job_change_detected_at: roleChange.last_job_change_detected_at,
+    source: String(record?.source || "").trim() || (sourceId ? `${sourceId}_api` : null),
+  };
+}
+
+function buildRoleChangeEventKey(event = {}) {
+  const personId = String(event?.person_id || "").trim().toLowerCase();
+  const type = String(event?.role_change_type || "").trim().toLowerCase();
+  if (personId) return `id:${personId}::${type}`;
+
+  const email = String(event?.email || "").trim().toLowerCase();
+  if (email) return `email:${email}::${type}`;
+
+  const name = String(event?.full_name || "").trim().toLowerCase();
+  const role = String(event?.role || "").trim().toLowerCase();
+  const date = String(event?.role_change_at || event?.last_job_change_detected_at || "").trim().slice(0, 10);
+  if (name || role || date) return `name:${name}::role:${role}::date:${date}::${type}`;
+
+  return "";
+}
+
+function mergeRoleChangeEvents(primary = [], secondary = []) {
+  const map = new Map();
+
+  for (const event of [...asObjectArray(primary), ...asObjectArray(secondary)]) {
+    const normalized = normalizeRoleChangeEventRecord(event, event?.source || "");
+    if (!normalized) continue;
+
+    const key = buildRoleChangeEventKey(normalized);
+    if (!key) continue;
+
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, normalized);
+      continue;
+    }
+
+    map.set(key, {
+      ...current,
+      person_id: current.person_id || normalized.person_id || null,
+      full_name: current.full_name || normalized.full_name || null,
+      role: current.role || normalized.role || null,
+      email: current.email || normalized.email || null,
+      persona_bucket: current.persona_bucket || normalized.persona_bucket || null,
+      role_change_type: current.role_change_type || normalized.role_change_type || null,
+      role_change_at: current.role_change_at || normalized.role_change_at || null,
+      previous_company_name: current.previous_company_name || normalized.previous_company_name || null,
+      current_company_name: current.current_company_name || normalized.current_company_name || null,
+      last_job_change_detected_at: current.last_job_change_detected_at || normalized.last_job_change_detected_at || null,
+      source: current.source || normalized.source || null,
+    });
+  }
+
+  return [...map.values()].slice(0, 30);
+}
+
 function parseHiringEnvelope(payload, sourceId) {
   const keyNames = new Set(["jobs", "open_roles", "roles", "vacancies", "positions", "results"]);
   const arrays = collectArraysByKeys(payload, keyNames, 5);
@@ -2120,10 +2342,23 @@ function parseHiringEnvelope(payload, sourceId) {
     .map((candidate, index) => normalizeNewSeniorHireRecord(candidate, sourceId, index + 1))
     .filter((hire) => hire?.is_new_hire === true || hire?.start_date);
   const newSeniorHires = mergeNewSeniorHires(directNewSeniorHires, candidateNewSeniorHires);
+  const directRoleChangeEvents = asObjectArray(getFirstArrayByPaths(payload || {}, [
+    "role_change_events",
+    "recent_role_changes",
+    "job_changes",
+    "person_job_changes",
+  ]))
+    .map((row, index) => normalizeRoleChangeEventRecord(row, sourceId, index + 1))
+    .filter(Boolean);
+  const candidateRoleChangeEvents = personCandidates
+    .filter((candidate) => candidate?.role_change_type || candidate?.role_change_at || candidate?.last_job_change_detected_at)
+    .map((candidate, index) => normalizeRoleChangeEventRecord(candidate, sourceId, index + 1))
+    .filter(Boolean);
+  const roleChangeEvents = mergeRoleChangeEvents(directRoleChangeEvents, candidateRoleChangeEvents);
   const explicitOpenRoles = readNumericField(payload || {}, ["open_roles", "jobs_open", "vacancies", "active_jobs", "total_results"]);
   const totalOpenRoles = Math.max(uniqueRoleNames.length, Number(explicitOpenRoles || 0));
 
-  if (totalOpenRoles <= 0 && personCandidates.length < 1 && newSeniorHires.length < 1) return null;
+  if (totalOpenRoles <= 0 && personCandidates.length < 1 && newSeniorHires.length < 1 && roleChangeEvents.length < 1) return null;
 
   const nowIso = new Date().toISOString();
   const openRoles = uniqueRoleNames.map((role) => ({ role }));
@@ -2131,7 +2366,13 @@ function parseHiringEnvelope(payload, sourceId) {
   const treasuryRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "treasury");
   const internationalRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "international");
   const ecommerceRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "ecommerce");
-  const score = Math.max(0, Math.min((totalOpenRoles / 20) + (personCandidates.length / 30) + (newSeniorHires.length / 20), 1));
+  const score = Math.max(0, Math.min(
+    (totalOpenRoles / 20)
+    + (personCandidates.length / 30)
+    + (newSeniorHires.length / 20)
+    + (roleChangeEvents.length / 30),
+    1
+  ));
   const evidence = [];
   if (totalOpenRoles > 0) {
     evidence.push(`${sourceId} reports ${totalOpenRoles} active roles`);
@@ -2141,6 +2382,9 @@ function parseHiringEnvelope(payload, sourceId) {
   }
   if (newSeniorHires.length > 0) {
     evidence.push(`${sourceId} returned ${newSeniorHires.length} recent senior hires`);
+  }
+  if (roleChangeEvents.length > 0) {
+    evidence.push(`${sourceId} returned ${roleChangeEvents.length} recent role-change events`);
   }
 
   return {
@@ -2157,6 +2401,8 @@ function parseHiringEnvelope(payload, sourceId) {
     person_candidates_count: personCandidates.length,
     new_senior_hires: newSeniorHires,
     new_senior_hires_count: newSeniorHires.length,
+    role_change_events: roleChangeEvents,
+    role_change_events_count: roleChangeEvents.length,
     hiring_signal_score: Math.round(score * 100) / 100,
     hiring_intensity: score >= 0.7 ? "high" : score >= 0.35 ? "medium" : "low",
     evidence,
@@ -3060,6 +3306,102 @@ function normalizeProspeoPersonCandidateRecord(record = {}) {
     "job_change.start_date",
     "job_change.date",
   ]);
+  const lastJobChangeDetectedAt = getFirstByPaths(person, [
+    "last_job_change_detected_at",
+    "job_change_detected_at",
+    "detected_at",
+    "job_change.detected_at",
+    "recent_job_change.detected_at",
+    "person_job_change.detected_at",
+  ]) || getFirstByPaths(record, [
+    "last_job_change_detected_at",
+    "job_change_detected_at",
+    "detected_at",
+    "job_change.detected_at",
+    "recent_job_change.detected_at",
+    "person_job_change.detected_at",
+  ]);
+  const roleChangeType = getFirstByPaths(person, [
+    "role_change_type",
+    "role_change_direction",
+    "job_change_type",
+    "job_change_direction",
+    "job_change.type",
+    "job_change.direction",
+    "recent_job_change.type",
+    "recent_job_change.direction",
+    "person_job_change.type",
+    "person_job_change.direction",
+  ]) || getFirstByPaths(record, [
+    "role_change_type",
+    "role_change_direction",
+    "job_change_type",
+    "job_change_direction",
+    "job_change.type",
+    "job_change.direction",
+    "recent_job_change.type",
+    "recent_job_change.direction",
+    "person_job_change.type",
+    "person_job_change.direction",
+  ]);
+  const previousCompanyName = getFirstByPaths(person, [
+    "previous_company_name",
+    "previous_company.name",
+    "former_company.name",
+    "past_company.name",
+    "previous_position.company.name",
+    "previous_job.company.name",
+    "job_change.previous_company.name",
+    "job_change.from_company.name",
+    "recent_job_change.previous_company.name",
+    "experience.1.company.name",
+    "experiences.1.company.name",
+    "positions.1.company.name",
+    "job_history.1.company.name",
+  ]) || getFirstByPaths(record, [
+    "previous_company_name",
+    "previous_company.name",
+    "former_company.name",
+    "past_company.name",
+    "previous_position.company.name",
+    "previous_job.company.name",
+    "job_change.previous_company.name",
+    "job_change.from_company.name",
+    "recent_job_change.previous_company.name",
+    "experience.1.company.name",
+    "experiences.1.company.name",
+    "positions.1.company.name",
+    "job_history.1.company.name",
+  ]);
+  const currentCompanyName = getFirstByPaths(person, [
+    "current_company_name",
+    "company_name",
+    "current_company.name",
+    "company.name",
+    "current_position.company.name",
+    "current_job.company.name",
+    "job_change.current_company.name",
+    "job_change.to_company.name",
+    "recent_job_change.current_company.name",
+    "experience.0.company.name",
+    "experiences.0.company.name",
+    "positions.0.company.name",
+    "job_history.0.company.name",
+  ]) || getFirstByPaths(record, [
+    "current_company_name",
+    "company_name",
+    "current_company.name",
+    "company.name",
+    "current_position.company.name",
+    "current_job.company.name",
+    "job_change.current_company.name",
+    "job_change.to_company.name",
+    "recent_job_change.current_company.name",
+    "experience.0.company.name",
+    "experiences.0.company.name",
+    "positions.0.company.name",
+    "job_history.0.company.name",
+  ]);
 
   return {
     ...record,
@@ -3094,6 +3436,11 @@ function normalizeProspeoPersonCandidateRecord(record = {}) {
       ?? record?.recent_job_change
       ?? record?.person_job_change
       ?? record?.job_change,
+    role_change_type: roleChangeType || record?.role_change_type || null,
+    role_change_at: startDate || null,
+    previous_company_name: previousCompanyName || null,
+    current_company_name: currentCompanyName || null,
+    last_job_change_detected_at: lastJobChangeDetectedAt || null,
   };
 }
 
@@ -4295,6 +4642,8 @@ function mergeHiringEnvelope(existing, incoming) {
   merged.person_candidates_count = merged.person_candidates.length;
   merged.new_senior_hires = mergeNewSeniorHires(existing?.new_senior_hires, incoming?.new_senior_hires);
   merged.new_senior_hires_count = merged.new_senior_hires.length;
+  merged.role_change_events = mergeRoleChangeEvents(existing?.role_change_events, incoming?.role_change_events);
+  merged.role_change_events_count = merged.role_change_events.length;
   return merged;
 }
 

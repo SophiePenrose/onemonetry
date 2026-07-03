@@ -194,6 +194,53 @@ describe("enrichment-aware scoring", () => {
     assert.ok(enrichedScore.layers.urgency.score > baselineScore.layers.urgency.score);
   });
 
+  it("uses recent role changes to or from relevant companies as bounded timing boosts", () => {
+    const baselineCompany = "90000010";
+    const enrichedCompany = "90000011";
+
+    seedScorableCompany(baselineCompany);
+    seedScorableCompany(enrichedCompany);
+
+    const baselineScore = scoring.scoreCompany(baselineCompany);
+
+    db.setSetting(`hiring_signals_${enrichedCompany}`, {
+      updated_at: isoDaysAgo(1),
+      role_change_events: [
+        {
+          full_name: "Alex Palmer",
+          role: "Head of Payments",
+          role_change_type: "left_relevant_company",
+          role_change_at: isoDaysAgo(30),
+          previous_company_name: "Example Checkout Ltd",
+          current_company_name: "Next Payments Co",
+        },
+      ],
+      person_candidates: [
+        {
+          full_name: "Alex Palmer",
+          role: "Head of Payments",
+          email_status: "missing",
+          confidence: "medium",
+          persona_bucket: "payments_lead",
+          role_change_type: "left_relevant_company",
+          role_change_at: isoDaysAgo(30),
+          previous_company_name: "Example Checkout Ltd",
+          current_company_name: "Next Payments Co",
+        },
+      ],
+    });
+
+    const enrichedScore = scoring.scoreCompany(enrichedCompany);
+
+    assert.equal(enrichedScore.enrichment.hiring.applied, true);
+    assert.equal(enrichedScore.enrichment.hiring.velocity_triggers.includes("role_change_relevant_company"), true);
+    assert.ok(Number(enrichedScore.enrichment.hiring.role_change_propensity_boost || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.hiring.urgency_boost || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.hiring.motion_boosts["Merchant Acquiring"] || 0) > 0);
+    assert.ok(Number(enrichedScore.enrichment.hiring.motion_boosts["Revolut Pay"] || 0) > 0);
+    assert.ok(enrichedScore.layers.urgency.score > baselineScore.layers.urgency.score);
+  });
+
   it("uses fresh intent signals as bounded motion and timing boosts", () => {
     const baselineCompany = "90000008";
     const enrichedCompany = "90000009";

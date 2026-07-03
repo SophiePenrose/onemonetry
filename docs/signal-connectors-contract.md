@@ -63,6 +63,7 @@ Minimum normalized outputs:
 - ecommerce_roles_open[]
 - person_candidates[]
 - new_senior_hires[]
+- role_change_events[]
 - hiring_signal_score
 
 ### reputation_{company_number}
@@ -224,6 +225,7 @@ Expected source structures accepted:
 - data.results[].person / results[].person (search-person people)
 - data.results[].person.email.* (email value/status/revealed metadata)
 - data.results[].person current-role/job-change start dates, normalized into `person_candidates[].start_date`, `person_candidates[].is_new_hire`, and `new_senior_hires[]` when the role matches desired buyer personas.
+- data.results[].person role-change metadata (`role_change_type`, previous/current company names, detected dates) normalized into `person_candidates[]` and `role_change_events[]`; scoring treats recent joins, departures, and role changes at relevant companies as bounded timing/propensity boosts after product-fit gating.
 - connector_payloads[].request_payload.filters.company_intent.topic_ids[] from `/search-company`, normalized into readable `intent_signals_<company>.topics[]`, `categories[]`, and `signals[].topic_id` when Prospeo returns a positive match.
 
 Primary envelope targets:
@@ -232,7 +234,7 @@ Primary envelope targets:
 
 Operational note:
 
-- The app parses Prospeo `matched[].company` responses for company job/tech signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for YAMM/Gemini recipient review. Recent desired-role hires also populate `new_senior_hires[]`, which scoring uses as a bounded timing and motion-relevance boost after product-fit gating.
+- The app parses Prospeo `matched[].company` responses for company job/tech signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for prospect workspace, YAMM/Gemini recipient review, and selective email reveal. Recent desired-role hires populate `new_senior_hires[]`; recent role changes to/from relevant companies populate `role_change_events[]`. Scoring uses both as bounded timing and motion-relevance boosts after product-fit gating.
 
 ### PhantomBuster
 
