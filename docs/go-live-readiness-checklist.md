@@ -1,6 +1,6 @@
 # Go-Live Readiness Checklist
 
-Last updated: 2026-06-28
+Last updated: 2026-07-03
 
 ## Objective
 
@@ -67,6 +67,7 @@ curl -X POST "http://localhost:8000/api/signals/sync/<company_number>" \
 2. Verify envelope writes (`ownership_*`, `hiring_signals_*`, `reputation_*`, `marketing_intelligence_*`, `tech_stack_*`, `intent_signals_*`).
 3. Verify scoring and shortlist remain explainable and stable after enrichment.
 4. Record latency, error rate, and payload quality before enabling next connector.
+5. For Prospeo intent, confirm `GET /api/integrations/status` shows `intent_topics_configured: true`; if company/people enrichment succeeds but the intent fanout returns `400 INTERNAL_ERROR`, verify the account's API entitlement/topic identifiers with Prospeo before treating it as "no intent".
 
 ### G. Promotion criteria
 

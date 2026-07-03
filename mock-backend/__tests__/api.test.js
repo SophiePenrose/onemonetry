@@ -974,6 +974,8 @@ describe("API endpoints", () => {
       assert.equal(typeof data.integrations.tech_enrichment_scheduler, "object");
       assert.equal(typeof data.integrations.email_generation_llm, "object");
       assert.equal(typeof data.integrations.prospeo, "object");
+      assert.equal(typeof data.integrations.prospeo.runtime?.intent_topics_configured, "boolean");
+      assert.equal(typeof data.integrations.prospeo.runtime?.intent_topic_count, "number");
       assert.equal(typeof data.integrations.phantombuster, "object");
       assert.equal(typeof data.integrations.status_api, "object");
       assert.equal(typeof data.integrations.status_instatus, "object");

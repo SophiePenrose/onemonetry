@@ -4,7 +4,7 @@ import PropTypes from "prop-types";
 const CONNECTOR_META = {
   prospeo: {
     label: "Prospeo",
-    envelopeFocus: ["hiring_signals", "marketing_intelligence", "tech_stack"],
+    envelopeFocus: ["hiring_signals", "marketing_intelligence", "tech_stack", "intent_signals"],
   },
   phantombuster: {
     label: "PhantomBuster",
@@ -44,12 +44,20 @@ function summarizeEnvelope(key, envelope) {
     const financeRoles = Array.isArray(payload.finance_roles_open) ? payload.finance_roles_open : [];
     const treasuryRoles = Array.isArray(payload.treasury_roles_open) ? payload.treasury_roles_open : [];
     const openRoles = Array.isArray(payload.open_roles) ? payload.open_roles : [];
+    const personCandidates = Array.isArray(payload.person_candidates) ? payload.person_candidates : [];
+    const newSeniorHires = Array.isArray(payload.new_senior_hires) ? payload.new_senior_hires : [];
+    const sampleCandidate = personCandidates[0] || null;
+    const sampleHire = newSeniorHires[0] || null;
     return [
       `signal score: ${payload.hiring_signal_score ?? "n/a"}`,
       `intensity: ${payload.hiring_intensity || "n/a"}`,
       `total open roles: ${toCount(payload.total_open_roles || openRoles.length)}`,
       `finance roles: ${financeRoles.length}`,
       `treasury roles: ${treasuryRoles.length}`,
+      `person candidates: ${personCandidates.length}`,
+      `recent desired-role hires: ${newSeniorHires.length}`,
+      sampleCandidate ? `sample candidate: ${[sampleCandidate.full_name || sampleCandidate.name, sampleCandidate.title || sampleCandidate.job_title].filter(Boolean).join(" - ")}` : null,
+      sampleHire ? `sample recent hire: ${[sampleHire.full_name || sampleHire.name, sampleHire.title || sampleHire.job_title].filter(Boolean).join(" - ")}` : null,
       financeRoles.length > 0 ? `sample finance role: ${financeRoles[0]?.name || financeRoles[0]?.role || "n/a"}` : null,
     ].filter(Boolean);
   }
@@ -84,6 +92,21 @@ function summarizeEnvelope(key, envelope) {
       `growth signal score: ${payload.growth_signal_score ?? "n/a"}`,
       `active channels: ${payload.active_channels ?? payload.channel_count ?? "n/a"}`,
       evidence.length > 0 ? `sample evidence: ${String(evidence[0])}` : null,
+    ].filter(Boolean);
+  }
+
+  if (key === "intent_signals") {
+    const topics = Array.isArray(payload.topics) ? payload.topics : [];
+    const motions = Array.isArray(payload.motions) ? payload.motions : [];
+    const signals = Array.isArray(payload.signals) ? payload.signals : [];
+    const sampleSignal = signals[0] || null;
+    return [
+      `signal score: ${payload.intent_signal_score ?? payload.confidence_score ?? "n/a"}`,
+      `topic count: ${topics.length}`,
+      topics.length > 0 ? `sample topics: ${topics.slice(0, 5).join(", ")}` : "sample topics: none",
+      motions.length > 0 ? `mapped motions: ${motions.slice(0, 5).join(", ")}` : "mapped motions: none",
+      `signal count: ${signals.length}`,
+      sampleSignal?.strength ? `sample strength: ${sampleSignal.strength}` : null,
     ].filter(Boolean);
   }
 
@@ -249,14 +272,28 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
         connectorResult?.hiring_updated ? "hiring" : null,
         connectorResult?.marketing_updated ? "marketing" : null,
         connectorResult?.tech_updated ? "tech" : null,
+        connectorResult?.intent_updated ? "intent" : null,
         connectorResult?.reputation_updated ? "reputation" : null,
         connectorResult?.ownership_updated ? "ownership" : null,
       ].filter(Boolean);
+      const failedAttempts = Array.isArray(connectorResult?.attempts)
+        ? connectorResult.attempts.filter((attempt) => attempt?.ok === false)
+        : [];
+      const partialIssueSummary = failedAttempts
+        .map((attempt) => {
+          const endpoint = String(attempt?.url || "")
+            .replace(/^https?:\/\/api\.prospeo\.io\//i, "")
+            .replace(/[?#].*$/, "")
+            || "sub-request";
+          return `${endpoint} ${attempt?.status || attempt?.error || "failed"}`;
+        })
+        .slice(0, 2)
+        .join(", ");
 
       setSyncMessage({
-        type: success ? "success" : "error",
+        type: success ? (failedAttempts.length > 0 ? "warning" : "success") : "error",
         text: success
-          ? `${connectorLabel} sync completed. Updated: ${updatedFlags.length > 0 ? updatedFlags.join(", ") : "no envelopes"}.`
+          ? `${connectorLabel} sync completed. Updated: ${updatedFlags.length > 0 ? updatedFlags.join(", ") : "no envelopes"}.${partialIssueSummary ? ` Partial issue: ${partialIssueSummary}.` : ""}`
           : `${connectorLabel} sync failed (${connectorResult?.failure_category || payload?.status || "unknown"}).`,
       });
 
@@ -292,7 +329,7 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
       </div>
 
       <div style={{ fontSize: 12, color: "#475569", marginBottom: 12 }}>
-        Prospeo and PhantomBuster are merged into hiring, marketing, and tech envelopes. These envelopes feed scoring and can influence which companies are selected for Gemini sequence generation.
+        Prospeo and PhantomBuster are merged into hiring, marketing, tech, and intent envelopes. These envelopes feed scoring and sequence evidence review.
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 12 }}>
@@ -353,8 +390,8 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
           fontSize: 12,
           borderRadius: 6,
           padding: "8px 10px",
-          background: syncMessage.type === "success" ? "#d1fae5" : "#fee2e2",
-          color: syncMessage.type === "success" ? "#065f46" : "#991b1b",
+          background: syncMessage.type === "success" ? "#d1fae5" : syncMessage.type === "warning" ? "#fef3c7" : "#fee2e2",
+          color: syncMessage.type === "success" ? "#065f46" : syncMessage.type === "warning" ? "#92400e" : "#991b1b",
         }}>
           {syncMessage.text}
         </div>
@@ -371,13 +408,14 @@ export default function EnrichmentSignalsPanel({ companyId, companyNumber }) {
           <EnvelopeCard title="hiring_signals" envelope={envelope.hiring_signals} />
           <EnvelopeCard title="marketing_intelligence" envelope={envelope.marketing_intelligence} />
           <EnvelopeCard title="tech_stack" envelope={envelope.tech_stack} />
+          <EnvelopeCard title="intent_signals" envelope={envelope.intent_signals} />
           <EnvelopeCard title="reputation" envelope={envelope.reputation} />
           <EnvelopeCard title="ownership" envelope={envelope.ownership} />
         </div>
       )}
 
       <div style={{ marginTop: 12, fontSize: 11, color: "#6b7280" }}>
-        Match logic: connector payloads are normalized by company number and merged into settings keys such as hiring_signals_&lt;company&gt;, marketing_intelligence_&lt;company&gt;, and tech_stack_&lt;company&gt;.
+        Match logic: connector payloads are normalized by company number and merged into settings keys such as hiring_signals_&lt;company&gt;, marketing_intelligence_&lt;company&gt;, tech_stack_&lt;company&gt;, and intent_signals_&lt;company&gt;.
       </div>
     </div>
   );

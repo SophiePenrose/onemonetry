@@ -326,6 +326,94 @@ describe("POST /api/signals/sync/:number", () => {
     }
   });
 
+  it("uses monitored website/domain hints for targeted Prospeo sync", async () => {
+    let requestedPath = "";
+    const connectorServer = http.createServer((req, res) => {
+      requestedPath = String(req.url || "");
+
+      if (requestedPath === "/prospeo/domain-fallback.example") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          jobs: [
+            { title: "Head of Ecommerce" },
+          ],
+          technologies: ["Shopify"],
+        }));
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not_found", requestedPath }));
+    });
+
+    await new Promise((resolve) => connectorServer.listen(0, "127.0.0.1", resolve));
+    const connectorPort = connectorServer.address().port;
+
+    const ctx = await startApiServer({
+      ENDOLE_API_KEY: "",
+      ENDOLE_URL_TEMPLATE: "",
+      OPENCORPORATES_API_TOKEN: "",
+      OPENCORPORATES_URL_TEMPLATE: "",
+      PROSPEO_API_KEY: "test-prospeo-key",
+      PROSPEO_URL_TEMPLATE: `http://127.0.0.1:${connectorPort}/prospeo/{company_domain}`,
+      PROSPEO_AUTH_SCHEME: "none",
+      PROSPEO_AUTH_HEADER: "x-api-key",
+      SIMILARWEB_API_KEY: "",
+      SIMILARWEB_URL_TEMPLATE: "",
+      BUILTWITH_API_KEY: "",
+      BUILTWITH_URL_TEMPLATE: "",
+      ADZUNA_APP_ID: "",
+      ADZUNA_APP_KEY: "",
+      ADZUNA_URL_TEMPLATE: "",
+      CRUNCHBASE_API_KEY: "",
+      CRUNCHBASE_URL_TEMPLATE: "",
+      CLEARBIT_API_KEY: "",
+      CLEARBIT_URL_TEMPLATE: "",
+      STATUSPAGE_URL_TEMPLATE: "",
+      STATUS_FEED_URL_TEMPLATE: "",
+      STATUS_API_URL_TEMPLATE: "",
+      STATUS_INSTATUS_URL_TEMPLATE: "",
+      STATUS_CACHET_URL_TEMPLATE: "",
+      ENABLE_STATUS_URL_DISCOVERY: "false",
+    });
+
+    try {
+      const seeded = await fetchJSON(ctx.baseUrl, "/api/monitor/import-seed-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sync_now: false,
+          queue_analysis: false,
+          rows: [
+            {
+              company_name: "Domain Fallback Ltd",
+              company_number: "00000061",
+              company_website: "https://www.domain-fallback.example/shop",
+            },
+          ],
+        }),
+      });
+
+      assert.equal(seeded.status, 200);
+
+      const { status, data } = await fetchJSON(ctx.baseUrl, "/api/signals/sync/00000061", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connectors: ["prospeo"],
+        }),
+      });
+
+      assert.equal(status, 200);
+      assert.equal(data.status, "updated");
+      assert.equal(data.connectors[0]?.id, "prospeo");
+      assert.equal(requestedPath, "/prospeo/domain-fallback.example");
+    } finally {
+      await ctx.stop();
+      connectorServer.close();
+    }
+  });
+
   it("syncs configured Endole connector and returns updated envelopes", async () => {
     const connectorServer = http.createServer((req, res) => {
       const route = String(req.url || "");

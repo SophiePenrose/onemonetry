@@ -4414,6 +4414,8 @@ export async function syncExternalSignals(input = {}) {
       request_method: fetched.request_method || null,
       attempted_urls: fetched.attempted_urls || [],
       successful_urls: fetched.successful_urls || [],
+      attempts: Array.isArray(fetched.attempts) ? fetched.attempts : [],
+      failed_attempt_count: Number(fetched?.failed_attempt_count || 0),
       payload,
     });
     keysUpdated.add(`external_signal_${status.id}_${companyNumber}`);

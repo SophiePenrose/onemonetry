@@ -206,6 +206,7 @@ Observed endpoint behavior (company intent):
 - Configure selected topics with `PROSPEO_INTENT_TOPIC_IDS` (comma-separated). `PROSPEO_COMPANY_INTENT_TOPIC_IDS` and `PROSPEO_INTENT_TOPIC_NAMES` are also accepted aliases.
 - Stage flags are controlled by `PROSPEO_INTENT_ACTIVE_RESEARCH`, `PROSPEO_INTENT_IN_DEPTH_RESEARCH`, and `PROSPEO_INTENT_EARLY_RESEARCH`; when topic IDs are present, all three default to `true` to match the Prospeo UI payload.
 - Company-intent search is a separate fanout from normal people discovery so unmatched intent does not suppress relevant contact enrichment.
+- Live validation note: Prospeo may return `400 INTERNAL_ERROR` for `/search-company` intent filters even when bulk company enrichment and `/search-person` succeed. The connector keeps successful envelopes and records sub-request attempts; verify API entitlement/topic identifiers with Prospeo before interpreting this as no intent activity.
 
 Expected source structures accepted:
 

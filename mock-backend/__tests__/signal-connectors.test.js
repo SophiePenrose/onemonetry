@@ -650,6 +650,8 @@ describe("external signal connectors", () => {
 
     const raw = db.getSetting("external_signal_prospeo_99111126", null);
     assert.equal(raw.payload.connector_payloads.length, 3);
+    assert.equal(raw.attempts.length, 3);
+    assert.equal(raw.failed_attempt_count, 0);
 
     const hiring = db.getSetting("hiring_signals_99111126", null);
     assert.equal((hiring.person_candidates || []).some((entry) => entry.full_name === "Rae Morgan"), true);

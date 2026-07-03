@@ -822,6 +822,7 @@ export function getCompanyEnrichmentSnapshot(companyNumber, options = {}) {
     marketing_intelligence: { decay_after_days: 30, max_age_days: 60 },
     reputation: { decay_after_days: 120, max_age_days: 180 },
     hiring_signals: { decay_after_days: 14, max_age_days: 30 },
+    intent_signals: { decay_after_days: 14, max_age_days: 30 },
     ownership: { decay_after_days: 240, max_age_days: 365 },
   };
 
@@ -832,6 +833,7 @@ export function getCompanyEnrichmentSnapshot(companyNumber, options = {}) {
     marketing_intelligence: buildSnapshotEnvelope(`marketing_intelligence_${keyPrefix}`, profile.marketing_intelligence, includeData),
     reputation: buildSnapshotEnvelope(`reputation_${keyPrefix}`, profile.reputation, includeData),
     hiring_signals: buildSnapshotEnvelope(`hiring_signals_${keyPrefix}`, profile.hiring_signals, includeData),
+    intent_signals: buildSnapshotEnvelope(`intent_signals_${keyPrefix}`, profile.intent_signals, includeData),
     ownership: buildSnapshotEnvelope(`ownership_${keyPrefix}`, profile.ownership, includeData),
   };
 }

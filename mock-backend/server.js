@@ -4995,11 +4995,25 @@ function buildSignalEnvelopeSnapshot(kind, envelope, includeRaw = false) {
     const roleNames = (Array.isArray(envelope.open_roles) ? envelope.open_roles : [])
       .map((entry) => String(entry?.role || entry?.title || "").trim())
       .filter(Boolean);
+    const personCandidates = Array.isArray(envelope.person_candidates) ? envelope.person_candidates : [];
+    const newSeniorHires = Array.isArray(envelope.new_senior_hires) ? envelope.new_senior_hires : [];
     base.metrics = {
       total_open_roles: toOptionalNumber(envelope.total_open_roles),
       hiring_signal_score: toOptionalNumber(envelope.hiring_signal_score),
       hiring_intensity: String(envelope.hiring_intensity || "").trim() || null,
       role_sample: roleNames.slice(0, 10),
+      person_candidates_count: personCandidates.length,
+      new_senior_hires_count: newSeniorHires.length,
+    };
+  } else if (kind === "intent_signals") {
+    const topics = Array.isArray(envelope.topics) ? envelope.topics : [];
+    const motions = Array.isArray(envelope.motions) ? envelope.motions : [];
+    const signals = Array.isArray(envelope.signals) ? envelope.signals : [];
+    base.metrics = {
+      intent_signal_score: toOptionalNumber(envelope.intent_signal_score) ?? toOptionalNumber(envelope.confidence_score),
+      topics_sample: topics.slice(0, 10),
+      motions: motions.slice(0, 10),
+      signal_count: signals.length,
     };
   } else if (kind === "ownership") {
     base.metrics = {
@@ -5025,6 +5039,7 @@ function buildScoreSignalSnapshots(companyNumber, includeRaw = false) {
     marketing_intelligence: buildSignalEnvelopeSnapshot("marketing_intelligence", getSetting(`marketing_intelligence_${companyNumber}`, null), includeRaw),
     reputation: buildSignalEnvelopeSnapshot("reputation", getSetting(`reputation_${companyNumber}`, null), includeRaw),
     hiring_signals: buildSignalEnvelopeSnapshot("hiring_signals", getSetting(`hiring_signals_${companyNumber}`, null), includeRaw),
+    intent_signals: buildSignalEnvelopeSnapshot("intent_signals", getSetting(`intent_signals_${companyNumber}`, null), includeRaw),
     ownership: buildSignalEnvelopeSnapshot("ownership", getSetting(`ownership_${companyNumber}`, null), includeRaw),
   };
 }
@@ -11173,6 +11188,15 @@ app.get("/api/integrations/status", (_req, res) => {
   };
   const hasTemplate = (value) => String(value || "").trim().length > 0;
   const isOfficialProspeoTemplate = (value) => /https?:\/\/api\.prospeo\.io\//i.test(String(value || ""));
+  const prospeoIntentTopics = String(
+    process.env.PROSPEO_INTENT_TOPIC_IDS
+      || process.env.PROSPEO_COMPANY_INTENT_TOPIC_IDS
+      || process.env.PROSPEO_INTENT_TOPIC_NAMES
+      || ""
+  )
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
@@ -11294,6 +11318,9 @@ app.get("/api/integrations/status", (_req, res) => {
       runtime: {
         official_api_template: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
         search_person_auto_fanout: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+        search_company_intent_auto_fanout: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE) && prospeoIntentTopics.length > 0,
+        intent_topics_configured: prospeoIntentTopics.length > 0,
+        intent_topic_count: prospeoIntentTopics.length,
       },
     },
     phantombuster: {
@@ -11510,7 +11537,14 @@ app.post("/api/signals/sync/:number", async (req, res) => {
 
   const monitored = getMonitoredCompany(companyNumber);
   const companyName = String(req.body?.company_name || monitored?.company_name || "").trim();
-  const companyDomain = String(req.body?.company_domain || req.body?.domain || "").trim();
+  const companyDomainHint = String(
+    req.body?.company_domain
+      || req.body?.domain
+      || monitored?.company_domain
+      || monitored?.company_website
+      || ""
+  ).trim();
+  const companyDomain = String(extractSeedImportDomain(companyDomainHint) || companyDomainHint).trim();
 
   try {
     const sync = await syncExternalSignals({
