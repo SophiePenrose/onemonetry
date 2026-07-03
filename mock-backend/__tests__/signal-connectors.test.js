@@ -517,7 +517,7 @@ describe("external signal connectors", () => {
     assert.equal(newHire.is_new_hire, true);
   });
 
-  it("fans out Prospeo configured intent topic names without suppressing people discovery", async () => {
+  it("fans out Prospeo configured intent topic names as IDs without suppressing people discovery", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;
     delete process.env.OPENCORPORATES_URL_TEMPLATE;
@@ -596,15 +596,15 @@ describe("external signal connectors", () => {
       if (href === "https://api.prospeo.io/search-company") {
         assert.deepEqual(parsedBody?.filters?.company?.websites?.include, ["intent-prospeo.example"]);
         assert.deepEqual(parsedBody?.filters?.company_intent?.topic_ids, [
-          "Payment Orchestration Platform",
-          "Payment Service Provider (PSP)",
-          "Payment Gateway",
-          "Checkout Optimization",
-          "Foreign Exchange Risk Management",
-          "Multi-Currency Accounting",
-          "Enterprise Spend Management",
-          "Virtual Cards",
-          "Payments API",
+          "10183",
+          "10720",
+          "10715",
+          "15036",
+          "10218",
+          "9880",
+          "9943",
+          "10748",
+          "10185",
         ]);
         assert.equal(parsedBody.filters.company_intent.active_research, true);
         assert.equal(parsedBody.filters.company_intent.in_depth_research, true);
@@ -660,6 +660,9 @@ describe("external signal connectors", () => {
     assert.equal(Array.isArray(intent?.signals), true);
     assert.equal(intent.topics.includes("Payment Orchestration Platform"), true);
     assert.equal(intent.topics.includes("Foreign Exchange Risk Management"), true);
+    assert.equal(intent.categories.includes("Finance IT"), true);
+    assert.equal(intent.categories.includes("Transactions & Payments"), true);
+    assert.equal(intent.signals.some((entry) => entry.topic_id === "10715" && entry.topic === "Payment Gateway"), true);
     assert.equal(intent.motions.includes("Merchant Acquiring"), true);
     assert.equal(intent.motions.includes("FX"), true);
     assert.equal(intent.intent_signal_score >= 0.8, true);

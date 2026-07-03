@@ -153,6 +153,18 @@ const PROSPEO_DEFAULT_PERSON_SENIORITIES = [
   "Manager",
 ];
 
+const PROSPEO_DEFAULT_INTENT_TOPIC_CATALOG = [
+  { topic_id: "10183", topic_name: "Payment Orchestration Platform", category: "Finance IT" },
+  { topic_id: "10720", topic_name: "Payment Service Provider (PSP)", category: "Transactions & Payments" },
+  { topic_id: "10715", topic_name: "Payment Gateway", category: "Transactions & Payments" },
+  { topic_id: "15036", topic_name: "Checkout Optimization", category: "eCommerce" },
+  { topic_id: "10218", topic_name: "Foreign Exchange Risk Management", category: "Other" },
+  { topic_id: "9880", topic_name: "Multi-Currency Accounting", category: "Accounting" },
+  { topic_id: "9943", topic_name: "Enterprise Spend Management", category: "Business Finance" },
+  { topic_id: "10748", topic_name: "Virtual Cards", category: "Transactions & Payments" },
+  { topic_id: "10185", topic_name: "Payments API", category: "Finance IT" },
+];
+
 const PROSPEO_PLAN_FALLBACK_FILTERS = new Set([
   "person_job_change",
   "person_time_in_current_role",
@@ -414,6 +426,71 @@ function parseDelimitedStringList(value) {
       .map((token) => token.trim())
       .filter(Boolean)
   );
+}
+
+function normalizeProspeoIntentTopicRecord(record = {}) {
+  if (!record || typeof record !== "object") return null;
+  const topicId = String(record.topic_id ?? record.topicId ?? record.id ?? "").trim();
+  const topicName = String(record.topic_name ?? record.topicName ?? record.name ?? record.label ?? "").trim();
+  const category = String(record.category ?? record.topic_category ?? record.topicCategory ?? "").trim();
+  if (!topicId && !topicName) return null;
+
+  return {
+    topic_id: topicId || topicName,
+    topic_name: topicName || topicId,
+    category: category || null,
+  };
+}
+
+function parseProspeoIntentTopicCatalog(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.topics)
+        ? parsed.topics
+        : (Array.isArray(parsed?.data) ? parsed.data : []));
+    return rows
+      .map((row) => normalizeProspeoIntentTopicRecord(row))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getProspeoIntentTopicCatalog() {
+  const map = new Map();
+  const rows = [
+    ...PROSPEO_DEFAULT_INTENT_TOPIC_CATALOG,
+    ...parseProspeoIntentTopicCatalog(process.env.PROSPEO_INTENT_TOPIC_CATALOG_JSON),
+  ];
+
+  for (const row of rows) {
+    const normalized = normalizeProspeoIntentTopicRecord(row);
+    if (!normalized) continue;
+    const idKey = String(normalized.topic_id || "").trim().toLowerCase();
+    const nameKey = String(normalized.topic_name || "").trim().toLowerCase();
+    if (idKey) map.set(`id:${idKey}`, normalized);
+    if (nameKey) map.set(`name:${nameKey}`, normalized);
+  }
+
+  return map;
+}
+
+function resolveProspeoIntentTopic(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const catalog = getProspeoIntentTopicCatalog();
+  return catalog.get(`id:${raw.toLowerCase()}`)
+    || catalog.get(`name:${raw.toLowerCase()}`)
+    || {
+      topic_id: raw,
+      topic_name: raw,
+      category: null,
+    };
 }
 
 function interpolateTemplate(template, context) {
@@ -741,10 +818,14 @@ function buildProspeoSearchPersonPayload(context = {}, options = {}) {
 }
 
 function getProspeoIntentTopicIds() {
-  return parseDelimitedStringList(
+  const configuredTopics = parseDelimitedStringList(
     process.env.PROSPEO_INTENT_TOPIC_IDS
       || process.env.PROSPEO_COMPANY_INTENT_TOPIC_IDS
       || process.env.PROSPEO_INTENT_TOPIC_NAMES
+  ).slice(0, 30);
+
+  return uniqueStrings(
+    configuredTopics.map((topic) => resolveProspeoIntentTopic(topic)?.topic_id || topic)
   ).slice(0, 30);
 }
 
@@ -2400,6 +2481,8 @@ function normalizeIntentSignalRecord(record = {}, sourceId = "", fallbackIndex =
     "interest",
     "category",
   ]);
+  const topicId = readStringField(input, ["topic_id", "topicId", "intent_topic_id", "intentTopicId"]);
+  const category = readStringField(input, ["topic_category", "topicCategory", "category"]);
   const evidence = readStringField(input, [
     "evidence",
     "description",
@@ -2434,7 +2517,9 @@ function normalizeIntentSignalRecord(record = {}, sourceId = "", fallbackIndex =
 
   return {
     signal_id: signalId || `intent_${fallbackIndex}`,
+    topic_id: topicId || null,
     topic: topic || motions[0] || "Commercial intent",
+    category: category || null,
     motions,
     strength: strength.label,
     strength_score: strength.score,
@@ -2535,12 +2620,14 @@ function parseIntentEnvelope(payload, sourceId, options = {}) {
   const score = Math.round(Math.max(0.25, Math.min(Number(normalizedScore || 0.5), 1)) * 100) / 100;
   const nowIso = new Date().toISOString();
   const motions = uniqueStrings(signals.flatMap((signal) => signal.motions || [])).slice(0, 8);
+  const categories = uniqueStrings(signals.map((signal) => signal.category)).slice(0, 10);
 
   return {
     updated_at: nowIso,
     fetched_at: nowIso,
     source: `${sourceId}_api`,
     topics: directTopics,
+    categories,
     signals,
     motions,
     recency_days: recencyDays,
@@ -3058,12 +3145,16 @@ function buildProspeoIntentEnvelope(payloadRoots = [], sourceId = "") {
     strongestScore = Math.max(strongestScore, stageScore);
 
     for (const topic of topicIds) {
-      const topicName = String(topic || "").trim();
+      const topicMeta = resolveProspeoIntentTopic(topic);
+      const topicName = String(topicMeta?.topic_name || topic || "").trim();
       if (!topicName) continue;
       topics.push(topicName);
+      const category = String(topicMeta?.category || "").trim();
       signals.push({
+        topic_id: String(topicMeta?.topic_id || topic || "").trim() || null,
         topic: topicName,
-        motions: inferIntentMotionsFromText(topicName),
+        category: category || null,
+        motions: inferIntentMotionsFromText(`${topicName} ${category}`),
         strength_score: stageScore,
         strength: stageScore >= 0.72 ? "high" : stageScore >= 0.42 ? "medium" : "low",
         evidence: `Company research activity matched configured topic: ${topicName}`,

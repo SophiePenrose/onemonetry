@@ -202,11 +202,12 @@ Observed endpoint behavior (people discovery):
 Observed endpoint behavior (company intent):
 
 - Path: `/search-company`
-- The UI sends intent topic names in `filters.company_intent.topic_ids[]`, for example `"Payment Orchestration Platform"` and `"Payment Service Provider (PSP)"`.
-- Configure selected topics with `PROSPEO_INTENT_TOPIC_IDS` (comma-separated). `PROSPEO_COMPANY_INTENT_TOPIC_IDS` and `PROSPEO_INTENT_TOPIC_NAMES` are also accepted aliases.
+- The UI may display topic names, but the public API should be configured with the internal topic IDs in `filters.company_intent.topic_ids[]`.
+- Configure selected topics with `PROSPEO_INTENT_TOPIC_IDS` (comma-separated). `PROSPEO_COMPANY_INTENT_TOPIC_IDS` and `PROSPEO_INTENT_TOPIC_NAMES` are also accepted aliases. For the selected nine topics, the connector maps readable names to IDs and normalizes successful matches back to readable topic names/categories.
+- Current selected topic map: `10183` Payment Orchestration Platform, `10720` Payment Service Provider (PSP), `10715` Payment Gateway, `15036` Checkout Optimization, `10218` Foreign Exchange Risk Management, `9880` Multi-Currency Accounting, `9943` Enterprise Spend Management, `10748` Virtual Cards, `10185` Payments API.
 - Stage flags are controlled by `PROSPEO_INTENT_ACTIVE_RESEARCH`, `PROSPEO_INTENT_IN_DEPTH_RESEARCH`, and `PROSPEO_INTENT_EARLY_RESEARCH`; when topic IDs are present, all three default to `true` to match the Prospeo UI payload.
 - Company-intent search is a separate fanout from normal people discovery so unmatched intent does not suppress relevant contact enrichment.
-- Live validation note: Prospeo may return `400 INTERNAL_ERROR` for `/search-company` intent filters even when bulk company enrichment and `/search-person` succeed. The connector keeps successful envelopes and records sub-request attempts; verify API entitlement/topic identifiers with Prospeo before interpreting this as no intent activity.
+- Live validation note: Prospeo may return `400 INTERNAL_ERROR` for `/search-company` intent filters even when bulk company enrichment and `/search-person` succeed. Sending numeric values as JSON numbers returns `INVALID_FILTERS`, so topic IDs should be sent as strings. The connector keeps successful envelopes and records sub-request attempts; verify API entitlement/topic access with Prospeo before interpreting this as no intent activity.
 
 Expected source structures accepted:
 
@@ -223,7 +224,7 @@ Expected source structures accepted:
 - data.results[].person / results[].person (search-person people)
 - data.results[].person.email.* (email value/status/revealed metadata)
 - data.results[].person current-role/job-change start dates, normalized into `person_candidates[].start_date`, `person_candidates[].is_new_hire`, and `new_senior_hires[]` when the role matches desired buyer personas.
-- connector_payloads[].request_payload.filters.company_intent.topic_ids[] from `/search-company`, normalized into `intent_signals_<company>` when Prospeo returns a positive match.
+- connector_payloads[].request_payload.filters.company_intent.topic_ids[] from `/search-company`, normalized into readable `intent_signals_<company>.topics[]`, `categories[]`, and `signals[].topic_id` when Prospeo returns a positive match.
 
 Primary envelope targets:
 

@@ -58,6 +58,7 @@ describe("EnrichmentSignalsPanel", () => {
           data: {
             intent_signal_score: 0.86,
             topics: ["Payment Gateway", "Checkout Optimization"],
+            categories: ["Transactions & Payments", "eCommerce"],
             motions: ["Merchant Acquiring"],
             signals: [{ topic: "Payment Gateway", strength: "high" }],
           },
@@ -110,6 +111,7 @@ describe("EnrichmentSignalsPanel", () => {
     expect(screen.getByText("recent desired-role hires: 1")).toBeInTheDocument();
     expect(screen.getByText("sample technologies: Shopify, Stripe")).toBeInTheDocument();
     expect(screen.getByText("sample topics: Payment Gateway, Checkout Optimization")).toBeInTheDocument();
+    expect(screen.getByText("categories: Transactions & Payments, eCommerce")).toBeInTheDocument();
     expect(screen.getByText("mapped motions: Merchant Acquiring")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Run Prospeo Sync" }));

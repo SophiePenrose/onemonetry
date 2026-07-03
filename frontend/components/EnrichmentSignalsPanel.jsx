@@ -34,6 +34,20 @@ function toCompactNumber(value) {
   return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(numeric);
 }
 
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    const normalized = String(value || "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
 function summarizeEnvelope(key, envelope) {
   const payload = envelope?.data && typeof envelope.data === "object" ? envelope.data : null;
   if (!payload) {
@@ -97,6 +111,9 @@ function summarizeEnvelope(key, envelope) {
 
   if (key === "intent_signals") {
     const topics = Array.isArray(payload.topics) ? payload.topics : [];
+    const categories = Array.isArray(payload.categories)
+      ? payload.categories
+      : uniqueStrings((Array.isArray(payload.signals) ? payload.signals : []).map((signal) => signal?.category));
     const motions = Array.isArray(payload.motions) ? payload.motions : [];
     const signals = Array.isArray(payload.signals) ? payload.signals : [];
     const sampleSignal = signals[0] || null;
@@ -104,6 +121,7 @@ function summarizeEnvelope(key, envelope) {
       `signal score: ${payload.intent_signal_score ?? payload.confidence_score ?? "n/a"}`,
       `topic count: ${topics.length}`,
       topics.length > 0 ? `sample topics: ${topics.slice(0, 5).join(", ")}` : "sample topics: none",
+      categories.length > 0 ? `categories: ${categories.slice(0, 5).join(", ")}` : null,
       motions.length > 0 ? `mapped motions: ${motions.slice(0, 5).join(", ")}` : "mapped motions: none",
       `signal count: ${signals.length}`,
       sampleSignal?.strength ? `sample strength: ${sampleSignal.strength}` : null,

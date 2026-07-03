@@ -95,13 +95,14 @@ Commercial/change context:
 
 - `company.funding.*`
 - `company.attributes.*` (for example B2B, free trial, pricing availability)
-- `company_intent.topic_ids[]` using the selected Prospeo/Bombora topic names from Intent settings, such as `Payment Orchestration Platform`, `Payment Gateway`, and `Foreign Exchange Risk Management`
+- `company_intent.topic_ids[]` using the selected Prospeo/Bombora topic IDs from Intent settings, such as `10183` (Payment Orchestration Platform), `10715` (Payment Gateway), and `10218` (Foreign Exchange Risk Management)
 
 Intent configuration:
 
-- Set `PROSPEO_INTENT_TOPIC_IDS` to the selected topic names or IDs, comma-separated.
+- Set `PROSPEO_INTENT_TOPIC_IDS` to the selected topic IDs, comma-separated. The connector also maps the nine selected topic names to their IDs for backwards compatibility.
+- The built-in selected topic map is: `10183` Payment Orchestration Platform, `10720` Payment Service Provider (PSP), `10715` Payment Gateway, `15036` Checkout Optimization, `10218` Foreign Exchange Risk Management, `9880` Multi-Currency Accounting, `9943` Enterprise Spend Management, `10748` Virtual Cards, `10185` Payments API. Add `PROSPEO_INTENT_TOPIC_CATALOG_JSON` if this catalog changes.
 - The backend sends those values to `/search-company` separately from `/search-person`, so people discovery still runs even when a company has no matching intent surge.
-- Positive intent matches normalize into `intent_signals_<company>` and influence scoring/Gemini as internal evidence only.
+- Positive intent matches normalize into `intent_signals_<company>` with readable topic names/categories and influence scoring/Gemini as internal evidence only.
 
 ## PhantomBuster
 

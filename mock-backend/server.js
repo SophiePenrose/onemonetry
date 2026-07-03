@@ -2219,12 +2219,14 @@ function summarizeGeminiSignalEvidence(companyNumber) {
     } : null,
     intent_signals: intent ? {
       topics: compactGeminiStrings(intent.topics || intent.intent_topics || intent.signals || [], 8, 100),
+      categories: compactGeminiStrings(intent.categories || [], 6, 80),
       motions: compactGeminiStrings(intent.motions || [], 6, 80),
       signal_score: Number(intent.intent_signal_score || intent.confidence_score || 0) || null,
       recency_days: Number(intent.recency_days || intent.freshness_days || 0) || null,
       confidence: sanitizeSingleLine(intent.confidence || intent.confidence_band || "", 60) || null,
       signals: compactGeminiRows(intent.signals, (row) => ({
         topic: sanitizeSingleLine(row?.topic || row?.signal || "", 100) || null,
+        category: sanitizeSingleLine(row?.category || "", 80) || null,
         motions: compactGeminiStrings(row?.motions || [], 4, 80),
         strength: sanitizeSingleLine(row?.strength || row?.confidence || "", 40) || null,
         recency_days: Number(row?.recency_days || 0) || null,
@@ -5007,11 +5009,13 @@ function buildSignalEnvelopeSnapshot(kind, envelope, includeRaw = false) {
     };
   } else if (kind === "intent_signals") {
     const topics = Array.isArray(envelope.topics) ? envelope.topics : [];
+    const categories = Array.isArray(envelope.categories) ? envelope.categories : [];
     const motions = Array.isArray(envelope.motions) ? envelope.motions : [];
     const signals = Array.isArray(envelope.signals) ? envelope.signals : [];
     base.metrics = {
       intent_signal_score: toOptionalNumber(envelope.intent_signal_score) ?? toOptionalNumber(envelope.confidence_score),
       topics_sample: topics.slice(0, 10),
+      categories_sample: categories.slice(0, 10),
       motions: motions.slice(0, 10),
       signal_count: signals.length,
     };
