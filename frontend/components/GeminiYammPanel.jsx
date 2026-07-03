@@ -21,6 +21,55 @@ function toFlag(value) {
   return ["1", "true", "yes", "on"].includes(token);
 }
 
+function normalizeLinkedInUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^linkedin\.com\//i.test(raw)) return `https://${raw}`;
+  if (/^www\.linkedin\.com\//i.test(raw)) return `https://${raw}`;
+  return raw;
+}
+
+function buildLinkedInSearchUrl(person = {}) {
+  const terms = [person.full_name, person.role].filter(Boolean).join(" ");
+  if (!terms.trim()) return "";
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(terms)}`;
+}
+
+function LinkedInAction({ person }) {
+  const profileUrl = normalizeLinkedInUrl(person?.linkedin_url || person?.linkedin || person?.linkedin_profile);
+  const searchUrl = buildLinkedInSearchUrl(person);
+  const href = profileUrl || searchUrl;
+  if (!href) return null;
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 8px",
+        borderRadius: 6,
+        border: "1px solid #93c5fd",
+        background: "#eff6ff",
+        color: "#1d4ed8",
+        fontSize: 11,
+        fontWeight: 700,
+        textDecoration: "none",
+      }}
+      title={profileUrl ? "Open LinkedIn profile" : "Search LinkedIn for this person"}
+    >
+      {profileUrl ? "LinkedIn" : "Find LinkedIn"}
+    </a>
+  );
+}
+
+LinkedInAction.propTypes = {
+  person: PropTypes.object,
+};
+
 function deriveLocalSequenceId(sequenceId) {
   const token = String(sequenceId || "").trim();
   if (!token) return null;
@@ -65,6 +114,7 @@ function parseRelevantIndividualsFromValue(value) {
       role: String(entry.role || "").trim() || null,
       email: String(entry.email || "").trim() || null,
       email_status: String(entry.email_status || "").trim() || null,
+      linkedin_url: String(entry.linkedin_url || entry.linkedin || entry.linkedin_profile || "").trim() || null,
       confidence: String(entry.confidence || "").trim() || null,
       persona_bucket: String(entry.persona_bucket || "").trim() || null,
     }))
@@ -95,8 +145,9 @@ function collectIdentifiedIndividuals(rows = []) {
     const fallbackEmailStatus = String(row?.StakeholderEmailStatus || "").trim();
     const fallbackConfidence = String(row?.StakeholderConfidence || "").trim();
     const fallbackPersonaBucket = String(row?.StakeholderPersonaBucket || "").trim();
+    const fallbackLinkedIn = String(row?.StakeholderLinkedIn || row?.LinkedIn || "").trim();
 
-    if (!fallbackName && !fallbackRole && !fallbackPersonId && !fallbackEmail) continue;
+    if (!fallbackName && !fallbackRole && !fallbackPersonId && !fallbackEmail && !fallbackLinkedIn) continue;
 
     const fallbackEntry = {
       person_id: fallbackPersonId || null,
@@ -104,6 +155,7 @@ function collectIdentifiedIndividuals(rows = []) {
       role: fallbackRole || null,
       email: fallbackEmail || null,
       email_status: fallbackEmailStatus || null,
+      linkedin_url: fallbackLinkedIn || null,
       confidence: fallbackConfidence || null,
       persona_bucket: fallbackPersonaBucket || null,
     };
@@ -208,6 +260,7 @@ function RowPreview({ title, row }) {
     ["FirstName", row.FirstName || ""],
     ["Stakeholder", row.Stakeholder || row.StakeholderFullName || ""],
     ["StakeholderRole", row.StakeholderRole || ""],
+    ["StakeholderLinkedIn", row.StakeholderLinkedIn || ""],
     ["StakeholderEmailStatus", row.StakeholderEmailStatus || ""],
     ["StakeholderConfidence", row.StakeholderConfidence || ""],
     ["StakeholderPersonaBucket", row.StakeholderPersonaBucket || ""],
@@ -638,6 +691,9 @@ export default function GeminiYammPanel({ companyId, companyNumber }) {
                     {person.full_name || "Unknown"}
                   </div>
                   <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Role:</strong> {person.role || "n/a"}</div>
+                  <div style={{ marginTop: 6, marginBottom: 4 }}>
+                    <LinkedInAction person={person} />
+                  </div>
                   <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Persona bucket:</strong> {person.persona_bucket || "n/a"}</div>
                   <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Email:</strong> {person.email || "n/a"}</div>
                   <div style={{ fontSize: 12, color: "#4b5563" }}><strong>Email status:</strong> {person.email_status || "n/a"}</div>

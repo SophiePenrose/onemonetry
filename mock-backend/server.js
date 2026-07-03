@@ -1448,6 +1448,7 @@ async function buildGoogleApiGeminiHandoffResponse(payload) {
         Stakeholder: String(stakeholder?.full_name || ""),
         StakeholderFullName: String(stakeholder?.full_name || ""),
         StakeholderRole: String(stakeholder?.role || ""),
+        StakeholderLinkedIn: String(stakeholder?.linkedin_url || ""),
         StakeholderEmailStatus: String(stakeholder?.email_status || ""),
         StakeholderConfidence: String(stakeholder?.confidence || ""),
         StakeholderPersonaBucket: String(stakeholder?.persona_bucket || ""),
@@ -1589,6 +1590,7 @@ function buildDevGeminiHandoffResponse(payload) {
         Stakeholder: String(stakeholder?.full_name || ""),
         StakeholderFullName: String(stakeholder?.full_name || ""),
         StakeholderRole: String(stakeholder?.role || ""),
+        StakeholderLinkedIn: String(stakeholder?.linkedin_url || ""),
         StakeholderEmailStatus: String(stakeholder?.email_status || ""),
         StakeholderConfidence: String(stakeholder?.confidence || ""),
         StakeholderPersonaBucket: String(stakeholder?.persona_bucket || ""),
@@ -1801,6 +1803,9 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
       const stakeholderEmailStatus = String(row.StakeholderEmailStatus || "").trim() || String(primaryStakeholder?.email_status || "").trim() || null;
       const stakeholderConfidence = String(row.StakeholderConfidence || "").trim() || String(primaryStakeholder?.confidence || "").trim() || null;
       const stakeholderPersonaBucket = String(row.StakeholderPersonaBucket || "").trim() || String(primaryStakeholder?.persona_bucket || "").trim() || null;
+      const stakeholderLinkedIn = String(row.StakeholderLinkedIn || row.StakeholderLinkedin || row.LinkedIn || "").trim()
+        || String(primaryStakeholder?.linkedin_url || "").trim()
+        || null;
       const rawCompanyName = String(pickGeminiRowValue(row.Company, output?.company_name) || "").trim();
       const normalizedCompanyName = normalizeCompanyDisplayName(rawCompanyName) || rawCompanyName || null;
       const companyNameReview = evaluateGeminiCompanyNameReview(rawCompanyName);
@@ -1821,6 +1826,7 @@ function extractGeminiYammRows(responsePayload = {}, approvalRows = [], requestP
         Stakeholder: stakeholderName,
         StakeholderFullName: String(row.StakeholderFullName || "").trim() || stakeholderName,
         StakeholderRole: stakeholderRole,
+        StakeholderLinkedIn: stakeholderLinkedIn,
         StakeholderEmailStatus: stakeholderEmailStatus,
         StakeholderConfidence: stakeholderConfidence,
         StakeholderPersonaBucket: stakeholderPersonaBucket,
@@ -1896,6 +1902,7 @@ function buildGeminiYammRowsCsv(rows = []) {
     "Stakeholder",
     "StakeholderFullName",
     "StakeholderRole",
+    "StakeholderLinkedIn",
     "StakeholderEmailStatus",
     "StakeholderConfidence",
     "StakeholderPersonaBucket",
@@ -2509,6 +2516,7 @@ function buildGeminiConnectorStakeholders(companyNumber = "") {
       persona_bucket: String(candidate?.persona_bucket || "").trim() || null,
       email_status: String(candidate?.email_status || (email ? "provided" : "missing")).trim().toLowerCase() || (email ? "provided" : "missing"),
       email,
+      linkedin_url: String(candidate?.linkedin_url || candidate?.linkedin || candidate?.linkedin_profile || "").trim() || null,
       email_guess: email ? { patterns: [email] } : { patterns: [] },
       source: String(candidate?.source || "connector_people").trim() || "connector_people",
     };
@@ -2548,6 +2556,7 @@ function normalizeGeminiRequestStakeholders(stakeholders = [], fallbackCompanyNu
       .toLowerCase() || (email ? "provided" : "missing");
     const confidence = String(rawStakeholder.confidence || "medium").trim().toLowerCase() || "medium";
     const personaBucket = normalizeGeminiPersonaBucket(rawStakeholder.persona_bucket || role);
+    const linkedinUrl = String(rawStakeholder.linkedin_url || rawStakeholder.linkedin || rawStakeholder.linkedin_profile || "").trim() || null;
 
     normalized.push({
       person_id: personId,
@@ -2555,6 +2564,7 @@ function normalizeGeminiRequestStakeholders(stakeholders = [], fallbackCompanyNu
       role,
       email,
       email_status: emailStatus,
+      linkedin_url: linkedinUrl,
       persona_bucket: personaBucket,
       confidence,
     });
@@ -2577,6 +2587,7 @@ function buildGeminiRelevantIndividualsList(stakeholders = []) {
       role: String(stakeholder?.role || "").trim() || null,
       email: String(stakeholder?.email || "").trim() || null,
       email_status: String(stakeholder?.email_status || "").trim() || null,
+      linkedin_url: String(stakeholder?.linkedin_url || "").trim() || null,
       confidence: String(stakeholder?.confidence || "").trim() || null,
       persona_bucket: String(stakeholder?.persona_bucket || "").trim() || null,
     }))

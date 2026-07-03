@@ -42,6 +42,64 @@ function roleChangeLabel(person = {}) {
   return dateLabel ? `${label} ${dateLabel}` : label;
 }
 
+function normalizeLinkedInUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^linkedin\.com\//i.test(raw)) return `https://${raw}`;
+  if (/^www\.linkedin\.com\//i.test(raw)) return `https://${raw}`;
+  return raw;
+}
+
+function buildLinkedInSearchUrl(person = {}, companyNumber = "") {
+  const terms = [
+    person.full_name || person.name,
+    person.role,
+    person.current_company_name,
+    person.company_name,
+    companyNumber,
+  ].filter(Boolean).join(" ");
+  if (!terms.trim()) return "";
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(terms)}`;
+}
+
+function LinkedInAction({ person, companyNumber }) {
+  const profileUrl = normalizeLinkedInUrl(person?.linkedin_url || person?.linkedin || person?.linkedin_profile);
+  const searchUrl = buildLinkedInSearchUrl(person, companyNumber);
+  const href = profileUrl || searchUrl;
+  if (!href) return null;
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        minHeight: 22,
+        padding: "3px 8px",
+        borderRadius: 6,
+        border: "1px solid #93c5fd",
+        background: "#eff6ff",
+        color: "#1d4ed8",
+        fontSize: 11,
+        fontWeight: 700,
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+      }}
+      title={profileUrl ? "Open LinkedIn profile" : "Search LinkedIn for this person"}
+    >
+      {profileUrl ? "LinkedIn" : "Find LinkedIn"}
+    </a>
+  );
+}
+
+LinkedInAction.propTypes = {
+  person: PropTypes.object,
+  companyNumber: PropTypes.string,
+};
+
 function Badge({ children, tone = "unknown" }) {
   const meta = STATUS_META[tone] || STATUS_META.unknown;
   return (
@@ -267,7 +325,10 @@ export default function ProspectWorkspacePanel({ companyId, companyNumber, onSel
               <div key={key} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, background: "#f8fafc" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
                   <div style={{ minWidth: 220, flex: "1 1 260px" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{person.full_name || "Unknown person"}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{person.full_name || "Unknown person"}</div>
+                      <LinkedInAction person={person} companyNumber={companyNumber} />
+                    </div>
                     <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>{person.role || "Role unavailable"}</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                       {person.source && <Badge>{person.source.replaceAll("_", " ")}</Badge>}
