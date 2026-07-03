@@ -68,6 +68,91 @@ Design goals:
           "Open finance/treasury roles indicate active pain",
           "Incumbent stack suggests switching opportunity"
         ],
+        "evidence_pack": {
+          "contract_version": "prospecting-evidence-pack-v1",
+          "product_knowledge_ref": "docs/revolut-business-product-knowledge.md",
+          "dossier_tier": "B",
+          "qualification": {
+            "segment": "Mid-Market",
+            "analysis_status": "ready",
+            "filter_reason": "eligible",
+            "latest_filing_date": "2026-06-19"
+          },
+          "product_fit": {
+            "best_motion": "Merchant Acquiring",
+            "motion_scores": [
+              {
+                "motion": "Merchant Acquiring",
+                "score": 0.82,
+                "confidence": "high",
+                "evidence": "Ecommerce stack and checkout/payment evidence"
+              }
+            ],
+            "recommended_use_cases": [
+              {
+                "product": "Payment Gateway",
+                "priority": "High",
+                "why_fit": "Online sales and payment acceptance evidence",
+                "example_use_case": "Settle card sales into the operating account"
+              }
+            ]
+          },
+          "filing_analysis": {
+            "recommended_approach": "Lead with one high-confidence payment operations pain.",
+            "international_exposure": { "present": true, "currencies": ["EUR", "USD"] },
+            "competitors_detected": [],
+            "pain_indicators": [
+              {
+                "pain": "Cross-border payment and settlement complexity",
+                "evidence": "Filing and commerce signals",
+                "severity": "medium"
+              }
+            ],
+            "evidence_snippets": {
+              "pains": ["Directors reference international expansion and cost control"]
+            },
+            "sequence_inputs": {
+              "strongest_opening": "Recent growth plus ecommerce payments complexity"
+            }
+          },
+          "external_signals": {
+            "hiring_signals": {
+              "total_open_roles": 4,
+              "finance_roles_open": 1,
+              "treasury_roles_open": 0,
+              "ecommerce_roles_open": 1,
+              "person_candidates_count": 3,
+              "new_senior_hires": [
+                {
+                  "full_name": "Jane Doe",
+                  "role": "Director of Ecommerce",
+                  "start_date": "2026-05-01",
+                  "persona_bucket": "operations_lead"
+                }
+              ]
+            },
+            "intent_signals": {
+              "topics": ["accelerated checkout", "payment orchestration"],
+              "motions": ["Merchant Acquiring", "Revolut Pay"],
+              "signal_score": 0.78,
+              "recency_days": 7,
+              "confidence": "medium",
+              "signals": [
+                {
+                  "topic": "accelerated checkout",
+                  "motions": ["Revolut Pay"],
+                  "strength": "high",
+                  "recency_days": 7,
+                  "evidence": "Recent topic activity around checkout conversion"
+                }
+              ]
+            }
+          },
+          "outreach_guidance": {
+            "safe_product_mentions": ["Payment Gateway", "Revolut Pay"],
+            "do_not_mention": ["Prospeo", "Cursor", "intent data", "enrichment tooling"]
+          }
+        },
         "connector_evidence": {
           "prospeo": {
             "freshness_days": 2,
@@ -98,10 +183,26 @@ Design goals:
     "forbidden_phrases_enforced": true,
     "max_steps_per_sequence": 6,
     "require_citations": true,
-    "fail_closed_on_qc": true
+    "fail_closed_on_qc": true,
+    "product_knowledge_ref": "docs/revolut-business-product-knowledge.md",
+    "product_claim_policy": "approved_products_only_connected_stack_no_guaranteed_pricing"
   }
 }
 ```
+
+## Evidence Pack Semantics
+
+`insights.evidence_pack` is the app-owned research dossier passed to Gemini/YAMM generation. It is intentionally structured so Gemini writes from prepared evidence rather than performing new research.
+
+Rules:
+
+1. The app owns filing ingestion, director extraction, contact matching, scoring, product-fit gating, and stakeholder ranking.
+2. Gemini may use the evidence pack to select wording, role framing, citations, and sequence step emphasis.
+3. External provider names and internal signal labels are never prospect-facing. They can appear in evidence labels/citations only when used for audit metadata.
+4. Cursor/intent indicators should be normalised into `intent_signals` or into existing signal envelopes before generation. Sequence copy should translate them into natural commercial hypotheses.
+5. Recent desired-role hires belong in `external_signals.hiring_signals.new_senior_hires[]`; they can create a "why now" hook, but they should not override product-fit gating.
+6. Product mentions must be drawn from `product_knowledge_ref` and `product_fit.recommended_use_cases`.
+7. If dossier tier is `C`, copy should use lower-confidence language. If dossier tier is `D`, no automatic sequence should be generated.
 
 ## Response Schema (Gemini -> App)
 
@@ -420,6 +521,7 @@ Recommended local flags:
 - `GEMINI_API_KEY=...` (or `GOOGLE_API_KEY=...`)
 - `GEMINI_API_MODEL=gemini-2.5-flash`
 - `GEMINI_HANDOFF_GOOGLE_API_TIMEOUT_MS=30000`
+- `GEMINI_HANDOFF_INSIGHTS_MAX_CHARS=6000`
 
 Notes:
 

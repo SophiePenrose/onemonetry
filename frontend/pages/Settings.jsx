@@ -72,14 +72,16 @@ const OWNERSHIP_TRIAGE_QUERY_PARAMS = {
   impact: "ownership_impact",
 };
 
-const TARGETED_SYNC_CONNECTOR_PRIORITY = ["prospeo", "opencorporates", "endole"];
+const TARGETED_SYNC_CONNECTOR_PRIORITY = ["prospeo", "intent", "opencorporates", "endole"];
 const TARGETED_SYNC_CONNECTOR_LABELS = {
   prospeo: "Prospeo",
+  intent: "Intent Signals",
   opencorporates: "OpenCorporates",
   endole: "Endole",
 };
 const TARGETED_SYNC_CONNECTOR_ENV_HINTS = {
-  prospeo: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
+  prospeo: "PROSPEO_URL_TEMPLATE + PROSPEO_API_KEY (official API)",
+  intent: "INTENT_SIGNALS_URL_TEMPLATE (+ optional INTENT_SIGNALS_API_KEY)",
   opencorporates: "OPENCORPORATES_URL_TEMPLATE (+ optional OPENCORPORATES_API_TOKEN)",
   endole: "ENDOLE_API_KEY, ENDOLE_URL_TEMPLATE",
 };
@@ -1686,7 +1688,7 @@ export default function Settings({ onNavigateToCompany }) {
                 Targeted Connector Sync
               </div>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
-                Run a single connector for one company. Prefers Prospeo, then OpenCorporates, then Endole.
+                Run a single connector for one company. Prefers Prospeo, then intent signals, then OpenCorporates, then Endole.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <input

@@ -516,6 +516,8 @@ async function chFetch(urlPath, retries = 2) {
       if (attempt === retries) return { error: true, message: err.message };
     }
   }
+
+  return { error: true, status: 429, message: "CH API error: 429" };
 }
 
 async function chFetchDocumentText(url) {
@@ -600,7 +602,7 @@ export async function lookupCompany(companyNumber, options = {}) {
   }
 
   const profile = await chFetch(`/company/${padded}`);
-  if (profile.error) return { error: true, message: profile.message };
+  if (profile?.error) return { error: true, message: profile.message };
 
   const filings = await chFetch(`/company/${padded}/filing-history?category=accounts&items_per_page=5`);
   const includeCharges = !!options?.include_charges;
@@ -652,7 +654,7 @@ export async function lookupCompany(companyNumber, options = {}) {
           period_start: profile.accounts.accounting_reference_date?.month,
         }
       : null,
-    recent_filings: filings.error
+    recent_filings: filings?.error
       ? []
       : (filings.items || []).map((f) => ({
           date: f.date,

@@ -89,18 +89,21 @@ FORBIDDEN PHRASES (NEVER generate — each is Major -25%):
 - False promises: "You will save", "Guaranteed savings", "You'll definitely"
 - Pressure: "Limited time", "Act now", "Last chance", "Sign up today"
 - "I never heard back from you"
-- "60-80% cheaper" (not approved)
+- "60-80% cheaper", "50-70% cheaper", "20-30% cheaper", or "2-4x cheaper than [competitor]"
+- Internal provider/signal references: "Prospeo", "Cursor", "intent data shows", "enrichment tooling"
+- Negative named-competitor comparisons
 - Any % or £ figure NOT in approved claims list
 - "Sorry to bother you", "Hope you don't mind"
 - "solution", "innovative", "cutting-edge", "state-of-the-art", "leverage" (verb), "synergy"
 
 APPROVED CLAIMS (use ONLY these):
-General: "70M total customers" | "20,000+ new businesses monthly" | "99.99%+ uptime"
-Spend¹: "6% saved on spend" | "88% faster expense management" | "86% time saved"
-FX²: "Exchange at interbank rate" | "0% markup within plan allowance" | "2-4x cheaper than Pleo"
-Acquiring: "24-hour settlement (vs 3-7 days)" | "34 currencies L4L" | "9-second Revolut Pay checkout" | "70M+ retail users"
+Product source of truth: docs/revolut-business-product-knowledge.md
+General: do not quote headline stats unless present in runtime context and safe for external use
+Spend: "88% faster expense management" where supported
+FX²: "Exchange at interbank rate" | "0% markup within plan allowance"
+Acquiring: "24-hour settlement (vs 3-7 days)" | "33+ currencies L4L" | "9-second Revolut Pay checkout" | "70M+ retail users"
 Cards: "Up to 200 virtual cards" | "Issue cards in minutes" | "Auto-enforced spend controls"
-Forwards: "Contracts up to £15M" | "0.8% markup GBP/EUR/USD" | "Lock rates up to 24 months"
+Forwards: "Lock rates for commercial obligations" with deposit, tenor, notional, currency, eligibility, and availability constraints
 
 DISCLAIMER ¹: "This percentage is illustrative of savings that could be achieved, but is not guaranteed."
 DISCLAIMER ²: "During market hours within plan allowance."

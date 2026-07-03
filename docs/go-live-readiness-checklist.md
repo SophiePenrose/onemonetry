@@ -12,6 +12,7 @@ Use this checklist to validate the system before wiring paid API keys and enabli
 
 - [ ] Scoring logic still follows `master_prompt_outline_v2.md` and `revolut_prospecting_app_supplementary_context.md`.
 - [ ] Email generation still follows `prompts/email-generation-v7.txt` and `docs/email-generation-architecture-v7.md`.
+- [ ] Product claims still follow `docs/revolut-business-product-knowledge.md`.
 - [ ] External signal mapping still follows `docs/signal-connectors-contract.md`.
 - [ ] Gemini handoff schema and optional summary flags still match `docs/gemini-handoff-contract.md`.
 
@@ -63,7 +64,7 @@ curl -X POST "http://localhost:8000/api/signals/sync/<company_number>" \
   -d '{"connectors":["<connector_id>"]}'
 ```
 
-2. Verify envelope writes (`ownership_*`, `hiring_signals_*`, `reputation_*`, `marketing_intelligence_*`, `tech_stack_*`).
+2. Verify envelope writes (`ownership_*`, `hiring_signals_*`, `reputation_*`, `marketing_intelligence_*`, `tech_stack_*`, `intent_signals_*`).
 3. Verify scoring and shortlist remain explainable and stable after enrichment.
 4. Record latency, error rate, and payload quality before enabling next connector.
 
@@ -79,7 +80,8 @@ curl -X POST "http://localhost:8000/api/signals/sync/<company_number>" \
 Wire API keys in staging in this order:
 
 1. `PROSPEO` / `PHANTOMBUSTER` (new connector parity covered)
-2. `SIMILARWEB` / `BUILTWITH`
-3. `ADZUNA` / `CRUNCHBASE` / `CLEARBIT`
+2. `INTENT_SIGNALS` (Cursor or other mapped intent source)
+3. `SIMILARWEB` / `BUILTWITH`
+4. `ADZUNA` / `CRUNCHBASE` / `CLEARBIT`
 
 After each step, re-run the Phase 1.B command block.

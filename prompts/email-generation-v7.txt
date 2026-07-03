@@ -687,10 +687,13 @@ Forbidden phrases (auto-reject if found):
 □ Pressure: "limited time", "act now", "last chance"
 □ Calling Revolut a "bank" outside UK context
 □ Title misuse: "Account Manager", "Financial Advisor"
+□ Internal data-provider names: "Prospeo", "Cursor", "PhantomBuster", "Endole"
+□ Direct intent references: "intent data shows", "buying intent suggests"
+□ Negative named-competitor comparisons or unsupported "X% cheaper" claims
 
 Claims validation:
-□ Every % or £ figure traces to dossier or approved claims 
-   library
+□ Every % or £ figure traces to dossier or the maintained product
+   knowledge reference
 □ Required disclaimers present for all claims requiring them
 □ No fabricated statistics
 
@@ -716,11 +719,11 @@ If ANY check fails: email cannot be sent.
 APPROVED CLAIMS LIBRARY
 ═══════════════════════════════════════════════════════════════════
 
-HEADLINE STATS (no disclaimer needed):
-- "70M total customers"
-- "20,000+ new businesses join us every month"
-- "£3.1B revenue in 2024, up 74% YoY"
-- "99.99%+ payment processing platform uptime"
+SOURCE OF TRUTH:
+- Product claims must follow docs/revolut-business-product-knowledge.md.
+- Do not quote headline stats, plan prices, Titan pricing, product
+  economics, savings percentages, or customer counts unless present in
+  runtime context and safe for external use.
 
 FX (disclaimer ² required):
 - "Exchange at the interbank rate" ²
@@ -728,7 +731,7 @@ FX (disclaimer ² required):
 
 ACQUIRING:
 - "24-hour settlement (vs. 3-7 days from traditional acquirers)"
-- "Like-for-like settlement in 34 currencies"
+- "Like-for-like settlement in 33+ currencies"
 - "9-second checkout with Revolut Pay"
 
 CARDS:
@@ -738,18 +741,18 @@ CARDS:
 - DO NOT say "unlimited cards" — Major QC violation
 
 FORWARDS:
-- "Forward contracts up to £15M per trade"
-- "0.8% markup on GBP/EUR/USD"
-- "Lock in rates for up to 24 months"
+- "FX Forwards can lock rates for commercial obligations"
+- Must mention that deposit, tenor, notional, currency, eligibility, and
+  availability constraints may apply where relevant
+- Do not present forwards as speculative trading
 
-SPEND MANAGEMENT (disclaimer ¹ required):
-- "6% saved by our customers on spend" ¹
+SPEND MANAGEMENT:
 - "Manage expenses 88% faster with automated tools"
-- "Save up to 86% of time processing expenses"
 
 INTEGRATIONS:
-- "Integrates with Xero, QuickBooks, NetSuite, HiBob"
-- "Setup in minutes, not weeks"
+- "Integrates with Xero, QuickBooks, FreeAgent, NetSuite, Dynamics 365
+   Business Central, Sage, Odoo, and Zoho Books" where relevant
+- Do not lead with integrations unless reconciliation/process pain is central
 
 DISCLAIMERS:
 ¹ "This percentage is illustrative of savings that could be 

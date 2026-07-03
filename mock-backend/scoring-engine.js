@@ -590,6 +590,14 @@ const HIRING_SIGNAL_WEIGHTS = {
     "Head of Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
     "VP Finance": { boost: 0.18, velocity_trigger: "new_finance_leader" },
     "Financial Controller": { boost: 0.12, velocity_trigger: null },
+    "Head of Treasury": { boost: 0.16, velocity_trigger: "new_treasury_leader" },
+    "Treasury Manager": { boost: 0.10, velocity_trigger: "new_treasury_leader" },
+    "Head of Payments": { boost: 0.14, velocity_trigger: "new_payments_leader" },
+    "Payments Manager": { boost: 0.10, velocity_trigger: "new_payments_leader" },
+    "Procurement Manager": { boost: 0.08, velocity_trigger: "new_procurement_leader" },
+    "Head of Ecommerce": { boost: 0.14, velocity_trigger: "new_ecommerce_leader" },
+    "Director of Ecommerce": { boost: 0.14, velocity_trigger: "new_ecommerce_leader" },
+    "Ecommerce Manager": { boost: 0.09, velocity_trigger: "new_ecommerce_leader" },
   },
   motion_signals: {
     "Treasury Manager": { motions: { "FX": 0.20, "FX Forwards": 0.18 }, pain_boost: 0.10 },
@@ -599,12 +607,61 @@ const HIRING_SIGNAL_WEIGHTS = {
     "Accounts Payable": { motions: { "Cards": 0.10, "Spend Management": 0.12 }, pain_boost: 0.05 },
     "Accounts Receivable": { motions: { "Merchant Acquiring": 0.08 }, pain_boost: 0.04 },
     "Procurement Manager": { motions: { "FX": 0.08, "Cards": 0.10, "Spend Management": 0.15 }, pain_boost: 0.06 },
+    "Head of Payments": { motions: { "Merchant Acquiring": 0.12, "Revolut Pay": 0.12, "API Integrations": 0.06 }, pain_boost: 0.06 },
+    "Payments Manager": { motions: { "Merchant Acquiring": 0.10, "Revolut Pay": 0.10 }, pain_boost: 0.05 },
     "Ecommerce Manager": { motions: { "Merchant Acquiring": 0.15, "Revolut Pay": 0.12 }, pain_boost: 0.06 },
+    "Head of Ecommerce": { motions: { "Merchant Acquiring": 0.18, "Revolut Pay": 0.16, "API Integrations": 0.08 }, pain_boost: 0.08 },
+    "Director of Ecommerce": { motions: { "Merchant Acquiring": 0.18, "Revolut Pay": 0.16, "API Integrations": 0.08 }, pain_boost: 0.08 },
     "Head of Digital": { motions: { "Merchant Acquiring": 0.12, "Revolut Pay": 0.10, "API Integrations": 0.10 }, pain_boost: 0.05 },
     "International Manager": { motions: { "FX": 0.15, "FX Forwards": 0.10 }, pain_boost: 0.08 },
     "EMEA Director": { motions: { "FX": 0.12, "FX Forwards": 0.08 }, pain_boost: 0.06 },
   },
 };
+
+const INTENT_MOTION_SIGNALS = [
+  {
+    motion: "FX",
+    patterns: [
+      /\bfx\b/i,
+      /\bforeign exchange\b/i,
+      /\bmulti[-\s]?currency\b/i,
+      /\bcross[-\s]?border\b/i,
+      /\binternational payments?\b/i,
+      /\boverseas supplier/i,
+    ],
+    boost: 0.1,
+  },
+  {
+    motion: "FX Forwards",
+    patterns: [/\bforward/i, /\bhedg(?:e|ing)\b/i, /\bcurrency risk\b/i],
+    boost: 0.08,
+  },
+  {
+    motion: "Cards",
+    patterns: [/\bvirtual card/i, /\bcorporate card/i, /\bcard programme\b/i],
+    boost: 0.08,
+  },
+  {
+    motion: "Spend Management",
+    patterns: [/\bspend\b/i, /\bexpense/i, /\bprocurement\b/i, /\baccounts payable\b/i, /\bsupplier payment/i],
+    boost: 0.09,
+  },
+  {
+    motion: "Merchant Acquiring",
+    patterns: [/\bmerchant\b/i, /\bacquir/i, /\bpayment gateway\b/i, /\bpsp\b/i, /\bsettlement\b/i, /\bpayout\b/i],
+    boost: 0.1,
+  },
+  {
+    motion: "Revolut Pay",
+    patterns: [/\bcheckout\b/i, /\bcart\b/i, /\bwallet\b/i, /\bpayment button\b/i, /\brevolut pay\b/i],
+    boost: 0.09,
+  },
+  {
+    motion: "API Integrations",
+    patterns: [/\bapi\b/i, /\bintegration/i, /\bembedded finance\b/i, /\bautomation\b/i],
+    boost: 0.07,
+  },
+];
 
 const HEADCOUNT_GROWTH_THRESHOLDS = [
   { band: "strong", min_pct: 20, propensity_boost: 0.12, urgency_boost: 0.08 },
@@ -678,6 +735,7 @@ const ENRICHMENT_STALENESS = {
   hiring_signals: { max_age_days: 30, decay_after_days: 14 },
   website: { max_age_days: 90, decay_after_days: 60 },
   marketing: { max_age_days: 60, decay_after_days: 30 },
+  intent: { max_age_days: 45, decay_after_days: 21 },
   reputation: { max_age_days: 180, decay_after_days: 120 },
   ownership: { max_age_days: 365, decay_after_days: 240 },
 };
@@ -719,6 +777,7 @@ function asArray(value) {
 function normalizeLookupToken(value) {
   return String(value || "")
     .toLowerCase()
+    .replace(/\be[\s-]*commerce\b/g, "ecommerce")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1201,6 +1260,16 @@ function scoreHiringSignals(hiringData, freshnessScale = 1) {
       adjustments.push({ type: "new_senior_hire", role, months_since: Math.round(monthsSinceHire), boost: Math.round(delta * 100) / 100 });
       break;
     }
+
+    for (const [pattern, config] of Object.entries(HIRING_SIGNAL_WEIGHTS.motion_signals)) {
+      if (!roleToken.includes(normalizeLookupToken(pattern))) continue;
+      for (const [motion, boost] of Object.entries(config.motions || {})) {
+        motionBoosts[motion] = (motionBoosts[motion] || 0) + (Number(boost || 0) * 0.8);
+      }
+      painBoost += Number(config.pain_boost || 0) * 0.8;
+      adjustments.push({ type: "new_hire_motion_signal", role, pattern });
+      break;
+    }
   }
 
   const openRoleGroups = [
@@ -1432,6 +1501,131 @@ function scoreMarketingIntelligence(marketingData, freshnessScale = 1) {
     pain_boost: Math.min(painBoost * scaler, 0.10),
     commercial_value_boost: Math.max(0, commercialValueBoost * scaler),
     adjustments,
+  };
+}
+
+function intentStrengthScore(signal = {}, fallback = 0.5) {
+  const numeric = toFiniteNumber(
+    signal.strength_score,
+    toFiniteNumber(signal.intent_signal_score, toFiniteNumber(signal.confidence_score, NaN))
+  );
+  if (Number.isFinite(numeric)) {
+    return numeric > 1 ? clamp01(numeric / 100) : clamp01(numeric);
+  }
+
+  const label = normalizeLookupToken(signal.strength || signal.confidence || signal.confidence_band || signal.level);
+  if (label.includes("high") || label.includes("strong") || label.includes("surging") || label.includes("hot")) return 0.85;
+  if (label.includes("medium") || label.includes("moderate") || label.includes("warm")) return 0.58;
+  if (label.includes("low") || label.includes("weak") || label.includes("cold")) return 0.3;
+  return fallback;
+}
+
+function intentRecencyMultiplier(days) {
+  const age = Number(days);
+  if (!Number.isFinite(age)) return 0.8;
+  if (age <= 14) return 1;
+  if (age <= 30) return 0.85;
+  if (age <= 60) return 0.6;
+  if (age <= 120) return 0.35;
+  return 0.2;
+}
+
+function normalizeIntentSignalRows(intentData = {}) {
+  const rows = asArray(intentData.signals)
+    .filter((entry) => entry && typeof entry === "object");
+
+  if (rows.length > 0) return rows;
+
+  const topics = extractTextEntries(intentData, ["topics", "intent_topics", "keywords"]);
+  return topics.map((topic) => ({
+    topic,
+    strength_score: intentData.intent_signal_score ?? intentData.confidence_score ?? 0.5,
+    recency_days: intentData.recency_days,
+    motions: intentData.motions,
+  }));
+}
+
+function scoreIntentSignals(intentData, freshnessScale = 1) {
+  if (!intentData || typeof intentData !== "object") {
+    return {
+      applied: false,
+      motion_boosts: {},
+      urgency_boost: 0,
+      pain_boost: 0,
+      propensity_boost: 0,
+      topics: [],
+      adjustments: [],
+    };
+  }
+
+  const scaler = Math.max(0, Math.min(Number(freshnessScale || 1), 1));
+  const signalRows = normalizeIntentSignalRows(intentData);
+  const envelopeStrength = intentStrengthScore(intentData, 0.5);
+  const envelopeRecency = intentData.recency_days;
+  const topics = uniqueStrings([
+    ...extractTextEntries(intentData, ["topics", "intent_topics", "keywords"]),
+    ...signalRows.map((signal) => signal.topic),
+  ]).slice(0, 12);
+
+  const motionBoosts = {};
+  const adjustments = [];
+  let strongestWeightedIntent = 0;
+  let painBoost = 0;
+
+  for (const signal of signalRows) {
+    const strength = intentStrengthScore(signal, envelopeStrength);
+    const recency = intentRecencyMultiplier(signal.recency_days ?? envelopeRecency);
+    const weighted = strength * recency;
+    strongestWeightedIntent = Math.max(strongestWeightedIntent, weighted);
+
+    const signalMotions = uniqueStrings(asArray(signal.motions || signal.motion || signal.product_motion));
+    const text = [
+      signal.topic,
+      signal.evidence,
+      signal.category,
+      signal.intent,
+      ...signalMotions,
+    ].filter(Boolean).join(" ");
+
+    for (const config of INTENT_MOTION_SIGNALS) {
+      const explicitMotionMatch = signalMotions.some((motion) => normalizeLookupToken(motion) === normalizeLookupToken(config.motion));
+      const textMatch = config.patterns.some((pattern) => pattern.test(text));
+      if (!explicitMotionMatch && !textMatch) continue;
+
+      const delta = Number(config.boost || 0) * weighted;
+      motionBoosts[config.motion] = (motionBoosts[config.motion] || 0) + delta;
+      adjustments.push({
+        source: "intent_signal",
+        motion: config.motion,
+        topic: signal.topic || config.motion,
+        strength: Math.round(strength * 100) / 100,
+        recency_multiplier: Math.round(recency * 100) / 100,
+      });
+
+      if (["Merchant Acquiring", "Revolut Pay", "Spend Management"].includes(config.motion)) {
+        painBoost += Math.min(delta * 0.35, 0.025);
+      }
+    }
+  }
+
+  if (signalRows.length === 0 && topics.length > 0) {
+    strongestWeightedIntent = envelopeStrength * intentRecencyMultiplier(envelopeRecency);
+  }
+
+  const scaledMotionBoosts = {};
+  for (const [motion, boost] of Object.entries(motionBoosts)) {
+    scaledMotionBoosts[motion] = Math.round((Number(boost || 0) * scaler) * 1000) / 1000;
+  }
+
+  const intentMomentum = strongestWeightedIntent * scaler;
+  return {
+    applied: adjustments.length > 0 || topics.length > 0,
+    motion_boosts: scaledMotionBoosts,
+    urgency_boost: Math.min(intentMomentum * 0.08, 0.08),
+    pain_boost: Math.min(painBoost * scaler, 0.05),
+    propensity_boost: Math.min(intentMomentum * 0.06, 0.06),
+    topics,
+    adjustments: adjustments.slice(0, 12),
   };
 }
 
@@ -2833,6 +3027,7 @@ export function scoreCompany(companyNumber) {
   const techStackEnvelope = resolveEnrichmentPayload(`tech_stack_${companyNumber}`, "tech_stack");
   const websiteEnvelope = resolveEnrichmentPayload(`website_intelligence_${companyNumber}`, "website");
   const marketingEnvelope = resolveEnrichmentPayload(`marketing_intelligence_${companyNumber}`, "marketing");
+  const intentEnvelope = resolveEnrichmentPayload(`intent_signals_${companyNumber}`, "intent");
   const reputationEnvelope = resolveEnrichmentPayload(`reputation_${companyNumber}`, "reputation");
   const hiringEnvelope = resolveEnrichmentPayload(`hiring_signals_${companyNumber}`, "hiring_signals");
   const ownershipEnvelope = resolveEnrichmentPayload(`ownership_${companyNumber}`, "ownership");
@@ -2878,6 +3073,9 @@ export function scoreCompany(companyNumber) {
    const mktSignals = scoreMarketingIntelligence(marketingEnvelope.data, marketingEnvelope.decay_multiplier || 0);
    const marketingMotionAdjustments = applyMotionBoostMap(motionScores, mktSignals.motion_boosts, "marketing", 0.24, 1);
 
+   const intentSignals = scoreIntentSignals(intentEnvelope.data, intentEnvelope.decay_multiplier || 0);
+   const intentMotionAdjustments = applyMotionBoostMap(motionScores, intentSignals.motion_boosts, "intent", 0.18, 1);
+
    const repSignals = scoreReputationSignals(reputationEnvelope.data, reputationEnvelope.decay_multiplier || 0);
    const reputationMotionAdjustments = applyMotionBoostMap(motionScores, repSignals.motion_boosts, "reputation", 0.2, 1);
 
@@ -2891,6 +3089,14 @@ export function scoreCompany(companyNumber) {
      for (const trigger of hiringSignals.velocity_triggers || []) {
        if (trigger === "new_finance_leader") {
          qualSignals.positive.push({ signal: "New CFO/FD", weight: 0.15, source: "hiring" });
+       } else if (trigger === "new_treasury_leader") {
+         qualSignals.positive.push({ signal: "New treasury leader", weight: 0.1, source: "hiring" });
+       } else if (trigger === "new_payments_leader") {
+         qualSignals.positive.push({ signal: "New payments leader", weight: 0.09, source: "hiring" });
+       } else if (trigger === "new_ecommerce_leader") {
+         qualSignals.positive.push({ signal: "New ecommerce leader", weight: 0.1, source: "hiring" });
+       } else if (trigger === "new_procurement_leader") {
+         qualSignals.positive.push({ signal: "New procurement leader", weight: 0.08, source: "hiring" });
        } else if (trigger === "headcount_growth") {
          qualSignals.positive.push({ signal: "Headcount growth", weight: 0.1, source: "hiring" });
        }
@@ -2941,6 +3147,7 @@ export function scoreCompany(companyNumber) {
     techSignals.applied,
     webSignals.applied,
     mktSignals.applied,
+    intentSignals.applied,
     repSignals.applied,
     hiringSignals.applied,
     ownershipSignals.applied,
@@ -2966,6 +3173,7 @@ export function scoreCompany(companyNumber) {
     urgencyScore
     + Number(hiringSignals.urgency_boost || 0)
     + Number(hiringSignals.headcount_urgency_boost || 0)
+    + Number(intentSignals.urgency_boost || 0)
     + Number(ownershipSignals.urgency_boost || 0)
   );
 
@@ -2981,6 +3189,7 @@ export function scoreCompany(companyNumber) {
     painScore
     + Number(webSignals.pain_boost || 0)
     + Number(hiringSignals.pain_boost || 0)
+    + Number(intentSignals.pain_boost || 0)
     + Number(repSignals.pain_boost || 0)
     + Number(ownershipSignals.pain_boost || 0)
   );
@@ -3013,7 +3222,12 @@ export function scoreCompany(companyNumber) {
 
   const fitScore = clamp01(fitScoreBase + Number(synergy.boost || 0));
 
-  const propensityScore = clamp01((urgencyScore * 0.65) + (velocity.score * 0.35) + Number(hiringSignals.propensity_boost || 0));
+  const propensityScore = clamp01(
+    (urgencyScore * 0.65)
+    + (velocity.score * 0.35)
+    + Number(hiringSignals.propensity_boost || 0)
+    + Number(intentSignals.propensity_boost || 0)
+  );
   const preGateComposite = (fitScore * 0.6) + (propensityScore * 0.4);
 
   const productFitGate = computeProductFitGate(productFitScore);
@@ -3052,6 +3266,7 @@ export function scoreCompany(companyNumber) {
     `tech:${techStackEnvelope.available ? (techStackEnvelope.days_old ?? "na") : "none"}`,
     `web:${websiteEnvelope.available ? (websiteEnvelope.days_old ?? "na") : "none"}`,
     `mkt:${marketingEnvelope.available ? (marketingEnvelope.days_old ?? "na") : "none"}`,
+    `intent:${intentEnvelope.available ? (intentEnvelope.days_old ?? "na") : "none"}`,
     `rep:${reputationEnvelope.available ? (reputationEnvelope.days_old ?? "na") : "none"}`,
     `hire:${hiringEnvelope.available ? (hiringEnvelope.days_old ?? "na") : "none"}`,
     `own:${ownershipEnvelope.available ? (ownershipEnvelope.days_old ?? "na") : "none"}`,
@@ -3144,6 +3359,14 @@ export function scoreCompany(companyNumber) {
           decay_multiplier: marketingEnvelope.decay_multiplier,
         },
       },
+      intent: {
+        ...intentSignals,
+        freshness: {
+          stale: intentEnvelope.stale,
+          days_old: intentEnvelope.days_old,
+          decay_multiplier: intentEnvelope.decay_multiplier,
+        },
+      },
       reputation: {
         ...repSignals,
         freshness: {
@@ -3173,6 +3396,7 @@ export function scoreCompany(companyNumber) {
         tech_stack: techMotionAdjustments,
         website: webMotionAdjustments,
         marketing: marketingMotionAdjustments,
+        intent: intentMotionAdjustments,
         reputation: reputationMotionAdjustments,
         hiring: hiringMotionAdjustments,
         ownership: ownershipMotionAdjustments,

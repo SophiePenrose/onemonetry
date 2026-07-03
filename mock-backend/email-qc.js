@@ -29,6 +29,16 @@ const FORBIDDEN_PHRASES = [
   { pattern: /save\s+thousands/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /save\s+millions/i, violation: "Unapproved monetary claim", deduction: 25 },
   { pattern: /60[- ]?80%\s+cheaper/i, violation: "Unapproved claim (not in approved library)", deduction: 25 },
+  { pattern: /(?:50[- ]?70|20[- ]?30)%\s+cheaper/i, violation: "Unapproved comparative pricing claim", deduction: 25 },
+  { pattern: /\b\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?x\s+cheaper\s+than\b/i, violation: "Unapproved named competitor comparison", deduction: 25 },
+  { pattern: /\bcheaper\s+than\s+(?:pleo|concur|stripe|worldpay|adyen|paypal|amex|american\s+express)\b/i, violation: "Negative named competitor comparison", deduction: 25 },
+  { pattern: /\b(?:prospeo|phantombuster|endole|cursor)\b/i, violation: "Internal data provider mentioned", deduction: 25 },
+  { pattern: /\b(?:intent\s+data|buying\s+intent)\s+(?:shows|suggests|indicates)\b/i, violation: "Intent signal mentioned directly", deduction: 25 },
+  { pattern: /\benrichment\s+tool(?:ing)?\b/i, violation: "Internal enrichment process mentioned", deduction: 25 },
+  { pattern: /\bno\s+minimum\s+contract\b/i, violation: "Unsupported forwards claim", deduction: 25 },
+  { pattern: /\bno\s+credit\s+line\s+needed\b/i, violation: "Unsupported credit claim", deduction: 25 },
+  { pattern: /\bcommercial\s+card\s+surcharges\s+absorbed\b/i, violation: "Unsupported acquiring claim", deduction: 25 },
+  { pattern: /\b1\.7%\s+cashback\b/i, violation: "Unsupported card reward claim", deduction: 25 },
 ];
 
 const MINOR_DEDUCTIONS = [
@@ -86,6 +96,16 @@ const GATE3_FORBIDDEN_PATTERNS = [
   /last\s+chance/i,
   /\baccount\s+manager\b/i,
   /\bfinancial\s+advis[oe]r\b/i,
+  /(?:50[- ]?70|20[- ]?30|60[- ]?80)%\s+cheaper/i,
+  /\b\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?x\s+cheaper\s+than\b/i,
+  /\bcheaper\s+than\s+(?:pleo|concur|stripe|worldpay|adyen|paypal|amex|american\s+express)\b/i,
+  /\b(?:prospeo|phantombuster|endole|cursor)\b/i,
+  /\b(?:intent\s+data|buying\s+intent)\s+(?:shows|suggests|indicates)\b/i,
+  /\benrichment\s+tool(?:ing)?\b/i,
+  /\bno\s+minimum\s+contract\b/i,
+  /\bno\s+credit\s+line\s+needed\b/i,
+  /\bcommercial\s+card\s+surcharges\s+absorbed\b/i,
+  /\b1\.7%\s+cashback\b/i,
 ];
 
 const AI_TELL_PATTERNS = [
@@ -395,7 +415,6 @@ export const APPROVED_CLAIMS = {
   fx: [
     { claim: "Exchange at the interbank rate", disclaimer: 2 },
     { claim: "0% markup on FX within plan allowance", disclaimer: 2 },
-    { claim: "FX is 2–4x cheaper than Pleo", disclaimer: null },
     { claim: "Save up to 3% on FX vs traditional banks when spending abroad", disclaimer: null },
   ],
   cards: [
@@ -405,7 +424,7 @@ export const APPROVED_CLAIMS = {
   ],
   acquiring: [
     "24-hour settlement (vs. 3–7 days from traditional acquirers)",
-    "Like-for-like settlement in 34 currencies — eliminates 1–2% auto-FX fees",
+    "Like-for-like settlement in 33+ currencies",
     "9-second checkout with Revolut Pay",
     "Access to 70M+ retail users via Revolut Pay",
     "Online via API, in-person via Tap to Pay or Terminal",

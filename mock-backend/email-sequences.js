@@ -99,37 +99,39 @@ const SEQUENCE_TEMPLATES = {
   FX: {
     persona_hooks: {
       CFO: "treasury cost reduction and FX visibility",
-      "Finance Director": "FX cost savings and automated hedging",
-      "Head of Treasury": "interbank rates and forward contract flexibility",
+      "Finance Director": "FX visibility and transparent execution",
+      "Head of Treasury": "currency-flow control and forward contract flexibility",
       Director: "reducing international payment costs",
     },
     steps: [
       {
         delay: 0,
-        subject_template: "Quick question on {{company}}'s international payments",
+        subject_template: "{{company}} international payments",
         body_template: `Hi {{first_name}},
 
-I noticed {{company}} has significant international operations{{international_detail}}. I wanted to reach out because, as an illustrative benchmark, we're helping similar mid-market businesses reduce their FX costs by 60-80% vs traditional banks.
+{{company}} appears to have meaningful international operations{{international_detail}}, which usually makes currency visibility and execution timing worth reviewing.
 
 {{pain_hook}}
 
-Would you be open to a 15-minute call to see if there's a fit? Happy to share a quick comparison based on your likely currency flows.
+Revolut Business can support multi-currency accounts, transparent FX execution during market hours, and a staged operating-account setup alongside existing banking relationships.
+
+Would it be worth comparing how this currently works for the finance team?
 
 Best,
 {{sender_name}}`,
       },
       {
         delay: 3,
-        subject_template: "Re: Quick question on {{company}}'s international payments",
+        subject_template: "Re: {{company}} international payments",
         body_template: `Hi {{first_name}},
 
-Just following up on my note from earlier this week. I appreciate you're busy, so I'll keep this brief.
+One further thought on the international payments angle.
 
-Based on your filed accounts, we estimate a {{industry}} business of similar size could save over £{{estimated_savings}} annually on FX alone — interbank rates during market hours within plan allowance with no hidden markups.
+Based on your filed accounts, a {{industry}} business of similar size may have a material currency-execution gap to benchmark. The actual impact depends on your current provider rates, currency mix, and whether flows are spot, scheduled, or already covered.
 
 {{competitor_angle}}
 
-Would a quick 10-minute overview be useful? I can share relevant case studies from your sector.
+Would a short assumptions sheet be useful?
 
 Best,
 {{sender_name}}`,
@@ -153,37 +155,37 @@ Best,
   "FX Forwards": {
     persona_hooks: {
       CFO: "locking in FX rates to protect margins",
-      "Finance Director": "forward cover without credit line requirements",
-      "Head of Treasury": "flexible forwards with no minimum contract size",
+      "Finance Director": "forward cover for commercial currency obligations",
+      "Head of Treasury": "forward cover and currency-flow discipline",
       Director: "hedging international payment obligations",
     },
     steps: [
       {
         delay: 0,
-        subject_template: "{{company}} — protecting margins on international payments",
+        subject_template: "{{company}} currency planning",
         body_template: `Hi {{first_name}},
 
-I came across {{company}}'s accounts and noticed your international operations{{international_detail}}. With currency volatility where it is, I imagine budget certainty on overseas payments is important.
+{{company}}'s accounts suggest international operations{{international_detail}}. With currency volatility still affecting planning, budget certainty on overseas payments may be worth reviewing.
 
-As an illustrative benchmark based on your filed accounts, we offer FX forwards at 0.8% markup — no credit line needed, no minimum contract — which is typically 50-70% cheaper than what traditional brokers charge.
+FX Forwards can help lock rates for commercial obligations, with deposit, tenor, notional, and availability constraints depending on the setup.
 
 {{pain_hook}}
 
-Would it be worth 15 minutes to explore whether forward cover could protect your margins without the usual bank overheads?
+Would it be worth comparing whether forward cover is relevant to the current currency flows?
 
 Best,
 {{sender_name}}`,
       },
       {
         delay: 4,
-        subject_template: "Re: {{company}} — protecting margins on international payments",
+        subject_template: "Re: {{company}} currency planning",
         body_template: `Hi {{first_name}},
 
-Quick follow-up — I wanted to share that we've recently onboarded several {{industry}} businesses who were paying 2-3% on forwards through their existing bank, and those percentages are illustrative based on your filed accounts.
+One point I did not cover: forwards are usually most useful where the exposure is recurring and commercial rather than speculative.
 
-The switch typically takes less than a week, and most clients see the rate improvement immediately on their next batch of payments.
+For {{industry}} businesses, the practical question is often whether the team has enough visibility on supplier payments, customer receipts, and timing to decide what should be fixed versus left spot.
 
-Happy to walk you through how it works in practice?
+Happy to share how we would structure that assessment?
 
 Best,
 {{sender_name}}`,
@@ -205,11 +207,10 @@ Best,
 
 With {{employee_count}}+ employees at {{company}}, I imagine managing expenses, subscriptions, and team spending is a meaningful operational headache.
 
-We offer unlimited virtual and physical corporate cards with:
+Revolut Business supports debit-led physical and virtual corporate cards with:
 • Real-time spend tracking per card, team, and department
 • Instant freeze/unfreeze and per-card limits
-• No personal guarantees or credit checks
-• 1.7% cashback on qualifying spend
+• MCC, country, and policy controls
 
 {{pain_hook}}
 
@@ -247,13 +248,13 @@ Best,
         subject_template: "{{company}} — spend visibility across {{employee_count}} staff",
         body_template: `Hi {{first_name}},
 
-I noticed {{company}} operates across multiple sites/departments, which typically means fragmented spend visibility. If that resonates, I'd love to show you how our spend management platform gives instant oversight without the enterprise price tag.
+{{company}} appears to operate across multiple sites or departments, which often means fragmented spend visibility and slower month-end review.
 
-At £5/user (vs Pleo at £9.50 or Concur at £20+), with built-in approval workflows and 2-4x cheaper FX on international purchases.
+Revolut Business brings corporate cards, approval workflows, receipt capture, policy controls, analytics, and accounting sync into the same operating layer.
 
 {{pain_hook}}
 
-Would a quick overview be helpful?
+Would it be worth comparing where spend control currently creates the most admin?
 
 Best,
 {{sender_name}}`,
@@ -264,7 +265,7 @@ Best,
     persona_hooks: {
       CFO: "faster settlement and lower processing fees",
       "Finance Director": "24-hour settlement improving cash flow",
-      "Head of Payments": "reducing processing costs by 20-30%",
+      "Head of Payments": "checkout, acceptance mix, and settlement visibility",
       Director: "card payment processing with next-day settlement",
     },
     steps: [
@@ -273,15 +274,15 @@ Best,
         subject_template: "{{company}} — card payments settling in 24 hours?",
         body_template: `Hi {{first_name}},
 
-I noticed {{company}} accepts card payments. Quick question — how long does your current settlement cycle take?
+{{company}} appears to accept card payments, which makes settlement timing and payment-operations visibility worth understanding.
 
-Most processors (Stripe, Worldpay, etc.) take 3-7 days. We settle in 24 hours, which for a business doing {{company}}'s volume, can meaningfully improve cash flow.
+Revolut Business Payment Gateway can settle into a Revolut Business account within 24 hours, with multi-currency acceptance and checkout methods managed from one dashboard.
 
-Combined with transparent pricing (no hidden fees, commercial card surcharges absorbed), it's typically 20-30% cheaper than existing setups.
+For a business doing {{company}}'s volume, the practical question is whether settlement, reconciliation, and currency handling are still split across separate systems.
 
 {{pain_hook}}
 
-Worth a quick comparison?
+Worth comparing the current setup?
 
 Best,
 {{sender_name}}`,

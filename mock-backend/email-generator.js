@@ -1337,6 +1337,16 @@ function sanitizeGate3CompliancePhrases(text) {
     [/\bfinancial\s+advis[oe]r\b/gi, "finance partner"],
     [/\bwe'?re\s+the\s+best\b/gi, "we focus on measurable execution improvements"],
     [/\bthe\s+best\b/gi, "a strong"],
+    [/(?:50[- ]?70|20[- ]?30|60[- ]?80)%\s+cheaper/gi, "worth benchmarking"],
+    [/\b\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?x\s+cheaper\s+than\s+\w+/gi, "worth benchmarking against current providers"],
+    [/\bcheaper\s+than\s+(?:pleo|concur|stripe|worldpay|adyen|paypal|amex|american\s+express)\b/gi, "worth benchmarking against current providers"],
+    [/\b(?:prospeo|phantombuster|endole|cursor)\b/gi, "public context"],
+    [/\b(?:intent\s+data|buying\s+intent)\s+(?:shows|suggests|indicates)\b/gi, "current signals suggest"],
+    [/\benrichment\s+tool(?:ing)?\b/gi, "research"],
+    [/\bno\s+minimum\s+contract\b/gi, "with contract terms subject to setup"],
+    [/\bno\s+credit\s+line\s+needed\b/gi, "with eligibility and deposit requirements depending on setup"],
+    [/\bcommercial\s+card\s+surcharges\s+absorbed\b/gi, "with pricing confirmed during review"],
+    [/\b1\.7%\s+cashback\b/gi, "card controls"],
   ];
 
   for (const [pattern, replacement] of phraseReplacements) {

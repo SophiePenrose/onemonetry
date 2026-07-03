@@ -61,6 +61,8 @@ Minimum normalized outputs:
 - treasury_roles_open[]
 - international_roles_open[]
 - ecommerce_roles_open[]
+- person_candidates[]
+- new_senior_hires[]
 - hiring_signal_score
 
 ### reputation_{company_number}
@@ -103,6 +105,27 @@ Common normalized outputs:
 - monthly_web_traffic
 - estimated_monthly_ad_spend
 - traffic_geography
+
+### intent_signals_{company_number}
+
+Primary use:
+
+- timing, motion relevance, and sequence hypotheses for already-qualified accounts
+
+Minimum normalized outputs:
+
+- topics[]
+- signals[]
+- motions[]
+- recency_days
+- intent_signal_score
+- confidence / confidence_score
+
+Interpretation rules:
+
+- Intent signals are provider-neutral. Cursor or any other mapped source can feed this envelope.
+- Intent reorders and sharpens otherwise qualified accounts; it must not override the product-fit gate.
+- Provider names and direct phrases such as "intent data shows" are internal only and banned from outbound copy.
 
 ### tech_stack_{company_number}
 
@@ -156,18 +179,37 @@ Primary envelope targets:
 
 Configuration note:
 
-- PROSPEO_URL_TEMPLATE is required
-- PROSPEO_API_KEY is optional (used when provided)
+- PROSPEO_URL_TEMPLATE is required. For the official live integration, use `https://api.prospeo.io/bulk-enrich-company`.
+- PROSPEO_API_KEY is required for the official Prospeo API; it remains optional only for mock/proxy templates.
+- Official auth uses `PROSPEO_AUTH_HEADER=X-KEY` and `PROSPEO_AUTH_SCHEME=none`.
 
 Observed endpoint behavior (bulk company enrichment):
 
 - Method: `POST`
 - Path: `/bulk-enrich-company`
-- Header auth commonly uses `X-KEY`
+- Header auth uses `X-KEY`
 - `data[]` rows require an `identifier` plus one or more company resolvers (`company_website`, `company_linkedin_url`)
+
+Observed endpoint behavior (people discovery):
+
+- Method: `POST`
+- Path: `/search-person`
+- Official bulk configuration automatically fans out to this endpoint.
+- Company targeting is sent under `filters.company.websites.include[]` and role targeting under `filters.person_job_title`, `filters.person_seniority`, and optional `filters.person_department`.
+- Default role targeting includes finance, treasury, payments, procurement, and ecommerce leaders, including Head/Director of Ecommerce.
+- Optional recent-role filters can be enabled with `PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS` or `PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS`; PLAN_REQUIRED responses are retried without gated filters so basic company-scoped people discovery can still succeed.
+
+Observed endpoint behavior (company intent):
+
+- Path: `/search-company`
+- The UI sends intent topic names in `filters.company_intent.topic_ids[]`, for example `"Payment Orchestration Platform"` and `"Payment Service Provider (PSP)"`.
+- Configure selected topics with `PROSPEO_INTENT_TOPIC_IDS` (comma-separated). `PROSPEO_COMPANY_INTENT_TOPIC_IDS` and `PROSPEO_INTENT_TOPIC_NAMES` are also accepted aliases.
+- Stage flags are controlled by `PROSPEO_INTENT_ACTIVE_RESEARCH`, `PROSPEO_INTENT_IN_DEPTH_RESEARCH`, and `PROSPEO_INTENT_EARLY_RESEARCH`; when topic IDs are present, all three default to `true` to match the Prospeo UI payload.
+- Company-intent search is a separate fanout from normal people discovery so unmatched intent does not suppress relevant contact enrichment.
 
 Expected source structures accepted:
 
+- connector_payloads[].payload.matched[].company.* (combined official bulk + people responses)
 - matched[].company.job_postings.active_count
 - matched[].company.job_postings.active_titles[]
 - matched[].company.technology.count
@@ -177,14 +219,18 @@ Expected source structures accepted:
 - matched[].company.employee_count / employee_range
 - matched[].company.funding.*
 - matched[].company.location.*
+- data.results[].person / results[].person (search-person people)
+- data.results[].person.email.* (email value/status/revealed metadata)
+- data.results[].person current-role/job-change start dates, normalized into `person_candidates[].start_date`, `person_candidates[].is_new_hire`, and `new_senior_hires[]` when the role matches desired buyer personas.
+- connector_payloads[].request_payload.filters.company_intent.topic_ids[] from `/search-company`, normalized into `intent_signals_<company>` when Prospeo returns a positive match.
 
 Primary envelope targets:
 
-- hiring_signals, marketing_intelligence, tech_stack
+- hiring_signals, marketing_intelligence, tech_stack, intent_signals
 
 Operational note:
 
-- The app currently parses Prospeo `matched[].company` responses and maps job/tech signals into enrichment envelopes.
+- The app parses Prospeo `matched[].company` responses for company job/tech signals and Prospeo `search-person` responses into `hiring_signals_<company>.person_candidates` for YAMM/Gemini recipient review. Recent desired-role hires also populate `new_senior_hires[]`, which scoring uses as a bounded timing and motion-relevance boost after product-fit gating.
 
 ### PhantomBuster
 
@@ -216,6 +262,36 @@ Primary envelope targets:
 Operational note:
 
 - PhantomBuster outputs are agent-specific. Normalize by extraction intent (person, hiring, tech, traffic) rather than assuming one fixed payload schema.
+
+### Intent Signals
+
+Configuration note:
+
+- INTENT_SIGNALS_URL_TEMPLATE is required.
+- INTENT_SIGNALS_API_KEY is optional when the source is an internal/mock endpoint and required when your source requires auth.
+- Use `INTENT_SIGNALS_AUTH_HEADER` / `INTENT_SIGNALS_AUTH_SCHEME` for provider-specific auth.
+
+Expected source structures accepted:
+
+- intent_signals[] / intent.signals[] / company_intent[] / buyer_intent[]
+- topics[] / intent_topics[] / keywords[] / surging_topics[]
+- results[] / data.results[] when the configured connector id is `intent`
+
+Useful source fields per signal:
+
+- topic / intent_topic / keyword / signal / name / title
+- motion / product_motion / motions[] / product_motions[]
+- strength / intent_strength / score / intent_score / confidence_score
+- recency_days / freshness_days / observed_at / detected_at / last_seen_at
+- evidence / description / snippet / context / summary
+
+Primary envelope targets:
+
+- intent_signals
+
+Operational note:
+
+- Normalized motions currently map to FX, FX Forwards, Cards, Spend Management, Merchant Acquiring, Revolut Pay, and API Integrations. Scoring applies bounded, freshness-decayed timing and motion boosts; Gemini/YAMM receives the topics as internal evidence for natural commercial hypotheses only.
 
 ## Field Catalog Reference
 

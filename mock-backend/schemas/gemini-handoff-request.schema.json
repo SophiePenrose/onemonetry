@@ -125,7 +125,9 @@
         "forbidden_phrases_enforced": { "type": "boolean" },
         "max_steps_per_sequence": { "type": "integer", "minimum": 1 },
         "require_citations": { "type": "boolean" },
-        "fail_closed_on_qc": { "type": "boolean" }
+        "fail_closed_on_qc": { "type": "boolean" },
+        "product_knowledge_ref": { "type": "string" },
+        "product_claim_policy": { "type": "string" }
       }
     }
   }

@@ -72,6 +72,30 @@ describe("email QC gate engine", () => {
     assert.equal(result.pass, false);
   });
 
+  it("fails Gate 3 on unsafe provider, intent, and comparative-pricing claims", () => {
+    const result = validateEmail(
+      {
+        subject: "Payment benchmark",
+        body: [
+          "Hi Alex,",
+          "",
+          "Prospeo intent data suggests you are reviewing payments providers.",
+          "Revolut Business is 50-70% cheaper than Stripe, with no minimum contract and commercial card surcharges absorbed.",
+        ].join("\n"),
+      },
+      {
+        isInitialOutreach: true,
+        stepType: "proof",
+        assumeManagedFooter: true,
+        footerTemplate: MANDATORY_OUTREACH_FOOTER,
+      }
+    );
+
+    assert.equal(result.gates.gate3.pass, false);
+    assert.equal(result.pass, false);
+    assert.ok(result.issues.some((issue) => /provider|intent|comparative|competitor|unsupported/i.test(issue.violation)));
+  });
+
   it("uses the exact Gate 2 checklist contract", () => {
     const result = validateEmail(
       {

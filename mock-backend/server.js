@@ -309,6 +309,9 @@ const GEMINI_HANDOFF_CAMPAIGN_ID_PREFIX = String(process.env.GEMINI_HANDOFF_CAMP
 const GEMINI_HANDOFF_CAMPAIGN_NAME_PREFIX = String(process.env.GEMINI_HANDOFF_CAMPAIGN_NAME_PREFIX || "Weekly Mid-Market Outreach").trim() || "Weekly Mid-Market Outreach";
 const GEMINI_HANDOFF_SEQUENCE_TEMPLATE = String(process.env.GEMINI_HANDOFF_SEQUENCE_TEMPLATE || "v7").trim() || "v7";
 const GEMINI_HANDOFF_VOICE_PROFILE = String(process.env.GEMINI_HANDOFF_VOICE_PROFILE || "sophie_v7").trim() || "sophie_v7";
+const GEMINI_PRODUCT_KNOWLEDGE_REF = "docs/revolut-business-product-knowledge.md";
+const GEMINI_PRODUCT_CLAIM_POLICY = "approved_products_only_connected_stack_no_guaranteed_pricing";
+const GEMINI_EVIDENCE_PACK_VERSION = "prospecting-evidence-pack-v1";
 const parsedGeminiHandoffDefaultMaxTouches = Number.parseInt(String(process.env.GEMINI_HANDOFF_MAX_TOUCHES || "6"), 10);
 const GEMINI_HANDOFF_DEFAULT_MAX_TOUCHES = Number.isFinite(parsedGeminiHandoffDefaultMaxTouches)
   ? Math.max(1, Math.min(parsedGeminiHandoffDefaultMaxTouches, 12))
@@ -334,6 +337,13 @@ const parsedGeminiGemInstructionsMaxChars = Number.parseInt(
 const GEMINI_GEM_INSTRUCTIONS_MAX_CHARS = Number.isFinite(parsedGeminiGemInstructionsMaxChars)
   ? Math.max(500, Math.min(parsedGeminiGemInstructionsMaxChars, 50000))
   : 12000;
+const parsedGeminiInsightsMaxChars = Number.parseInt(
+  String(process.env.GEMINI_HANDOFF_INSIGHTS_MAX_CHARS || "6000"),
+  10
+);
+const GEMINI_HANDOFF_INSIGHTS_MAX_CHARS = Number.isFinite(parsedGeminiInsightsMaxChars)
+  ? Math.max(1800, Math.min(parsedGeminiInsightsMaxChars, 20000))
+  : 6000;
 const GEMINI_COMPANY_NAME_REVIEW_RULES = [
   {
     reason: "name_lookup_needed",
@@ -1101,11 +1111,18 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
     : "";
   const customGemInstructions = sanitizeBodyText(GEMINI_GEM_INSTRUCTIONS_CONFIG.text, GEMINI_GEM_INSTRUCTIONS_MAX_CHARS);
   const insightsText = company?.insights && typeof company.insights === "object"
-    ? JSON.stringify(company.insights).slice(0, 1800)
+    ? JSON.stringify(company.insights).slice(0, GEMINI_HANDOFF_INSIGHTS_MAX_CHARS)
     : "{}";
   const scoreBreakdown = company?.score_breakdown && typeof company.score_breakdown === "object"
     ? JSON.stringify(company.score_breakdown)
     : "{}";
+  const productPolicy = [
+    `product_knowledge_ref: ${sanitizeSingleLine(generationPolicy?.product_knowledge_ref || GEMINI_PRODUCT_KNOWLEDGE_REF, 160)}`,
+    `product_claim_policy: ${sanitizeSingleLine(generationPolicy?.product_claim_policy || GEMINI_PRODUCT_CLAIM_POLICY, 180)}`,
+    "Only mention products/capabilities supported by the provided product knowledge and evidence pack.",
+    "Use connected-stack framing; do not present Revolut as a full bank replacement on day one.",
+    "Do not mention enrichment providers, intent feeds, or internal evidence tooling in outbound copy.",
+  ].join("\n");
   const stepNumber = Number.parseInt(String(stepContext?.step_number || 1), 10) || 1;
   const totalSteps = Number.parseInt(String(stepContext?.total_steps || campaign?.max_touches || 6), 10) || 6;
   const stepType = sanitizeSingleLine(stepContext?.step_type || "proof", 40) || "proof";
@@ -1125,6 +1142,8 @@ function buildGeminiApiDraftPrompt({ company, stakeholder, campaign, generationP
     forbiddenLine,
     customGemInstructions ? "\nCustom Gem-style instruction overlay:" : "",
     customGemInstructions || "",
+    "\nProduct and claim policy:",
+    productPolicy,
     "\nCampaign context:",
     `campaign_name: ${sanitizeSingleLine(campaign?.campaign_name || "Prospecting", 120)}`,
     `sequence_template: ${sanitizeSingleLine(campaign?.sequence_template || "standard", 120)}`,
@@ -2043,6 +2062,231 @@ function normalizeGeminiWeekLabel(value, fallbackDate = new Date()) {
   return toGeminiWeekLabel(fallbackDate);
 }
 
+function compactGeminiStrings(values = [], limit = 6, maxLength = 180) {
+  const seen = new Set();
+  const out = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const text = sanitizeSingleLine(value, maxLength);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function compactGeminiRows(rows = [], mapper, limit = 5) {
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    const mapped = mapper(row);
+    if (!mapped || Object.values(mapped).every((value) => value === null || value === "" || value === undefined)) {
+      continue;
+    }
+    out.push(mapped);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function getGeminiSettingEnvelope(companyNumber, prefix) {
+  const normalizedCompanyNumber = normalizeCompanyNumber(companyNumber);
+  if (!normalizedCompanyNumber || !prefix) return null;
+  return getSetting(`${prefix}_${normalizedCompanyNumber}`, null);
+}
+
+function inferGeminiDossierTier(analysis = {}, entry = {}) {
+  const explicit = sanitizeSingleLine(
+    analysis?.dossier_tier
+      || analysis?.data_richness_tier
+      || analysis?.level5_extraction?.dossier_tier
+      || analysis?.level5_extraction?.dossier_quality?.tier
+      || "",
+    20
+  ).toUpperCase();
+  if (/^[ABCD]$/.test(explicit)) return explicit;
+
+  const evidenceCount = Object.values(analysis?.evidence_snippets || {})
+    .reduce((sum, snippets) => sum + (Array.isArray(snippets) ? snippets.length : 0), 0);
+  const painCount = Array.isArray(analysis?.pain_indicators) ? analysis.pain_indicators.length : 0;
+  const useCaseCount = Array.isArray(analysis?.level5_extraction?.revolut_opportunity?.recommended_use_cases)
+    ? analysis.level5_extraction.revolut_opportunity.recommended_use_cases.length
+    : 0;
+  const filingCount = Number(entry?.filing_count || 0);
+
+  if (evidenceCount >= 6 && painCount >= 3 && useCaseCount >= 2) return "A";
+  if (evidenceCount >= 3 || painCount >= 2 || useCaseCount >= 1 || filingCount >= 2) return "B";
+  if (entry?.analysis_status === "ready") return "C";
+  return "D";
+}
+
+function summarizeGeminiEvidenceSnippets(snippets = {}) {
+  if (!snippets || typeof snippets !== "object") return {};
+  const output = {};
+  for (const [group, rows] of Object.entries(snippets)) {
+    const values = (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        if (typeof row === "string") return row;
+        return row?.quote || row?.evidence || row?.snippet || row?.text || "";
+      });
+    const compact = compactGeminiStrings(values, 3, 220);
+    if (compact.length > 0) output[group] = compact;
+  }
+  return output;
+}
+
+function summarizeGeminiUseCases(analysis = {}) {
+  const useCases = analysis?.level5_extraction?.revolut_opportunity?.recommended_use_cases
+    || analysis?.revolut_opportunity?.recommended_use_cases
+    || analysis?.opportunities
+    || [];
+  return compactGeminiRows(useCases, (row) => ({
+    product: sanitizeSingleLine(row?.product || row?.name || row?.capability || "", 100) || null,
+    priority: sanitizeSingleLine(row?.priority || row?.confidence || "", 40) || null,
+    why_fit: sanitizeSingleLine(row?.why_fit || row?.rationale || row?.evidence || "", 220) || null,
+    example_use_case: sanitizeSingleLine(row?.example_use_case || row?.use_case || "", 220) || null,
+  }), 5);
+}
+
+function summarizeGeminiMotionScores(score = {}) {
+  const allMotionScores = score?.all_motion_scores && typeof score.all_motion_scores === "object"
+    ? score.all_motion_scores
+    : {};
+  return Object.entries(allMotionScores)
+    .map(([motion, motionData]) => ({
+      motion,
+      score: Number(motionData?.score || 0),
+      confidence: sanitizeSingleLine(motionData?.confidence || "", 40) || null,
+      evidence: sanitizeSingleLine(motionData?.evidence || motionData?.reason || "", 180) || null,
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+}
+
+function summarizeGeminiSignalEvidence(companyNumber) {
+  const hiring = getGeminiSettingEnvelope(companyNumber, "hiring_signals");
+  const techStack = getGeminiSettingEnvelope(companyNumber, "tech_stack");
+  const marketing = getGeminiSettingEnvelope(companyNumber, "marketing_intelligence");
+  const reputation = getGeminiSettingEnvelope(companyNumber, "reputation");
+  const ownership = getGeminiSettingEnvelope(companyNumber, "ownership");
+  const intent = getGeminiSettingEnvelope(companyNumber, "intent_signals");
+
+  const technologies = [
+    ...(Array.isArray(techStack?.technologies) ? techStack.technologies : []),
+    ...(Array.isArray(techStack?.detected_technologies) ? techStack.detected_technologies : []),
+  ].map((entry) => (typeof entry === "string" ? entry : entry?.name || entry?.technology || ""));
+
+  return {
+    hiring_signals: hiring ? {
+      total_open_roles: Number(hiring.total_open_roles || 0),
+      finance_roles_open: Array.isArray(hiring.finance_roles_open) ? hiring.finance_roles_open.length : 0,
+      treasury_roles_open: Array.isArray(hiring.treasury_roles_open) ? hiring.treasury_roles_open.length : 0,
+      ecommerce_roles_open: Array.isArray(hiring.ecommerce_roles_open) ? hiring.ecommerce_roles_open.length : 0,
+      person_candidates_count: Array.isArray(hiring.person_candidates)
+        ? hiring.person_candidates.length
+        : Number(hiring.person_candidates_count || 0),
+      new_senior_hires: compactGeminiRows(hiring.new_senior_hires, (row) => ({
+        full_name: sanitizeSingleLine(row?.full_name || row?.name || "", 100) || null,
+        role: sanitizeSingleLine(row?.role || row?.title || "", 100) || null,
+        start_date: sanitizeSingleLine(row?.start_date || row?.started_at || "", 40) || null,
+        persona_bucket: sanitizeSingleLine(row?.persona_bucket || "", 60) || null,
+      }), 4),
+    } : null,
+    tech_stack: techStack ? {
+      technologies: compactGeminiStrings(technologies, 8, 80),
+      signal_count: Number(techStack.signal_count || technologies.length || 0),
+    } : null,
+    marketing_intelligence: marketing ? {
+      monthly_web_traffic: Number(marketing.monthly_web_traffic || marketing.monthly_visits || 0) || null,
+      estimated_monthly_ad_spend: Number(marketing.estimated_monthly_ad_spend || 0) || null,
+      traffic_geography: marketing.traffic_geography || null,
+    } : null,
+    reputation: reputation ? {
+      trustpilot_review_count: Number(reputation.trustpilot_review_count || 0) || null,
+      payment_related_complaints: Number(reputation.payment_related_complaints || 0) || null,
+      checkout_related_complaints: Number(reputation.checkout_related_complaints || 0) || null,
+      status_health_band: sanitizeSingleLine(reputation.status_health_band || "", 60) || null,
+      status_recent_incident_at: sanitizeSingleLine(reputation.status_recent_incident_at || "", 60) || null,
+    } : null,
+    ownership: ownership ? {
+      parent_company: sanitizeSingleLine(ownership.parent_company || "", 140) || null,
+      parent_country: sanitizeSingleLine(ownership.parent_country || "", 80) || null,
+      significant_corporate_controllers_count: Number(ownership.significant_corporate_controllers_count || 0),
+      non_uk_significant_corporate_controllers_count: Number(ownership.non_uk_significant_corporate_controllers_count || 0),
+    } : null,
+    intent_signals: intent ? {
+      topics: compactGeminiStrings(intent.topics || intent.intent_topics || intent.signals || [], 8, 100),
+      motions: compactGeminiStrings(intent.motions || [], 6, 80),
+      signal_score: Number(intent.intent_signal_score || intent.confidence_score || 0) || null,
+      recency_days: Number(intent.recency_days || intent.freshness_days || 0) || null,
+      confidence: sanitizeSingleLine(intent.confidence || intent.confidence_band || "", 60) || null,
+      signals: compactGeminiRows(intent.signals, (row) => ({
+        topic: sanitizeSingleLine(row?.topic || row?.signal || "", 100) || null,
+        motions: compactGeminiStrings(row?.motions || [], 4, 80),
+        strength: sanitizeSingleLine(row?.strength || row?.confidence || "", 40) || null,
+        recency_days: Number(row?.recency_days || 0) || null,
+        evidence: sanitizeSingleLine(row?.evidence || row?.summary || "", 180) || null,
+      }), 5),
+    } : null,
+  };
+}
+
+function buildGeminiEvidencePack(entry = {}) {
+  const analysis = entry?.analysis && typeof entry.analysis === "object" ? entry.analysis : {};
+  const score = entry?.score && typeof entry.score === "object" ? entry.score : {};
+  const bestMotion = score?.layers?.product_fit?.best_motion || analysis?.primary_motion || null;
+  const recommendedUseCases = summarizeGeminiUseCases(analysis);
+  const topPains = compactGeminiRows(analysis?.pain_indicators, (row) => ({
+    pain: sanitizeSingleLine(row?.pain || row?.category || "", 160) || null,
+    evidence: sanitizeSingleLine(row?.evidence || "", 220) || null,
+    severity: sanitizeSingleLine(row?.severity || "", 40) || null,
+  }), 5);
+
+  return {
+    contract_version: GEMINI_EVIDENCE_PACK_VERSION,
+    product_knowledge_ref: GEMINI_PRODUCT_KNOWLEDGE_REF,
+    dossier_tier: inferGeminiDossierTier(analysis, entry),
+    qualification: {
+      segment: sanitizeSingleLine(entry.segment || "", 80) || null,
+      analysis_status: sanitizeSingleLine(entry.analysis_status || "", 60) || null,
+      filter_reason: sanitizeSingleLine(entry.filter_reason || "", 80) || null,
+      latest_filing_date: sanitizeSingleLine(entry.latest_filing_date || "", 40) || null,
+    },
+    product_fit: {
+      best_motion: sanitizeSingleLine(bestMotion || "", 100) || null,
+      motion_scores: summarizeGeminiMotionScores(score),
+      recommended_use_cases: recommendedUseCases,
+    },
+    filing_analysis: {
+      recommended_approach: sanitizeSingleLine(analysis?.recommended_approach || "", 260) || null,
+      international_exposure: analysis?.international_exposure || null,
+      competitors_detected: compactGeminiRows(analysis?.competitors_detected, (row) => ({
+        competitor: sanitizeSingleLine(row?.name || row?.competitor || "", 100) || null,
+        displacement_angle: sanitizeSingleLine(row?.displacement_angle || row?.angle || "", 160) || null,
+      }), 4),
+      pain_indicators: topPains,
+      evidence_snippets: summarizeGeminiEvidenceSnippets(analysis?.evidence_snippets),
+      sequence_inputs: analysis?.level5_extraction?.sequence_inputs || null,
+    },
+    external_signals: summarizeGeminiSignalEvidence(entry.company_number),
+    outreach_guidance: {
+      narrative: analysis?.outreach_narrative || null,
+      safe_product_mentions: compactGeminiStrings(recommendedUseCases.map((row) => row.product), 4, 100),
+      do_not_mention: [
+        "Prospeo",
+        "Cursor",
+        "PhantomBuster",
+        "Endole",
+        "intent data",
+        "enrichment tooling",
+      ],
+    },
+  };
+}
+
 function extractGeminiRequestInsights(entry = {}) {
   const reasons = [];
   if (entry.priority_reason) reasons.push(String(entry.priority_reason));
@@ -2066,6 +2310,7 @@ function extractGeminiRequestInsights(entry = {}) {
       latest_filing_date: entry.latest_filing_date || null,
       analysis_status: entry.analysis_status || null,
     },
+    evidence_pack: buildGeminiEvidencePack(entry),
   };
 }
 
@@ -2480,6 +2725,8 @@ function buildGeminiRequestFromWeeklyEntries({
       max_steps_per_sequence: maxTouches,
       require_citations: true,
       fail_closed_on_qc: true,
+      product_knowledge_ref: GEMINI_PRODUCT_KNOWLEDGE_REF,
+      product_claim_policy: GEMINI_PRODUCT_CLAIM_POLICY,
     },
   };
 
@@ -10925,6 +11172,7 @@ app.get("/api/integrations/status", (_req, res) => {
     return !looksPlaceholder;
   };
   const hasTemplate = (value) => String(value || "").trim().length > 0;
+  const isOfficialProspeoTemplate = (value) => /https?:\/\/api\.prospeo\.io\//i.test(String(value || ""));
 
   const newsLookupEnabled = (process.env.ENABLE_NEWS_LOOKUP || "true").toLowerCase() !== "false";
   const statusUrlDiscoveryEnabled = (process.env.ENABLE_STATUS_URL_DISCOVERY || "false").toLowerCase() === "true";
@@ -11038,10 +11286,15 @@ app.get("/api/integrations/status", (_req, res) => {
       purpose: "Cross-jurisdiction corporate registry enrichment",
     },
     prospeo: {
-      configured: hasTemplate(process.env.PROSPEO_URL_TEMPLATE),
+      configured: hasTemplate(process.env.PROSPEO_URL_TEMPLATE)
+        && (!isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE) || hasConfiguredSecret(process.env.PROSPEO_API_KEY)),
       required: false,
-      env_var: "PROSPEO_URL_TEMPLATE (+ optional PROSPEO_API_KEY)",
+      env_var: "PROSPEO_URL_TEMPLATE, PROSPEO_API_KEY, PROSPEO_AUTH_HEADER, PROSPEO_AUTH_SCHEME",
       purpose: "Contact and company intelligence enrichment",
+      runtime: {
+        official_api_template: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+        search_person_auto_fanout: isOfficialProspeoTemplate(process.env.PROSPEO_URL_TEMPLATE),
+      },
     },
     phantombuster: {
       configured: hasTemplate(process.env.PHANTOMBUSTER_URL_TEMPLATE),
@@ -11186,8 +11439,16 @@ app.get("/api/integrations/status", (_req, res) => {
       "ENDOLE_URL_TEMPLATE=https://example.com/endole?company={company_number}",
       "OPENCORPORATES_API_TOKEN=optional_opencorporates_token",
       "OPENCORPORATES_URL_TEMPLATE=https://example.com/opencorporates?company={company_number}",
-      "PROSPEO_API_KEY=optional_prospeo_key",
-      "PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}",
+      "PROSPEO_API_KEY=replace_with_prospeo_api_key",
+      "PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company",
+      "PROSPEO_AUTH_HEADER=X-KEY",
+      "PROSPEO_AUTH_SCHEME=none",
+      "PROSPEO_SEARCH_PERSON_JOB_TITLES=Chief Financial Officer,Finance Director,Head of Finance,Head of Treasury,Treasury Manager,VP Finance,Controller,Head of Payments,Payments Manager,Procurement Manager,Head of Ecommerce,Director of Ecommerce,Head of E-commerce,Director of E-commerce",
+      "PROSPEO_SEARCH_PERSON_SENIORITIES=C-Suite,Vice President,Head,Director,Manager",
+      "PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY=8",
+      "PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL=false",
+      "PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS=6",
+      "PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS=180",
       "PHANTOMBUSTER_API_KEY=optional_phantombuster_key",
       "PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}",
       "SIMILARWEB_API_KEY=optional_similarweb_key",

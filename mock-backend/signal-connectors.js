@@ -42,6 +42,15 @@ const CONNECTOR_DEFINITIONS = [
     purpose: "workflow_automation_enrichment_exports",
   },
   {
+    id: "intent",
+    keyEnvs: ["INTENT_SIGNALS_API_KEY"],
+    keysOptional: true,
+    urlTemplateEnv: "INTENT_SIGNALS_URL_TEMPLATE",
+    authHeaderEnv: "INTENT_SIGNALS_AUTH_HEADER",
+    authSchemeEnv: "INTENT_SIGNALS_AUTH_SCHEME",
+    purpose: "buyer_intent_and_topic_signals",
+  },
+  {
     id: "similarweb",
     keyEnvs: ["SIMILARWEB_API_KEY"],
     urlTemplateEnv: "SIMILARWEB_URL_TEMPLATE",
@@ -130,6 +139,10 @@ const PROSPEO_DEFAULT_PERSON_JOB_TITLES = [
   "Head of Payments",
   "Payments Manager",
   "Procurement Manager",
+  "Head of Ecommerce",
+  "Director of Ecommerce",
+  "Head of E-commerce",
+  "Director of E-commerce",
 ];
 
 const PROSPEO_DEFAULT_PERSON_SENIORITIES = [
@@ -142,6 +155,7 @@ const PROSPEO_DEFAULT_PERSON_SENIORITIES = [
 
 const PROSPEO_PLAN_FALLBACK_FILTERS = new Set([
   "person_job_change",
+  "person_time_in_current_role",
   "company_revenue",
   "company_funding",
   "company_technology",
@@ -534,13 +548,18 @@ function buildConnectorRequestUrls(definition, context, options = {}) {
     const interpolated = interpolateTemplate(template, context);
     if (isValidHttpUrl(interpolated)) {
       urls.push(interpolated);
-      // For Prospeo, also add search-person endpoint if base template is configured
-      if (definition.id === "prospeo" && !isProspeoBulkCompanyEndpoint(interpolated)) {
+      // Official Prospeo company enrichment is strongest when paired with people discovery.
+      if (definition.id === "prospeo" && isProspeoBulkCompanyEndpoint(interpolated)) {
         const baseUrl = String(interpolated || "").split(/[?#]/)[0].trim();
         if (baseUrl && baseUrl.includes("api.prospeo.io")) {
           const searchPersonUrl = baseUrl.replace(/\/bulk-enrich-company(?:\/?|$)/i, "/search-person");
           if (searchPersonUrl !== baseUrl && isValidHttpUrl(searchPersonUrl)) {
             urls.push(searchPersonUrl);
+          }
+          const intentTopics = getProspeoIntentTopicIds();
+          const searchCompanyUrl = baseUrl.replace(/\/bulk-enrich-company(?:\/?|$)/i, "/search-company");
+          if (intentTopics.length > 0 && searchCompanyUrl !== baseUrl && isValidHttpUrl(searchCompanyUrl)) {
+            urls.push(searchCompanyUrl);
           }
         }
       }
@@ -576,6 +595,43 @@ function isProspeoBulkCompanyEndpoint(url) {
 
 function isProspeoSearchPersonEndpoint(url) {
   return /https?:\/\/api\.prospeo\.io\/search-person(?:$|[/?#])/i.test(String(url || ""));
+}
+
+function isProspeoSearchCompanyEndpoint(url) {
+  return /https?:\/\/api\.prospeo\.io\/search-company(?:$|[/?#])/i.test(String(url || ""));
+}
+
+function isOfficialProspeoApiTemplate(value) {
+  return /https?:\/\/api\.prospeo\.io\//i.test(String(value || ""));
+}
+
+function prospeoEndpointKindFromUrl(url) {
+  if (isProspeoBulkCompanyEndpoint(url)) return "bulk_company";
+  if (isProspeoSearchPersonEndpoint(url)) return "search_person";
+  if (isProspeoSearchCompanyEndpoint(url)) return "search_company";
+  return "custom";
+}
+
+function shouldFanOutConnectorRequests(definition, urls = []) {
+  if (definition?.id !== "prospeo") return false;
+  return urls.some((url) => isProspeoBulkCompanyEndpoint(url))
+    && urls.some((url) => isProspeoSearchPersonEndpoint(url));
+}
+
+function buildCombinedConnectorPayload(definition, successfulPayloads = []) {
+  if (definition?.id !== "prospeo") {
+    return successfulPayloads[0]?.payload || {};
+  }
+
+  return {
+    connector_payloads: successfulPayloads.map((entry) => ({
+      endpoint: prospeoEndpointKindFromUrl(entry?.url),
+      url: entry?.url || null,
+      status: entry?.status || null,
+      request_payload: entry?.request_payload || null,
+      payload: entry?.payload || {},
+    })),
+  };
 }
 
 function buildProspeoCompanyFilter(context = {}) {
@@ -660,6 +716,62 @@ function buildProspeoSearchPersonPayload(context = {}, options = {}) {
     };
   }
 
+  const recentRoleMonthsRaw = Number.parseInt(String(process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS || ""), 10);
+  if (!minimal && Number.isFinite(recentRoleMonthsRaw) && recentRoleMonthsRaw > 0) {
+    filters.person_time_in_current_role = {
+      min: 0,
+      max: Math.min(recentRoleMonthsRaw, 600),
+    };
+  }
+
+  const jobChangeDaysRaw = Number.parseInt(String(process.env.PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS || ""), 10);
+  const supportedJobChangeDays = new Set([30, 60, 90, 180, 270, 365]);
+  if (!minimal && supportedJobChangeDays.has(jobChangeDaysRaw)) {
+    filters.person_job_change = {
+      timeframe_days: jobChangeDaysRaw,
+      only_promotion: false,
+      only_new_company: false,
+    };
+  }
+
+  return {
+    filters,
+    page: 1,
+  };
+}
+
+function getProspeoIntentTopicIds() {
+  return parseDelimitedStringList(
+    process.env.PROSPEO_INTENT_TOPIC_IDS
+      || process.env.PROSPEO_COMPANY_INTENT_TOPIC_IDS
+      || process.env.PROSPEO_INTENT_TOPIC_NAMES
+  ).slice(0, 30);
+}
+
+function buildProspeoCompanyIntentFilter() {
+  const topicIds = getProspeoIntentTopicIds();
+  if (topicIds.length === 0) return null;
+
+  return {
+    topic_ids: topicIds,
+    active_research: parseBooleanFlag(process.env.PROSPEO_INTENT_ACTIVE_RESEARCH, true),
+    in_depth_research: parseBooleanFlag(process.env.PROSPEO_INTENT_IN_DEPTH_RESEARCH, true),
+    early_research: parseBooleanFlag(process.env.PROSPEO_INTENT_EARLY_RESEARCH, true),
+  };
+}
+
+function buildProspeoSearchCompanyPayload(context = {}) {
+  const filters = {};
+  const companyFilter = buildProspeoCompanyFilter(context);
+  if (Object.keys(companyFilter).length > 0) {
+    filters.company = companyFilter;
+  }
+
+  const intentFilter = buildProspeoCompanyIntentFilter();
+  if (intentFilter) {
+    filters.company_intent = intentFilter;
+  }
+
   return {
     filters,
     page: 1,
@@ -730,7 +842,7 @@ function hasProspeoPositiveFilter(filters = {}) {
 }
 
 function buildProspeoPlanFallbackPayload(context = {}, requestOptions = {}, responsePayload = {}) {
-  let parsedBody = null;
+  let parsedBody;
   try {
     parsedBody = JSON.parse(String(requestOptions?.body || "{}"));
   } catch {
@@ -776,6 +888,15 @@ function buildProspeoPlanFallbackRequestOptions(context = {}, requestOptions = {
   };
 }
 
+function parseRequestPayloadBody(value) {
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildProspeoBulkCompanyPayload(context = {}) {
   const companyDomain = normalizeCompanyDomain(context?.company_domain);
   const companyWebsite = companyDomain || "";
@@ -812,6 +933,10 @@ function buildConnectorRequestOptions(definition, context, url) {
       method = "POST";
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(buildProspeoSearchPersonPayload(context));
+    } else if (isProspeoSearchCompanyEndpoint(url)) {
+      method = "POST";
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(buildProspeoSearchCompanyPayload(context));
     } else if (isProspeoBulkCompanyEndpoint(url)) {
       method = "POST";
       headers["Content-Type"] = "application/json";
@@ -827,9 +952,10 @@ function buildConnectorRequestOptions(definition, context, url) {
 }
 
 function buildConnectorStatus(definition) {
-  const keysOptional = definition.keysOptional === true;
-  const keyStatus = keysOptional || (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]));
   const urlTemplate = connectorUrlTemplate(definition);
+  const officialProspeoTemplate = definition.id === "prospeo" && isOfficialProspeoApiTemplate(urlTemplate);
+  const keysOptional = definition.keysOptional === true && !officialProspeoTemplate;
+  const keyStatus = keysOptional || (definition.keyEnvs || []).every((keyEnv) => hasConfiguredSecret(process.env[keyEnv]));
 
   return {
     id: definition.id,
@@ -882,6 +1008,8 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context
   const urls = Array.isArray(requestUrls) ? requestUrls.filter(Boolean) : [];
   const startedAt = Date.now();
   const attempts = [];
+  const fanOutRequests = shouldFanOutConnectorRequests(definition, urls);
+  const successfulPayloads = [];
 
   if (urls.length === 0) {
     return {
@@ -1016,6 +1144,17 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context
 
               const failedAttemptCount = attempts.filter((entry) => entry.ok === false).length;
 
+              if (fanOutRequests) {
+                successfulPayloads.push({
+                  url,
+                  method: fallbackRequestOptions.method,
+                  status: fallbackResponse.status,
+                  request_payload: parseRequestPayloadBody(fallbackRequestOptions.body),
+                  payload: fallbackPayload,
+                });
+                continue;
+              }
+
               return {
                 ok: true,
                 status: fallbackResponse.status,
@@ -1095,6 +1234,17 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context
 
       const failedAttemptCount = attempts.filter((entry) => entry.ok === false).length;
 
+      if (fanOutRequests) {
+        successfulPayloads.push({
+          url,
+          method: requestOptions.method,
+          status: response.status,
+          request_payload: parseRequestPayloadBody(requestOptions.body),
+          payload,
+        });
+        continue;
+      }
+
       return {
         ok: true,
         status: response.status,
@@ -1138,6 +1288,27 @@ async function fetchConnectorPayload(definition, requestUrls, timeoutMs, context
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  if (fanOutRequests && successfulPayloads.length > 0) {
+    const firstSuccess = successfulPayloads[0];
+    const lastSuccess = successfulPayloads[successfulPayloads.length - 1];
+    const failedAttemptCount = attempts.filter((entry) => entry.ok === false).length;
+
+    return {
+      ok: true,
+      status: lastSuccess?.status || firstSuccess?.status || 200,
+      request_url: firstSuccess?.url || attemptedUrls[0] || null,
+      request_method: firstSuccess?.method || null,
+      attempted_urls: attemptedUrls,
+      successful_urls: successfulPayloads.map((entry) => entry.url).filter(Boolean),
+      payload: buildCombinedConnectorPayload(definition, successfulPayloads),
+      attempts,
+      attempt_count: attempts.length,
+      retry_count: Math.max(0, attempts.length - successfulPayloads.length),
+      failed_attempt_count: failedAttemptCount,
+      request_duration_ms: Math.max(0, Date.now() - startedAt),
+    };
   }
 
   return {
@@ -1224,8 +1395,10 @@ function collectArraysByKeys(root, keyNames, maxDepth = 5) {
 
 function readStringField(record, keys) {
   for (const key of keys) {
-    const value = String(record?.[key] || "").trim();
-    if (value) return value;
+    const value = record?.[key];
+    if (value === undefined || value === null || typeof value === "object") continue;
+    const text = String(value).trim();
+    if (text) return text;
   }
   return null;
 }
@@ -1470,8 +1643,16 @@ function parseOwnershipEnvelope(payload, sourceId) {
   };
 }
 
+function normalizeRoleText(role) {
+  return String(role || "")
+    .toLowerCase()
+    .replace(/\be[\s-]*commerce\b/g, "ecommerce")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function roleBucketForText(role) {
-  const token = String(role || "").toLowerCase();
+  const token = normalizeRoleText(role);
   if (!token) return null;
   if (token.includes("treasury")) return "treasury";
   if (token.includes("finance") || token.includes("account") || token.includes("cfo")) return "finance";
@@ -1481,7 +1662,7 @@ function roleBucketForText(role) {
 }
 
 function normalizeHiringPersonaBucket(role) {
-  const token = String(role || "").trim().toLowerCase();
+  const token = normalizeRoleText(role);
   if (!token) return "finance_operator";
   if (token.includes("cfo") || token.includes("chief financial") || token.includes("finance director")) {
     return "finance_director";
@@ -1515,8 +1696,15 @@ function extractPersonNameFromRecord(record) {
   return combined || null;
 }
 
+function normalizePersonEmailAddress(value) {
+  const email = String(value || "").trim();
+  if (!email || email.includes("*")) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
 function extractPersonEmailFromRecord(record) {
-  return readStringField(record, [
+  const direct = readStringField(record, [
     "email",
     "work_email",
     "professional_email",
@@ -1524,6 +1712,19 @@ function extractPersonEmailFromRecord(record) {
     "business_email",
     "contact_email",
   ]);
+  if (direct) return normalizePersonEmailAddress(direct);
+
+  const emailNode = record?.email;
+  if (emailNode && typeof emailNode === "object" && !Array.isArray(emailNode)) {
+    return normalizePersonEmailAddress(readStringField(emailNode, [
+      "email",
+      "value",
+      "address",
+      "email_address",
+    ]));
+  }
+
+  return null;
 }
 
 function extractPersonLinkedinFromRecord(record) {
@@ -1539,15 +1740,79 @@ function extractPersonLinkedinFromRecord(record) {
   return null;
 }
 
+function extractPersonStartDateFromRecord(record) {
+  if (!record || typeof record !== "object") return null;
+
+  const direct = readStringField(record, [
+    "start_date",
+    "started_at",
+    "joined_at",
+    "hire_date",
+    "hired_at",
+    "job_start_date",
+    "job_started_at",
+    "job_change_date",
+    "current_role_start_date",
+    "current_role_started_at",
+    "current_position_start_date",
+    "current_position_started_at",
+    "position_start_date",
+    "position_started_at",
+    "role_started_at",
+  ]);
+  if (direct) return parseIsoTimestamp(direct);
+
+  return parseIsoTimestamp(getFirstByPaths(record, [
+    "current_role.start_date",
+    "current_role.started_at",
+    "current_job.start_date",
+    "current_job.started_at",
+    "current_position.start_date",
+    "current_position.started_at",
+    "experience.0.start_date",
+    "experiences.0.start_date",
+    "positions.0.start_date",
+    "job_history.0.start_date",
+    "job_change.start_date",
+    "job_change.date",
+  ]));
+}
+
+function normalizeHiringIsNewHire(record = {}, startDate = null) {
+  const explicit = String(
+    record?.is_new_hire
+      ?? record?.new_hire
+      ?? record?.recent_hire
+      ?? record?.recent_job_change
+      ?? record?.person_job_change
+      ?? record?.job_change
+      ?? ""
+  ).trim().toLowerCase();
+
+  if (["1", "true", "yes", "y"].includes(explicit)) return true;
+  if (["0", "false", "no", "n"].includes(explicit)) return false;
+
+  const daysOld = incidentAgeDaysFromIso(startDate);
+  return Number.isFinite(daysOld) && daysOld <= 180;
+}
+
 function normalizeHiringEmailStatus(record = {}, email) {
+  const emailNode = record?.email && typeof record.email === "object" && !Array.isArray(record.email)
+    ? record.email
+    : {};
   const explicit = String(
     record?.email_status
       || record?.emailStatus
       || record?.email_validation_status
       || record?.email_validation
+      || emailNode?.status
+      || emailNode?.email_status
+      || emailNode?.verification_status
+      || emailNode?.validation_status
       || ""
   ).trim().toLowerCase();
   if (explicit) return explicit;
+  if (emailNode?.revealed === false) return "unrevealed";
   return email ? "provided" : "missing";
 }
 
@@ -1564,6 +1829,7 @@ function buildHiringPersonCandidate(record = {}, sourceId = "", fallbackIndex = 
   const role = extractRoleTitleFromRecord(record);
   const email = extractPersonEmailFromRecord(record);
   const linkedinUrl = extractPersonLinkedinFromRecord(record);
+  const startDate = extractPersonStartDateFromRecord(record);
 
   if (!fullName && !role && !email && !linkedinUrl) return null;
 
@@ -1584,7 +1850,9 @@ function buildHiringPersonCandidate(record = {}, sourceId = "", fallbackIndex = 
     confidence: normalizeHiringConfidence(record, email),
     persona_bucket: String(record?.persona_bucket || "").trim() || normalizeHiringPersonaBucket(role),
     linkedin_url: linkedinUrl || null,
-    source: sourceId ? `${sourceId}_api` : null,
+    start_date: startDate || null,
+    is_new_hire: normalizeHiringIsNewHire(record, startDate),
+    source: String(record?.source || "").trim() || (sourceId ? `${sourceId}_api` : null),
   };
 }
 
@@ -1626,7 +1894,104 @@ function mergePersonCandidates(primary = [], secondary = []) {
       confidence: current.confidence || candidate.confidence || "medium",
       persona_bucket: current.persona_bucket || candidate.persona_bucket || null,
       linkedin_url: current.linkedin_url || candidate.linkedin_url || null,
+      start_date: current.start_date || candidate.start_date || null,
+      is_new_hire: current.is_new_hire === true || candidate.is_new_hire === true,
       source: current.source || candidate.source || null,
+    });
+  }
+
+  return [...map.values()].slice(0, 20);
+}
+
+function roleMatchesDesiredHiringRole(role) {
+  const token = normalizeRoleText(role);
+  if (!token) return false;
+
+  const matchesDefaultTitle = PROSPEO_DEFAULT_PERSON_JOB_TITLES
+    .some((title) => token.includes(normalizeRoleText(title)));
+  if (matchesDefaultTitle) return true;
+  if (token === "cfo" || token.includes("chief financial")) return true;
+
+  const isSenior = /\b(chief|cfo|vp|vice president|head|director|manager|controller)\b/.test(token);
+  if (!isSenior) return false;
+
+  return [
+    "finance",
+    "treasury",
+    "payments",
+    "procurement",
+    "ecommerce",
+    "digital",
+  ].some((term) => token.includes(term));
+}
+
+function normalizeNewSeniorHireRecord(record = {}, sourceId = "", fallbackIndex = 1) {
+  if (!record || typeof record !== "object") return null;
+
+  const role = extractRoleTitleFromRecord(record);
+  if (!role || !roleMatchesDesiredHiringRole(role)) return null;
+
+  const fullName = extractPersonNameFromRecord(record);
+  const email = extractPersonEmailFromRecord(record);
+  const startDate = extractPersonStartDateFromRecord(record);
+  const explicitPersonId = String(record?.person_id || record?.id || record?.oid || "").trim();
+  const idSeed = explicitPersonId || fullName || email || role || `hire_${fallbackIndex}`;
+  const normalizedPersonId = String(idSeed)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+
+  return {
+    person_id: normalizedPersonId || `hire_${fallbackIndex}`,
+    full_name: fullName || null,
+    role,
+    email: email || null,
+    start_date: startDate || null,
+    is_new_hire: normalizeHiringIsNewHire(record, startDate),
+    source: String(record?.source || "").trim() || (sourceId ? `${sourceId}_api` : null),
+  };
+}
+
+function buildNewSeniorHireKey(hire = {}) {
+  const personId = String(hire?.person_id || "").trim().toLowerCase();
+  if (personId) return `id:${personId}`;
+
+  const email = String(hire?.email || "").trim().toLowerCase();
+  if (email) return `email:${email}`;
+
+  const name = String(hire?.full_name || "").trim().toLowerCase();
+  const role = String(hire?.role || "").trim().toLowerCase();
+  if (name || role) return `name:${name}::role:${role}`;
+
+  return "";
+}
+
+function mergeNewSeniorHires(primary = [], secondary = []) {
+  const map = new Map();
+
+  for (const hire of [...asObjectArray(primary), ...asObjectArray(secondary)]) {
+    const normalized = normalizeNewSeniorHireRecord(hire, hire?.source || "");
+    if (!normalized) continue;
+
+    const key = buildNewSeniorHireKey(normalized);
+    if (!key) continue;
+
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, normalized);
+      continue;
+    }
+
+    map.set(key, {
+      ...current,
+      person_id: current.person_id || normalized.person_id || null,
+      full_name: current.full_name || normalized.full_name || null,
+      role: current.role || normalized.role || null,
+      email: current.email || normalized.email || null,
+      start_date: current.start_date || normalized.start_date || null,
+      is_new_hire: current.is_new_hire === true || normalized.is_new_hire === true,
+      source: current.source || normalized.source || null,
     });
   }
 
@@ -1660,10 +2025,24 @@ function parseHiringEnvelope(payload, sourceId) {
       .map((row, index) => buildHiringPersonCandidate(row, sourceId, index + 1))
       .filter(Boolean)
   );
+  const directNewSeniorHires = asObjectArray(getFirstArrayByPaths(payload || {}, [
+    "new_senior_hires",
+    "new_hires",
+    "recent_hires",
+    "job_changes",
+    "person_job_changes",
+  ]))
+    .map((row, index) => normalizeNewSeniorHireRecord(row, sourceId, index + 1))
+    .filter((hire) => hire?.is_new_hire === true || hire?.start_date);
+  const candidateNewSeniorHires = personCandidates
+    .filter((candidate) => candidate?.is_new_hire === true || candidate?.start_date)
+    .map((candidate, index) => normalizeNewSeniorHireRecord(candidate, sourceId, index + 1))
+    .filter((hire) => hire?.is_new_hire === true || hire?.start_date);
+  const newSeniorHires = mergeNewSeniorHires(directNewSeniorHires, candidateNewSeniorHires);
   const explicitOpenRoles = readNumericField(payload || {}, ["open_roles", "jobs_open", "vacancies", "active_jobs", "total_results"]);
   const totalOpenRoles = Math.max(uniqueRoleNames.length, Number(explicitOpenRoles || 0));
 
-  if (totalOpenRoles <= 0 && personCandidates.length < 1) return null;
+  if (totalOpenRoles <= 0 && personCandidates.length < 1 && newSeniorHires.length < 1) return null;
 
   const nowIso = new Date().toISOString();
   const openRoles = uniqueRoleNames.map((role) => ({ role }));
@@ -1671,13 +2050,16 @@ function parseHiringEnvelope(payload, sourceId) {
   const treasuryRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "treasury");
   const internationalRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "international");
   const ecommerceRoles = openRoles.filter((entry) => roleBucketForText(entry.role) === "ecommerce");
-  const score = Math.max(0, Math.min((totalOpenRoles / 20) + (personCandidates.length / 30), 1));
+  const score = Math.max(0, Math.min((totalOpenRoles / 20) + (personCandidates.length / 30) + (newSeniorHires.length / 20), 1));
   const evidence = [];
   if (totalOpenRoles > 0) {
     evidence.push(`${sourceId} reports ${totalOpenRoles} active roles`);
   }
   if (personCandidates.length > 0) {
     evidence.push(`${sourceId} returned ${personCandidates.length} relevant people`);
+  }
+  if (newSeniorHires.length > 0) {
+    evidence.push(`${sourceId} returned ${newSeniorHires.length} recent senior hires`);
   }
 
   return {
@@ -1692,6 +2074,8 @@ function parseHiringEnvelope(payload, sourceId) {
     ecommerce_roles_open: ecommerceRoles,
     person_candidates: personCandidates,
     person_candidates_count: personCandidates.length,
+    new_senior_hires: newSeniorHires,
+    new_senior_hires_count: newSeniorHires.length,
     hiring_signal_score: Math.round(score * 100) / 100,
     hiring_intensity: score >= 0.7 ? "high" : score >= 0.35 ? "medium" : "low",
     evidence,
@@ -1810,6 +2194,364 @@ function parseMarketingEnvelope(payload, sourceId) {
     evidence: [`${sourceId} traffic metric imported`],
     confidence: "medium",
     confidence_score: 0.55,
+  };
+}
+
+const INTENT_SIGNAL_ROW_PATHS = [
+  "intent_signals",
+  "intent.signals",
+  "company_intent",
+  "company_intent.signals",
+  "buyer_intent",
+  "buyer_intent.signals",
+  "demand_signals",
+  "demand_signals.signals",
+  "surges",
+  "events",
+  "company.intent",
+  "company.intent_signals",
+  "organization.intent",
+  "organization.intent_signals",
+  "data.intent_signals",
+  "data.intent.signals",
+  "data.company_intent",
+  "data.buyer_intent",
+];
+
+const INTENT_TOPIC_PATHS = [
+  "topics",
+  "intent_topics",
+  "keywords",
+  "surging_topics",
+  "intent.topics",
+  "company_intent.topics",
+  "buyer_intent.topics",
+  "data.topics",
+  "data.intent_topics",
+  "data.keywords",
+  "data.surging_topics",
+];
+
+const INTENT_SIGNAL_GENERIC_ROW_PATHS = [
+  "results",
+  "data.results",
+  "rows",
+  "items",
+  "data",
+];
+
+function normalizeStringList(value) {
+  if (Array.isArray(value)) {
+    return uniqueStrings(value.flatMap((entry) => normalizeStringList(entry)));
+  }
+
+  if (value && typeof value === "object") {
+    return uniqueStrings([
+      readStringField(value, ["topic", "intent_topic", "keyword", "name", "title", "label", "signal"]),
+      readStringField(value, ["motion", "product_motion", "product", "use_case"]),
+    ]);
+  }
+
+  return String(value || "")
+    .split(/[;,\n]/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function normalizeIntentMotionName(value) {
+  const token = normalizeRoleText(value)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!token) return null;
+
+  if (token.includes("forward") || token.includes("hedg")) return "FX Forwards";
+  if (/\bfx\b/.test(token) || token.includes("foreign exchange") || token.includes("multi currency") || token.includes("multicurrency") || token.includes("cross border") || token.includes("international payment")) return "FX";
+  if (token.includes("spend") || token.includes("expense") || token.includes("procurement") || token.includes("accounts payable") || /\bap\b/.test(token)) return "Spend Management";
+  if (token.includes("card") || token.includes("virtual card") || token.includes("corporate card")) return "Cards";
+  if (token.includes("revolut pay") || token.includes("checkout") || token.includes("cart")) return "Revolut Pay";
+  if (token.includes("merchant") || token.includes("acquir") || token.includes("psp") || token.includes("payment gateway") || token.includes("settlement") || token.includes("payout")) return "Merchant Acquiring";
+  if (token.includes("api") || token.includes("integration") || token.includes("embedded") || token.includes("automation")) return "API Integrations";
+
+  return null;
+}
+
+function inferIntentMotionsFromText(value) {
+  const text = String(value || "");
+  return uniqueStrings([
+    normalizeIntentMotionName(text),
+    /\b(?:checkout|cart|conversion|payment gateway|psp|settlement|payout|merchant)\b/i.test(text)
+      ? "Merchant Acquiring"
+      : null,
+    /\b(?:checkout|cart|revolut pay|wallet|payment button)\b/i.test(text)
+      ? "Revolut Pay"
+      : null,
+    /\b(?:fx|foreign exchange|multi[-\s]?currency|cross[-\s]?border|international payments?)\b/i.test(text)
+      ? "FX"
+      : null,
+    /\b(?:forward|hedg(?:e|ing)|currency risk)\b/i.test(text)
+      ? "FX Forwards"
+      : null,
+    /\b(?:spend|expense|procurement|accounts payable|supplier payment)\b/i.test(text)
+      ? "Spend Management"
+      : null,
+    /\b(?:card|virtual card|corporate card)\b/i.test(text)
+      ? "Cards"
+      : null,
+    /\b(?:api|integration|embedded finance|automation)\b/i.test(text)
+      ? "API Integrations"
+      : null,
+  ]).slice(0, 4);
+}
+
+function normalizeIntentStrength(record = {}) {
+  const numeric = readNumericField(record, [
+    "score",
+    "strength_score",
+    "intent_score",
+    "confidence_score",
+    "signal_score",
+    "value",
+    "weight",
+  ]);
+
+  if (Number.isFinite(numeric)) {
+    const score = numeric > 1 ? Math.max(0, Math.min(numeric / 100, 1)) : clamp01(numeric);
+    return {
+      score: Math.round(score * 100) / 100,
+      label: score >= 0.72 ? "high" : score >= 0.42 ? "medium" : "low",
+    };
+  }
+
+  const label = String(
+    readStringField(record, ["strength", "intent_strength", "confidence", "confidence_band", "level", "band"])
+      || ""
+  ).trim().toLowerCase();
+
+  if (["very high", "strong", "high", "surging", "hot"].includes(label)) return { score: 0.85, label: "high" };
+  if (["medium", "moderate", "warm"].includes(label)) return { score: 0.58, label: "medium" };
+  if (["low", "weak", "cold"].includes(label)) return { score: 0.3, label: "low" };
+
+  return { score: 0.5, label: "medium" };
+}
+
+function normalizeIntentRecencyDays(record = {}) {
+  const direct = readNumericField(record, [
+    "recency_days",
+    "freshness_days",
+    "days_old",
+    "age_days",
+    "days_since_seen",
+    "days_since_detected",
+  ]);
+  if (Number.isFinite(direct)) return Math.max(0, Math.round(direct));
+
+  const timestamp = latestIsoTimestamp([
+    readStringField(record, ["observed_at", "detected_at", "last_seen_at", "last_seen", "timestamp", "created_at", "updated_at"]),
+  ]);
+  const age = incidentAgeDaysFromIso(timestamp);
+  return Number.isFinite(age) ? Math.round(age) : null;
+}
+
+function collectIntentSignalItems(root, allowGenericRows = false) {
+  const items = [];
+  for (const path of INTENT_SIGNAL_ROW_PATHS) {
+    const candidate = getByPath(root, path);
+    if (Array.isArray(candidate)) {
+      items.push(...candidate);
+    } else if (candidate && typeof candidate === "object") {
+      items.push(candidate);
+    } else if (typeof candidate === "string" && candidate.trim()) {
+      items.push(candidate);
+    }
+  }
+
+  if (allowGenericRows) {
+    for (const path of INTENT_SIGNAL_GENERIC_ROW_PATHS) {
+      const candidate = getByPath(root, path);
+      if (Array.isArray(candidate)) items.push(...candidate);
+    }
+  }
+
+  return items;
+}
+
+function hasExplicitIntentPayload(payload) {
+  const root = normalizeConnectorPayloadRoot(payload);
+  return [...INTENT_SIGNAL_ROW_PATHS, ...INTENT_TOPIC_PATHS].some((path) => {
+    const candidate = getByPath(root, path);
+    return candidate !== undefined && candidate !== null
+      && !(Array.isArray(candidate) && candidate.length === 0)
+      && !(typeof candidate === "string" && !candidate.trim());
+  });
+}
+
+function normalizeIntentSignalRecord(record = {}, sourceId = "", fallbackIndex = 1) {
+  const input = record && typeof record === "object" ? record : { topic: record };
+  const topic = readStringField(input, [
+    "topic",
+    "intent_topic",
+    "keyword",
+    "signal",
+    "name",
+    "title",
+    "label",
+    "query",
+    "interest",
+    "category",
+  ]);
+  const evidence = readStringField(input, [
+    "evidence",
+    "description",
+    "snippet",
+    "reason",
+    "context",
+    "summary",
+  ]);
+  const explicitMotions = uniqueStrings([
+    ...normalizeStringList(getFirstByPaths(input, ["motions", "product_motions", "products", "use_cases"])),
+    readStringField(input, ["motion", "product_motion", "product", "use_case"]),
+  ])
+    .map(normalizeIntentMotionName)
+    .filter(Boolean);
+  const motions = explicitMotions.length > 0
+    ? uniqueStrings(explicitMotions)
+    : inferIntentMotionsFromText(`${topic || ""} ${evidence || ""}`);
+  const strength = normalizeIntentStrength(input);
+  const recencyDays = normalizeIntentRecencyDays(input);
+
+  if (!topic && !evidence && motions.length === 0) return null;
+
+  const idSeed = readStringField(input, ["id", "signal_id", "intent_id"])
+    || topic
+    || evidence
+    || `intent_${fallbackIndex}`;
+  const signalId = String(idSeed)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+
+  return {
+    signal_id: signalId || `intent_${fallbackIndex}`,
+    topic: topic || motions[0] || "Commercial intent",
+    motions,
+    strength: strength.label,
+    strength_score: strength.score,
+    recency_days: recencyDays,
+    evidence: evidence || null,
+    source: readStringField(input, ["source", "provider"]) || (sourceId ? `${sourceId}_api` : null),
+  };
+}
+
+function buildIntentSignalKey(signal = {}) {
+  const signalId = String(signal?.signal_id || "").trim().toLowerCase();
+  if (signalId) return `id:${signalId}`;
+
+  const topic = String(signal?.topic || "").trim().toLowerCase();
+  const motions = Array.isArray(signal?.motions) ? signal.motions.join("|").toLowerCase() : "";
+  if (topic || motions) return `topic:${topic}::motions:${motions}`;
+
+  return "";
+}
+
+function mergeIntentSignals(primary = [], secondary = []) {
+  const map = new Map();
+
+  for (const signal of [...asObjectArray(primary), ...asObjectArray(secondary)]) {
+    const normalized = normalizeIntentSignalRecord(signal, signal?.source || "");
+    if (!normalized) continue;
+
+    const key = buildIntentSignalKey(normalized);
+    if (!key) continue;
+
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, normalized);
+      continue;
+    }
+
+    const currentScore = Number(current.strength_score || 0);
+    const incomingScore = Number(normalized.strength_score || 0);
+    const best = incomingScore > currentScore ? normalized : current;
+
+    map.set(key, {
+      ...current,
+      ...best,
+      motions: uniqueStrings([...(current.motions || []), ...(normalized.motions || [])]),
+      recency_days: [current.recency_days, normalized.recency_days]
+        .filter((value) => Number.isFinite(Number(value)))
+        .map(Number)
+        .sort((a, b) => a - b)[0] ?? null,
+      evidence: current.evidence || normalized.evidence || null,
+      source: current.source || normalized.source || null,
+    });
+  }
+
+  return [...map.values()].slice(0, 30);
+}
+
+function parseIntentEnvelope(payload, sourceId, options = {}) {
+  if (!payload || typeof payload !== "object") return null;
+
+  const root = normalizeConnectorPayloadRoot(payload);
+  const allowGenericRows = options.allowGenericRows === true;
+  if (!allowGenericRows && !hasExplicitIntentPayload(payload)) return null;
+
+  const directItems = collectIntentSignalItems(root, allowGenericRows);
+  const signals = mergeIntentSignals(
+    [],
+    directItems
+      .map((row, index) => normalizeIntentSignalRecord(row, sourceId, index + 1))
+      .filter(Boolean)
+  );
+
+  const directTopics = uniqueStrings([
+    ...signals.map((signal) => signal.topic),
+    ...INTENT_TOPIC_PATHS.flatMap((path) => normalizeStringList(getByPath(root, path))),
+  ]).slice(0, 20);
+
+  const explicitScore = readNumericField(root, [
+    "intent_signal_score",
+    "company_intent_score",
+    "buyer_intent_score",
+    "confidence_score",
+  ]);
+  const signalStrengthScore = signals.length > 0
+    ? signals.reduce((sum, signal) => sum + Number(signal.strength_score || 0), 0) / signals.length
+    : null;
+  const normalizedScore = Number.isFinite(explicitScore)
+    ? (explicitScore > 1 ? Math.min(explicitScore / 100, 1) : clamp01(explicitScore))
+    : signalStrengthScore;
+
+  if (signals.length === 0 && directTopics.length === 0 && !Number.isFinite(normalizedScore)) return null;
+
+  const recencies = signals
+    .map((signal) => Number(signal.recency_days))
+    .filter((value) => Number.isFinite(value));
+  const explicitRecency = readNumericField(root, ["recency_days", "freshness_days", "days_old"]);
+  if (Number.isFinite(explicitRecency)) recencies.push(Math.max(0, explicitRecency));
+  const recencyDays = recencies.length > 0 ? Math.round(Math.min(...recencies)) : null;
+  const score = Math.round(Math.max(0.25, Math.min(Number(normalizedScore || 0.5), 1)) * 100) / 100;
+  const nowIso = new Date().toISOString();
+  const motions = uniqueStrings(signals.flatMap((signal) => signal.motions || [])).slice(0, 8);
+
+  return {
+    updated_at: nowIso,
+    fetched_at: nowIso,
+    source: `${sourceId}_api`,
+    topics: directTopics,
+    signals,
+    motions,
+    recency_days: recencyDays,
+    intent_signal_score: score,
+    confidence: score >= 0.72 ? "high" : score >= 0.42 ? "medium" : "low",
+    confidence_score: score,
+    evidence: uniqueStrings([
+      `${sourceId} intent signals imported`,
+      signals.length > 0 ? `${signals.length} normalized intent signal${signals.length === 1 ? "" : "s"}` : null,
+      motions.length > 0 ? `Motion hints: ${motions.join(", ")}` : null,
+    ]).slice(0, 10),
   };
 }
 
@@ -2155,37 +2897,231 @@ function extractRoleTitleFromRecord(record) {
   return prefix || headline;
 }
 
+function normalizeProspeoPayloadEntries(payload) {
+  const combinedEntries = Array.isArray(payload?.connector_payloads)
+    ? payload.connector_payloads
+    : [];
+
+  if (combinedEntries.length > 0) {
+    return combinedEntries
+      .map((entry) => ({
+        endpoint: String(entry?.endpoint || prospeoEndpointKindFromUrl(entry?.url) || "custom"),
+        url: entry?.url || null,
+        request_payload: entry?.request_payload && typeof entry.request_payload === "object" ? entry.request_payload : null,
+        payload: entry?.payload && typeof entry.payload === "object" ? entry.payload : {},
+      }))
+      .filter((entry) => entry.payload && typeof entry.payload === "object");
+  }
+
+  return [{
+    endpoint: "custom",
+    url: null,
+    payload: payload && typeof payload === "object" ? payload : {},
+  }];
+}
+
+function normalizeProspeoPersonCandidateRecord(record = {}) {
+  if (!record || typeof record !== "object") return record;
+  const person = record?.person && typeof record.person === "object" && !Array.isArray(record.person)
+    ? record.person
+    : null;
+  if (!person) return record;
+
+  const emailNode = person?.email && typeof person.email === "object" && !Array.isArray(person.email)
+    ? person.email
+    : (record?.email && typeof record.email === "object" && !Array.isArray(record.email) ? record.email : null);
+  const startDate = getFirstByPaths(person, [
+    "start_date",
+    "started_at",
+    "joined_at",
+    "hire_date",
+    "hired_at",
+    "job_start_date",
+    "job_started_at",
+    "job_change_date",
+    "current_role.start_date",
+    "current_role.started_at",
+    "current_job.start_date",
+    "current_job.started_at",
+    "current_position.start_date",
+    "current_position.started_at",
+    "experience.0.start_date",
+    "experiences.0.start_date",
+    "positions.0.start_date",
+    "job_history.0.start_date",
+    "job_change.start_date",
+    "job_change.date",
+  ]) || getFirstByPaths(record, [
+    "start_date",
+    "started_at",
+    "joined_at",
+    "hire_date",
+    "hired_at",
+    "job_start_date",
+    "job_started_at",
+    "job_change_date",
+    "current_role.start_date",
+    "current_role.started_at",
+    "current_job.start_date",
+    "current_job.started_at",
+    "current_position.start_date",
+    "current_position.started_at",
+    "experience.0.start_date",
+    "experiences.0.start_date",
+    "positions.0.start_date",
+    "job_history.0.start_date",
+    "job_change.start_date",
+    "job_change.date",
+  ]);
+
+  return {
+    ...record,
+    ...person,
+    person_id: readStringField(person, ["person_id", "id", "oid", "prospeo_id", "linkedin_id"])
+      || readStringField(record, ["person_id", "id", "oid"]),
+    full_name: readStringField(person, ["full_name", "name", "display_name"])
+      || readStringField(record, ["full_name", "name", "display_name"]),
+    role: readStringField(person, ["job_title", "title", "role", "headline"])
+      || readStringField(record, ["job_title", "title", "role", "headline"]),
+    email: readStringField(person, ["email", "work_email", "professional_email", "email_address"])
+      || readStringField(record, ["email", "work_email", "professional_email", "email_address"])
+      || emailNode
+      || null,
+    email_status: readStringField(person, ["email_status", "emailStatus", "email_validation_status"])
+      || readStringField(record, ["email_status", "emailStatus", "email_validation_status"])
+      || readStringField(emailNode || {}, ["status", "email_status", "verification_status", "validation_status"]),
+    linkedin_url: readStringField(person, ["linkedin_url", "linkedin", "linkedin_profile", "profile_url"])
+      || readStringField(record, ["linkedin_url", "linkedin", "linkedin_profile", "profile_url"]),
+    confidence: readStringField(person, ["confidence", "confidence_level"])
+      || readStringField(record, ["confidence", "confidence_level"]),
+    start_date: startDate || null,
+    is_new_hire: person?.is_new_hire
+      ?? person?.new_hire
+      ?? person?.recent_hire
+      ?? person?.recent_job_change
+      ?? person?.person_job_change
+      ?? person?.job_change
+      ?? record?.is_new_hire
+      ?? record?.new_hire
+      ?? record?.recent_hire
+      ?? record?.recent_job_change
+      ?? record?.person_job_change
+      ?? record?.job_change,
+  };
+}
+
+function prospeoPayloadHasPositiveResults(root = {}) {
+  const total = getFirstNumericByPaths(root, [
+    "total_results",
+    "total",
+    "count",
+    "data.total_results",
+    "meta.total_results",
+    "pagination.total",
+  ]);
+  if (Number.isFinite(total) && total > 0) return true;
+
+  return [
+    "results",
+    "data.results",
+    "companies",
+    "data.companies",
+    "rows",
+    "items",
+    "data",
+  ].some((path) => {
+    const rows = getByPath(root, path);
+    return Array.isArray(rows) && rows.length > 0;
+  });
+}
+
+function buildProspeoIntentEnvelope(payloadRoots = [], sourceId = "") {
+  const signals = [];
+  const topics = [];
+  let strongestScore = 0;
+
+  for (const entry of payloadRoots) {
+    if (entry.endpoint !== "search_company") continue;
+    if (!prospeoPayloadHasPositiveResults(entry.root)) continue;
+
+    const intentFilter = getByPath(entry.request_payload || {}, "filters.company_intent");
+    const topicIds = Array.isArray(intentFilter?.topic_ids) ? intentFilter.topic_ids : [];
+    if (topicIds.length === 0) continue;
+
+    const stageScore = intentFilter.in_depth_research
+      ? 0.86
+      : intentFilter.active_research
+        ? 0.74
+        : intentFilter.early_research
+          ? 0.58
+          : 0.5;
+    strongestScore = Math.max(strongestScore, stageScore);
+
+    for (const topic of topicIds) {
+      const topicName = String(topic || "").trim();
+      if (!topicName) continue;
+      topics.push(topicName);
+      signals.push({
+        topic: topicName,
+        motions: inferIntentMotionsFromText(topicName),
+        strength_score: stageScore,
+        strength: stageScore >= 0.72 ? "high" : stageScore >= 0.42 ? "medium" : "low",
+        evidence: `Company research activity matched configured topic: ${topicName}`,
+        source: `${sourceId}_company_intent`,
+      });
+    }
+  }
+
+  if (signals.length === 0) return null;
+
+  return parseIntentEnvelope({
+    topics: uniqueStrings(topics),
+    intent_signals: signals,
+    intent_signal_score: strongestScore || 0.72,
+    confidence_score: strongestScore || 0.72,
+  }, sourceId);
+}
+
 function parseProspeoSpecificEnvelopes(payload, sourceId) {
-  const root = normalizeConnectorPayloadRoot(payload);
+  const payloadEntries = normalizeProspeoPayloadEntries(payload);
+  const payloadRoots = payloadEntries.map((entry) => ({
+    ...entry,
+    root: normalizeConnectorPayloadRoot(entry.payload),
+  }));
+  const root = payloadRoots[0]?.root || normalizeConnectorPayloadRoot(payload);
   const matchedCompanies = asObjectArray(
-    collectArraysFromPaths(root, [
+    payloadRoots.flatMap(({ root: entryRoot }) => collectArraysFromPaths(entryRoot, [
       "matched",
       "data.matched",
       "result.matched",
-    ]).map((row) => (row && typeof row === "object" ? row.company : null))
+    ]).map((row) => (row && typeof row === "object" ? row.company : null)))
   );
 
-  const companyNode = getFirstByPaths(root, [
-    "company",
-    "organization",
-    "data.company",
-    "data.organization",
-    "result.company",
-    "matched.0.company",
-    "data.matched.0.company",
-    "result.matched.0.company",
-  ]) || matchedCompanies[0] || {};
+  const companyNode = payloadRoots
+    .map(({ root: entryRoot }) => getFirstByPaths(entryRoot, [
+      "company",
+      "organization",
+      "data.company",
+      "data.organization",
+      "result.company",
+      "matched.0.company",
+      "data.matched.0.company",
+      "result.matched.0.company",
+    ]))
+    .find((entry) => entry && typeof entry === "object") || matchedCompanies[0] || {};
 
-  // Extract people from search-person endpoint results separately
-  const searchPersonResults = asObjectArray(collectArraysFromPaths(root, [
-    "results",
-    "data",
-    "people",
-    "matched_people",
-    "rows",
-  ]));
+  const searchPersonResults = asObjectArray(payloadRoots.flatMap(({ root: entryRoot, endpoint }) => {
+    if (endpoint === "bulk_company") return [];
+    return collectArraysFromPaths(entryRoot, [
+      "results",
+      "data.results",
+      "people",
+      "matched_people",
+      "rows",
+    ]);
+  }));
 
-  const contactRows = asObjectArray(collectArraysFromPaths(root, [
+  const contactRows = asObjectArray(payloadRoots.flatMap(({ root: entryRoot }) => collectArraysFromPaths(entryRoot, [
     "contacts",
     "employees",
     "prospects",
@@ -2197,14 +3133,14 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     "response.results",
     "response.data",
     "organization.people",
-  ])).concat(searchPersonResults);
-  const personCandidates = mergePersonCandidates(
+  ])));
+  const genericPersonCandidates = mergePersonCandidates(
     [],
     contactRows
       .map((row, index) => buildHiringPersonCandidate(row, sourceId, index + 1))
       .filter(Boolean)
   );
-  const explicitJobRows = asObjectArray(collectArraysFromPaths(root, [
+  const explicitJobRows = asObjectArray(payloadRoots.flatMap(({ root: entryRoot }) => collectArraysFromPaths(entryRoot, [
     "jobs",
     "open_roles",
     "roles",
@@ -2214,7 +3150,7 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     "company.roles",
     "organization.roles",
     "data.jobs",
-  ]));
+  ])));
   const matchedJobRows = matchedCompanies.flatMap((company) => {
     const titles = getByPath(company, "job_postings.active_titles");
     if (!Array.isArray(titles)) return [];
@@ -2228,10 +3164,15 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     .map((row) => ({ title: extractRoleTitleFromRecord(row) }))
     .filter((row) => row.title);
 
-  // Build person candidates from search-person results, prioritizing them over generic extraction
+  // Build person candidates from search-person results, prioritizing them over generic extraction.
   const searchPersonCandidates = searchPersonResults
-    .map((row, index) => buildHiringPersonCandidate(row, `${sourceId}_search_person`, index + 1))
+    .map((row, index) => buildHiringPersonCandidate(
+      normalizeProspeoPersonCandidateRecord(row),
+      `${sourceId}_search_person`,
+      index + 1
+    ))
     .filter(Boolean);
+  const personCandidates = mergePersonCandidates(searchPersonCandidates, genericPersonCandidates);
 
   const roleCountFromCompany = getFirstNumericByPaths(companyNode, [
     "open_roles",
@@ -2284,7 +3225,6 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
 
   const normalizedPayload = {
     jobs,
-    person_candidates: searchPersonCandidates,
     open_roles: getFirstNumericByPaths(root, [
       "open_roles",
       "jobs_open",
@@ -2343,6 +3283,8 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     person_candidates: personCandidates,
     person_candidates_count: personCandidates.length,
   };
+  const intentEnvelope = buildProspeoIntentEnvelope(payloadRoots, sourceId)
+    || parseIntentEnvelope(normalizedPayload, sourceId);
 
   return {
     ownership: null,
@@ -2350,6 +3292,7 @@ function parseProspeoSpecificEnvelopes(payload, sourceId) {
     reputation: parseReputationEnvelope(normalizedPayload, sourceId),
     marketing: parseMarketingEnvelope(normalizedPayload, sourceId),
     tech: parseTechEnvelope(normalizedPayload, sourceId),
+    intent: intentEnvelope,
   };
 }
 
@@ -2987,6 +3930,15 @@ function parseSpecificConnectorEnvelopes(sourceId, payload) {
       return parseProspeoSpecificEnvelopes(payload, sourceId);
     case "phantombuster":
       return parsePhantomBusterSpecificEnvelopes(payload, sourceId);
+    case "intent":
+      return {
+        ownership: null,
+        hiring: null,
+        reputation: null,
+        marketing: null,
+        tech: null,
+        intent: parseIntentEnvelope(payload, sourceId, { allowGenericRows: true }),
+      };
     case "similarweb":
       return parseSimilarwebSpecificEnvelopes(payload, sourceId);
     case "builtwith":
@@ -3014,6 +3966,7 @@ function parseSpecificConnectorEnvelopes(sourceId, payload) {
         reputation: null,
         marketing: null,
         tech: null,
+        intent: null,
       };
   }
 }
@@ -3023,6 +3976,7 @@ function coalesceEnvelope(primary, fallback, mergeType) {
     if (mergeType === "ownership") return mergeOwnershipEnvelope(fallback, primary);
     if (mergeType === "hiring") return mergeHiringEnvelope(fallback, primary);
     if (mergeType === "tech") return mergeTechEnvelope(fallback, primary);
+    if (mergeType === "intent") return mergeIntentEnvelope(fallback, primary);
     return mergeEnvelopeWithEvidence(fallback, primary, { scoreField: "confidence_score" });
   }
   return primary || fallback || null;
@@ -3030,12 +3984,14 @@ function coalesceEnvelope(primary, fallback, mergeType) {
 
 function parseConnectorEnvelopes(sourceId, payload) {
   const specific = parseSpecificConnectorEnvelopes(sourceId, payload);
+  const sourceKey = String(sourceId || "").toLowerCase();
   const generic = {
     ownership: parseOwnershipEnvelope(payload, sourceId),
     hiring: parseHiringEnvelope(payload, sourceId),
     reputation: parseReputationEnvelope(payload, sourceId),
     marketing: parseMarketingEnvelope(payload, sourceId),
     tech: parseTechEnvelope(payload, sourceId),
+    intent: parseIntentEnvelope(payload, sourceId, { allowGenericRows: sourceKey === "intent" }),
   };
 
   return {
@@ -3044,6 +4000,7 @@ function parseConnectorEnvelopes(sourceId, payload) {
     reputation: coalesceEnvelope(specific.reputation, generic.reputation, "reputation"),
     marketing: coalesceEnvelope(specific.marketing, generic.marketing, "marketing"),
     tech: coalesceEnvelope(specific.tech, generic.tech, "tech"),
+    intent: coalesceEnvelope(specific.intent, generic.intent, "intent"),
   };
 }
 
@@ -3245,6 +4202,8 @@ function mergeHiringEnvelope(existing, incoming) {
   merged.ecommerce_roles_open = mergeRoleArray(existing?.ecommerce_roles_open, incoming?.ecommerce_roles_open);
   merged.person_candidates = mergePersonCandidates(existing?.person_candidates, incoming?.person_candidates);
   merged.person_candidates_count = merged.person_candidates.length;
+  merged.new_senior_hires = mergeNewSeniorHires(existing?.new_senior_hires, incoming?.new_senior_hires);
+  merged.new_senior_hires_count = merged.new_senior_hires.length;
   return merged;
 }
 
@@ -3261,6 +4220,44 @@ function mergeTechEnvelope(existing, incoming) {
   merged.detected_technologies = technologies;
   merged.stack = technologies;
   merged.signal_count = technologies.length;
+  return merged;
+}
+
+function mergeIntentEnvelope(existing, incoming) {
+  const merged = mergeEnvelopeWithEvidence(existing, incoming, { scoreField: "confidence_score" });
+  const signals = mergeIntentSignals(existing?.signals, incoming?.signals);
+  const topics = uniqueStrings([
+    ...(existing?.topics || []),
+    ...(incoming?.topics || []),
+    ...signals.map((signal) => signal.topic),
+  ]).slice(0, 30);
+  const motions = uniqueStrings([
+    ...(existing?.motions || []),
+    ...(incoming?.motions || []),
+    ...signals.flatMap((signal) => signal.motions || []),
+  ]).slice(0, 12);
+  const recencies = [
+    existing?.recency_days,
+    incoming?.recency_days,
+    ...signals.map((signal) => signal.recency_days),
+  ]
+    .map(Number)
+    .filter((value) => Number.isFinite(value));
+  const confidenceScore = Math.max(
+    toFiniteNumber(existing?.confidence_score, 0),
+    toFiniteNumber(incoming?.confidence_score, 0),
+    toFiniteNumber(existing?.intent_signal_score, 0),
+    toFiniteNumber(incoming?.intent_signal_score, 0)
+  );
+
+  merged.signals = signals;
+  merged.signals_count = signals.length;
+  merged.topics = topics;
+  merged.motions = motions;
+  merged.recency_days = recencies.length > 0 ? Math.round(Math.min(...recencies)) : null;
+  merged.intent_signal_score = Math.round(Math.max(confidenceScore, toFiniteNumber(merged.intent_signal_score, 0)) * 100) / 100;
+  merged.confidence_score = Math.round(Math.max(confidenceScore, toFiniteNumber(merged.confidence_score, 0)) * 100) / 100;
+  merged.confidence = merged.confidence_score >= 0.72 ? "high" : merged.confidence_score >= 0.42 ? "medium" : "low";
   return merged;
 }
 
@@ -3398,6 +4395,7 @@ export async function syncExternalSignals(input = {}) {
         request_url: fetched.request_url || null,
         request_method: fetched.request_method || null,
         attempted_urls: fetched.attempted_urls || [],
+        successful_urls: fetched.successful_urls || [],
         request_attempts: requestAttempts,
         retry_attempts: retryAttempts,
         request_duration_ms: Number(fetched?.request_duration_ms || 0),
@@ -3415,6 +4413,7 @@ export async function syncExternalSignals(input = {}) {
       request_url: fetched.request_url || null,
       request_method: fetched.request_method || null,
       attempted_urls: fetched.attempted_urls || [],
+      successful_urls: fetched.successful_urls || [],
       payload,
     });
     keysUpdated.add(`external_signal_${status.id}_${companyNumber}`);
@@ -3425,6 +4424,7 @@ export async function syncExternalSignals(input = {}) {
     const reputationEnvelope = parsed.reputation;
     const marketingEnvelope = parsed.marketing;
     const techEnvelope = parsed.tech;
+    const intentEnvelope = parsed.intent;
 
     if (persistMergedSetting(`ownership_${companyNumber}`, ownershipEnvelope, mergeOwnershipEnvelope)) {
       keysUpdated.add(`ownership_${companyNumber}`);
@@ -3441,6 +4441,9 @@ export async function syncExternalSignals(input = {}) {
     if (persistMergedSetting(`tech_stack_${companyNumber}`, techEnvelope, mergeTechEnvelope)) {
       keysUpdated.add(`tech_stack_${companyNumber}`);
     }
+    if (persistMergedSetting(`intent_signals_${companyNumber}`, intentEnvelope, mergeIntentEnvelope)) {
+      keysUpdated.add(`intent_signals_${companyNumber}`);
+    }
 
     connectorResults.push({
       id: status.id,
@@ -3450,6 +4453,7 @@ export async function syncExternalSignals(input = {}) {
       request_url: fetched.request_url || null,
       request_method: fetched.request_method || null,
       attempted_urls: fetched.attempted_urls || [],
+      successful_urls: fetched.successful_urls || [],
       request_attempts: requestAttempts,
       retry_attempts: retryAttempts,
       failed_attempts_before_success: Number(fetched?.failed_attempt_count || 0),
@@ -3460,6 +4464,7 @@ export async function syncExternalSignals(input = {}) {
       reputation_updated: !!reputationEnvelope,
       marketing_updated: !!marketingEnvelope,
       tech_updated: !!techEnvelope,
+      intent_updated: !!intentEnvelope,
     });
   }
 

@@ -1010,7 +1010,9 @@ describe("API endpoints", () => {
       assert.ok(data.env_template.includes("STATUS_API_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
       assert.ok(data.env_template.includes("STATUS_INSTATUS_URL_TEMPLATE=https://status.{company_domain}/summary.json"));
       assert.ok(data.env_template.includes("STATUS_CACHET_URL_TEMPLATE=https://status.{company_domain}/api/v1/incidents"));
-      assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://example.com/prospeo?company={company_domain}"));
+      assert.ok(data.env_template.includes("PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company"));
+      assert.ok(data.env_template.includes("PROSPEO_AUTH_HEADER=X-KEY"));
+      assert.ok(data.env_template.includes("PROSPEO_AUTH_SCHEME=none"));
       assert.ok(data.env_template.includes("PHANTOMBUSTER_URL_TEMPLATE=https://example.com/phantombuster?company={company_number}"));
       assert.ok(data.env_template.includes("WEBSITE_RESOLUTION_TIMEOUT_MS=1800"));
       assert.ok(data.env_template.includes("ANALYSIS_QUEUE_WEBSITE_GUESS=false"));
@@ -2882,6 +2884,22 @@ describe("API endpoints", () => {
       assert.ok(Array.isArray(weekly.data.payload?.ranked_companies));
       assert.equal(weekly.data.payload.ranked_companies.length >= 1, true);
       assert.equal(weekly.data.payload?.request_id, explicitRequestId);
+      assert.equal(
+        weekly.data.payload?.generation_policy?.product_knowledge_ref,
+        "docs/revolut-business-product-knowledge.md"
+      );
+      assert.equal(
+        weekly.data.payload?.generation_policy?.product_claim_policy,
+        "approved_products_only_connected_stack_no_guaranteed_pricing"
+      );
+      assert.equal(
+        weekly.data.payload.ranked_companies[0]?.insights?.evidence_pack?.contract_version,
+        "prospecting-evidence-pack-v1"
+      );
+      assert.equal(
+        weekly.data.payload.ranked_companies[0]?.insights?.evidence_pack?.product_knowledge_ref,
+        "docs/revolut-business-product-knowledge.md"
+      );
     });
 
     it("includes connector-derived person candidates in weekly handoff stakeholders", async () => {

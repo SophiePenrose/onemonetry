@@ -3558,5 +3558,47 @@
     },
     "source": "mock",
     "imported_at": "2026-05-17T22:24:03.093Z"
+  },
+  {
+    "id": "demo-prospeo-company",
+    "name": "Demo Prospeo Company",
+    "company_number": "99111117",
+    "industry": "Financial Services",
+    "segment": "Mid-Market",
+    "turnover": 42000000,
+    "employee_count": 240,
+    "latest_annual_report_url": "",
+    "motions": [
+      "payments",
+      "treasury",
+      "cash_management"
+    ],
+    "product_fit": {
+      "payments": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Finance and treasury buying signals are strong."
+      },
+      "treasury": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Treasury leadership roles are present."
+      },
+      "cash_management": {
+        "eligible": true,
+        "fit_level": "strong",
+        "explanation": "Treasury and finance operations are active."
+      }
+    },
+    "competitors": [],
+    "stakeholders": [],
+    "cadence_history": [],
+    "response_propensity": {
+      "score": 0.8,
+      "warmth": "warm",
+      "signals": [
+        "Prospeo people discovery enabled"
+      ]
+    }
   }
 ]

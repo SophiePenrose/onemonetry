@@ -14,10 +14,27 @@ const originalEnv = {
   PROSPEO_URL_TEMPLATE: process.env.PROSPEO_URL_TEMPLATE,
   PROSPEO_AUTH_HEADER: process.env.PROSPEO_AUTH_HEADER,
   PROSPEO_AUTH_SCHEME: process.env.PROSPEO_AUTH_SCHEME,
+  PROSPEO_SEARCH_PERSON_JOB_TITLES: process.env.PROSPEO_SEARCH_PERSON_JOB_TITLES,
+  PROSPEO_SEARCH_PERSON_SENIORITIES: process.env.PROSPEO_SEARCH_PERSON_SENIORITIES,
+  PROSPEO_SEARCH_PERSON_DEPARTMENTS: process.env.PROSPEO_SEARCH_PERSON_DEPARTMENTS,
+  PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY: process.env.PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY,
+  PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL: process.env.PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL,
+  PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS: process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS,
+  PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS: process.env.PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS,
+  PROSPEO_INTENT_TOPIC_IDS: process.env.PROSPEO_INTENT_TOPIC_IDS,
+  PROSPEO_COMPANY_INTENT_TOPIC_IDS: process.env.PROSPEO_COMPANY_INTENT_TOPIC_IDS,
+  PROSPEO_INTENT_TOPIC_NAMES: process.env.PROSPEO_INTENT_TOPIC_NAMES,
+  PROSPEO_INTENT_ACTIVE_RESEARCH: process.env.PROSPEO_INTENT_ACTIVE_RESEARCH,
+  PROSPEO_INTENT_IN_DEPTH_RESEARCH: process.env.PROSPEO_INTENT_IN_DEPTH_RESEARCH,
+  PROSPEO_INTENT_EARLY_RESEARCH: process.env.PROSPEO_INTENT_EARLY_RESEARCH,
   PHANTOMBUSTER_API_KEY: process.env.PHANTOMBUSTER_API_KEY,
   PHANTOMBUSTER_URL_TEMPLATE: process.env.PHANTOMBUSTER_URL_TEMPLATE,
   PHANTOMBUSTER_AUTH_HEADER: process.env.PHANTOMBUSTER_AUTH_HEADER,
   PHANTOMBUSTER_AUTH_SCHEME: process.env.PHANTOMBUSTER_AUTH_SCHEME,
+  INTENT_SIGNALS_API_KEY: process.env.INTENT_SIGNALS_API_KEY,
+  INTENT_SIGNALS_URL_TEMPLATE: process.env.INTENT_SIGNALS_URL_TEMPLATE,
+  INTENT_SIGNALS_AUTH_HEADER: process.env.INTENT_SIGNALS_AUTH_HEADER,
+  INTENT_SIGNALS_AUTH_SCHEME: process.env.INTENT_SIGNALS_AUTH_SCHEME,
   STATUSPAGE_URL_TEMPLATE: process.env.STATUSPAGE_URL_TEMPLATE,
   STATUS_FEED_URL_TEMPLATE: process.env.STATUS_FEED_URL_TEMPLATE,
   STATUS_API_URL_TEMPLATE: process.env.STATUS_API_URL_TEMPLATE,
@@ -58,10 +75,27 @@ describe("external signal connectors", () => {
     delete process.env.PROSPEO_URL_TEMPLATE;
     delete process.env.PROSPEO_AUTH_HEADER;
     delete process.env.PROSPEO_AUTH_SCHEME;
+    delete process.env.PROSPEO_SEARCH_PERSON_JOB_TITLES;
+    delete process.env.PROSPEO_SEARCH_PERSON_SENIORITIES;
+    delete process.env.PROSPEO_SEARCH_PERSON_DEPARTMENTS;
+    delete process.env.PROSPEO_SEARCH_PERSON_MAX_PER_COMPANY;
+    delete process.env.PROSPEO_SEARCH_PERSON_REQUIRE_VERIFIED_EMAIL;
+    delete process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS;
+    delete process.env.PROSPEO_SEARCH_PERSON_JOB_CHANGE_DAYS;
+    delete process.env.PROSPEO_INTENT_TOPIC_IDS;
+    delete process.env.PROSPEO_COMPANY_INTENT_TOPIC_IDS;
+    delete process.env.PROSPEO_INTENT_TOPIC_NAMES;
+    delete process.env.PROSPEO_INTENT_ACTIVE_RESEARCH;
+    delete process.env.PROSPEO_INTENT_IN_DEPTH_RESEARCH;
+    delete process.env.PROSPEO_INTENT_EARLY_RESEARCH;
     delete process.env.PHANTOMBUSTER_API_KEY;
     delete process.env.PHANTOMBUSTER_URL_TEMPLATE;
     delete process.env.PHANTOMBUSTER_AUTH_HEADER;
     delete process.env.PHANTOMBUSTER_AUTH_SCHEME;
+    delete process.env.INTENT_SIGNALS_API_KEY;
+    delete process.env.INTENT_SIGNALS_URL_TEMPLATE;
+    delete process.env.INTENT_SIGNALS_AUTH_HEADER;
+    delete process.env.INTENT_SIGNALS_AUTH_SCHEME;
   });
 
   it("returns no_connectors_configured when templates are missing", async () => {
@@ -213,6 +247,68 @@ describe("external signal connectors", () => {
     assert.equal(tech.signal_count >= 3, true);
   });
 
+  it("normalizes provider-neutral intent payloads into intent_signals", async () => {
+    process.env.INTENT_SIGNALS_API_KEY = "test-intent-key";
+    process.env.INTENT_SIGNALS_URL_TEMPLATE = "https://signals.example.test/intent/{company_number}?domain={company_domain_encoded}";
+    process.env.INTENT_SIGNALS_AUTH_SCHEME = "none";
+    process.env.INTENT_SIGNALS_AUTH_HEADER = "x-intent-key";
+
+    global.fetch = async (url, options = {}) => {
+      assert.equal(String(url), "https://signals.example.test/intent/99111118?domain=intent.example");
+      assert.equal(String(options?.headers?.["x-intent-key"] || ""), "test-intent-key");
+
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            topics: ["payment orchestration"],
+            intent_signals: [
+              {
+                topic: "checkout conversion review",
+                motions: ["Revolut Pay"],
+                strength: "high",
+                recency_days: 5,
+                evidence: "Recent topic activity around checkout conversion",
+              },
+              {
+                keyword: "foreign exchange hedging",
+                score: 72,
+                observed_at: new Date(Date.now() - (9 * 86400000)).toISOString(),
+              },
+            ],
+          });
+        },
+      };
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111118",
+      companyName: "Example Intent Co",
+      companyDomain: "intent.example",
+      connectors: ["intent"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.updated, true);
+    assert.deepEqual(result.requested_connectors, ["intent"]);
+
+    const connector = (result.connectors || []).find((entry) => entry.id === "intent");
+    assert.ok(connector);
+    assert.equal(connector.intent_updated, true);
+
+    const intent = db.getSetting("intent_signals_99111118", null);
+    assert.equal(Array.isArray(intent?.signals), true);
+    assert.equal(intent.signals.length, 2);
+    assert.equal(intent.topics.includes("payment orchestration"), true);
+    assert.equal(intent.topics.includes("checkout conversion review"), true);
+    assert.equal(intent.motions.includes("Revolut Pay"), true);
+    assert.equal(intent.motions.includes("FX"), true);
+    assert.equal(intent.motions.includes("FX Forwards"), true);
+    assert.equal(intent.recency_days <= 9, true);
+    assert.equal(intent.intent_signal_score >= 0.7, true);
+  });
+
   it("maps nested Prospeo payload using provider-specific parser", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;
@@ -271,7 +367,7 @@ describe("external signal connectors", () => {
     assert.ok((tech.technologies || []).includes("HubSpot"));
   });
 
-  it("uses Prospeo bulk POST payload with identifier and parses matched company signals", async () => {
+  it("fans out official Prospeo bulk configuration to company enrichment and people discovery", async () => {
     delete process.env.ENDOLE_API_KEY;
     delete process.env.ENDOLE_URL_TEMPLATE;
     delete process.env.OPENCORPORATES_URL_TEMPLATE;
@@ -284,46 +380,96 @@ describe("external signal connectors", () => {
     process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/bulk-enrich-company";
     process.env.PROSPEO_AUTH_SCHEME = "none";
     process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.PROSPEO_SEARCH_PERSON_RECENT_ROLE_MONTHS = "6";
     process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+    const recentHireStartDate = new Date(Date.now() - (28 * 86400000)).toISOString();
 
+    const requestedUrls = [];
     global.fetch = async (url, options = {}) => {
-      assert.equal(String(url), "https://api.prospeo.io/bulk-enrich-company");
+      const href = String(url);
+      requestedUrls.push(href);
       assert.equal(String(options?.method || ""), "POST");
       assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
       assert.equal(String(options?.headers?.["Content-Type"] || ""), "application/json");
 
       const parsedBody = JSON.parse(String(options?.body || "{}"));
-      assert.equal(Array.isArray(parsedBody?.data), true);
-      assert.equal(parsedBody.data.length, 1);
-      assert.equal(parsedBody.data[0]?.identifier, "99111123");
-      assert.equal(parsedBody.data[0]?.company_website, "bulk-prospeo.example");
-      assert.equal(Object.hasOwn(parsedBody.data[0] || {}, "company_number"), false);
 
-      return {
-        ok: true,
-        status: 200,
-        async text() {
-          return JSON.stringify({
-            error: false,
-            not_matched: [],
-            invalid_datapoints: [],
-            matched: [
-              {
-                identifier: "99111123",
-                company: {
-                  technology: {
-                    technology_names: ["Stripe", "HubSpot"],
-                  },
-                  job_postings: {
-                    active_count: 2,
-                    active_titles: ["Treasury Operations Manager", "Finance Analyst"],
+      if (href === "https://api.prospeo.io/bulk-enrich-company") {
+        assert.equal(Array.isArray(parsedBody?.data), true);
+        assert.equal(parsedBody.data.length, 1);
+        assert.equal(parsedBody.data[0]?.identifier, "99111123");
+        assert.equal(parsedBody.data[0]?.company_website, "bulk-prospeo.example");
+        assert.equal(Object.hasOwn(parsedBody.data[0] || {}, "company_number"), false);
+
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              error: false,
+              not_matched: [],
+              invalid_datapoints: [],
+              matched: [
+                {
+                  identifier: "99111123",
+                  company: {
+                    technology: {
+                      technology_names: ["Stripe", "HubSpot"],
+                    },
+                    job_postings: {
+                      active_count: 2,
+                      active_titles: ["Treasury Operations Manager", "Finance Analyst"],
+                    },
                   },
                 },
+              ],
+            });
+          },
+        };
+      }
+
+      if (href === "https://api.prospeo.io/search-person") {
+        assert.equal(Array.isArray(parsedBody?.filters?.company?.websites?.include), true);
+        assert.equal(parsedBody.filters.company.websites.include[0], "bulk-prospeo.example");
+        assert.equal(Array.isArray(parsedBody?.filters?.person_job_title?.include), true);
+        assert.equal(parsedBody.filters.person_job_title.include.length > 0, true);
+        assert.equal(parsedBody.filters.person_job_title.include.includes("Head of Ecommerce"), true);
+        assert.equal(parsedBody.filters.person_job_title.include.includes("Director of Ecommerce"), true);
+        assert.deepEqual(parsedBody.filters.person_time_in_current_role, { min: 0, max: 6 });
+
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              data: {
+                total_results: 1,
+                results: [
+                  {
+                    person: {
+                      id: "prospeo-person-1",
+                      first_name: "Mia",
+                      last_name: "Taylor",
+                      job_title: "Director of Ecommerce",
+                      current_position: {
+                        start_date: recentHireStartDate,
+                      },
+                      linkedin_url: "https://linkedin.com/in/mia-taylor",
+                      email: {
+                        email: "mia@example.com",
+                        status: "VERIFIED",
+                        revealed: true,
+                      },
+                    },
+                  },
+                ],
               },
-            ],
-          });
-        },
-      };
+            });
+          },
+        };
+      }
+
+      assert.fail(`unexpected Prospeo URL: ${href}`);
     };
 
     const result = await connectors.syncExternalSignals({
@@ -335,12 +481,186 @@ describe("external signal connectors", () => {
 
     assert.equal(result.status, "updated");
     assert.equal(result.updated, true);
+    assert.deepEqual(requestedUrls, [
+      "https://api.prospeo.io/bulk-enrich-company",
+      "https://api.prospeo.io/search-person",
+    ]);
+
+    const connector = (result.connectors || []).find((entry) => entry.id === "prospeo");
+    assert.ok(connector);
+    assert.equal(connector.request_attempts, 2);
+    assert.deepEqual(connector.attempted_urls, requestedUrls);
+    assert.deepEqual(connector.successful_urls, requestedUrls);
+
+    const raw = db.getSetting("external_signal_prospeo_99111123", null);
+    assert.equal(Array.isArray(raw?.payload?.connector_payloads), true);
+    assert.equal(raw.payload.connector_payloads.length, 2);
 
     const hiring = db.getSetting("hiring_signals_99111123", null);
     const tech = db.getSetting("tech_stack_99111123", null);
 
     assert.equal(hiring.total_open_roles >= 2, true);
     assert.ok((tech.technologies || []).includes("Stripe"));
+
+    const person = (hiring.person_candidates || []).find((entry) => entry.full_name === "Mia Taylor");
+    assert.ok(person);
+    assert.equal(person.email, "mia@example.com");
+    assert.equal(person.role, "Director of Ecommerce");
+    assert.equal(person.email_status, "verified");
+    assert.equal(person.start_date, recentHireStartDate);
+    assert.equal(person.is_new_hire, true);
+    assert.equal(person.source, "prospeo_search_person_api");
+    const newHire = (hiring.new_senior_hires || []).find((entry) => entry.full_name === "Mia Taylor");
+    assert.ok(newHire);
+    assert.equal(newHire.role, "Director of Ecommerce");
+    assert.equal(newHire.start_date, recentHireStartDate);
+    assert.equal(newHire.is_new_hire, true);
+  });
+
+  it("fans out Prospeo configured intent topic names without suppressing people discovery", async () => {
+    delete process.env.ENDOLE_API_KEY;
+    delete process.env.ENDOLE_URL_TEMPLATE;
+    delete process.env.OPENCORPORATES_URL_TEMPLATE;
+    delete process.env.STATUSPAGE_URL_TEMPLATE;
+    delete process.env.STATUS_FEED_URL_TEMPLATE;
+    delete process.env.STATUS_API_URL_TEMPLATE;
+    delete process.env.STATUS_INSTATUS_URL_TEMPLATE;
+    delete process.env.STATUS_CACHET_URL_TEMPLATE;
+    process.env.PROSPEO_API_KEY = "test-prospeo-key";
+    process.env.PROSPEO_URL_TEMPLATE = "https://api.prospeo.io/bulk-enrich-company";
+    process.env.PROSPEO_AUTH_SCHEME = "none";
+    process.env.PROSPEO_AUTH_HEADER = "X-KEY";
+    process.env.PROSPEO_INTENT_TOPIC_IDS = [
+      "Payment Orchestration Platform",
+      "Payment Service Provider (PSP)",
+      "Payment Gateway",
+      "Checkout Optimization",
+      "Foreign Exchange Risk Management",
+      "Multi-Currency Accounting",
+      "Enterprise Spend Management",
+      "Virtual Cards",
+      "Payments API",
+    ].join(",");
+    process.env.ENABLE_STATUS_URL_DISCOVERY = "false";
+
+    const requestedUrls = [];
+    global.fetch = async (url, options = {}) => {
+      const href = String(url);
+      requestedUrls.push(href);
+      assert.equal(String(options?.method || ""), "POST");
+      assert.equal(String(options?.headers?.["X-KEY"] || ""), "test-prospeo-key");
+
+      const parsedBody = JSON.parse(String(options?.body || "{}"));
+
+      if (href === "https://api.prospeo.io/bulk-enrich-company") {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              matched: [
+                {
+                  identifier: "99111126",
+                  company: {
+                    technology: { technology_names: ["Shopify", "Stripe"] },
+                  },
+                },
+              ],
+            });
+          },
+        };
+      }
+
+      if (href === "https://api.prospeo.io/search-person") {
+        assert.equal(Object.hasOwn(parsedBody?.filters || {}, "company_intent"), false);
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              data: {
+                results: [
+                  {
+                    first_name: "Rae",
+                    last_name: "Morgan",
+                    job_title: "Head of Payments",
+                    email: "rae@example.com",
+                  },
+                ],
+              },
+            });
+          },
+        };
+      }
+
+      if (href === "https://api.prospeo.io/search-company") {
+        assert.deepEqual(parsedBody?.filters?.company?.websites?.include, ["intent-prospeo.example"]);
+        assert.deepEqual(parsedBody?.filters?.company_intent?.topic_ids, [
+          "Payment Orchestration Platform",
+          "Payment Service Provider (PSP)",
+          "Payment Gateway",
+          "Checkout Optimization",
+          "Foreign Exchange Risk Management",
+          "Multi-Currency Accounting",
+          "Enterprise Spend Management",
+          "Virtual Cards",
+          "Payments API",
+        ]);
+        assert.equal(parsedBody.filters.company_intent.active_research, true);
+        assert.equal(parsedBody.filters.company_intent.in_depth_research, true);
+        assert.equal(parsedBody.filters.company_intent.early_research, true);
+
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              data: {
+                total_results: 1,
+                results: [
+                  {
+                    company: {
+                      name: "Example Prospeo Intent Co",
+                      domain: "intent-prospeo.example",
+                    },
+                  },
+                ],
+              },
+            });
+          },
+        };
+      }
+
+      assert.fail(`unexpected Prospeo URL: ${href}`);
+    };
+
+    const result = await connectors.syncExternalSignals({
+      companyNumber: "99111126",
+      companyName: "Example Prospeo Intent Co",
+      companyDomain: "intent-prospeo.example",
+      connectors: ["prospeo"],
+    });
+
+    assert.equal(result.status, "updated");
+    assert.deepEqual(requestedUrls, [
+      "https://api.prospeo.io/bulk-enrich-company",
+      "https://api.prospeo.io/search-person",
+      "https://api.prospeo.io/search-company",
+    ]);
+
+    const raw = db.getSetting("external_signal_prospeo_99111126", null);
+    assert.equal(raw.payload.connector_payloads.length, 3);
+
+    const hiring = db.getSetting("hiring_signals_99111126", null);
+    assert.equal((hiring.person_candidates || []).some((entry) => entry.full_name === "Rae Morgan"), true);
+
+    const intent = db.getSetting("intent_signals_99111126", null);
+    assert.equal(Array.isArray(intent?.signals), true);
+    assert.equal(intent.topics.includes("Payment Orchestration Platform"), true);
+    assert.equal(intent.topics.includes("Foreign Exchange Risk Management"), true);
+    assert.equal(intent.motions.includes("Merchant Acquiring"), true);
+    assert.equal(intent.motions.includes("FX"), true);
+    assert.equal(intent.intent_signal_score >= 0.8, true);
   });
 
   it("uses Prospeo search-person POST payload and maps relevant person candidates", async () => {
@@ -416,6 +736,10 @@ describe("external signal connectors", () => {
     );
     assert.equal(
       hiring.person_candidates.some((entry) => String(entry?.email || "") === "ava@example.com"),
+      true
+    );
+    assert.equal(
+      hiring.person_candidates.some((entry) => entry?.full_name === "Ava Stone" && entry?.source === "prospeo_search_person_api"),
       true
     );
   });

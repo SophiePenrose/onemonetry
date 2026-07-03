@@ -27,15 +27,19 @@ The Gemini YAMM export now supports person-focused columns in addition to core s
 - `RelevantIndividualsJSON`
 
 These fields are intended to create a clear place for "relevant individuals" data before/after approval.
+Recent-hire metadata is preserved inside `RelevantIndividualsJSON` when available.
 
 ## Prospeo
 
 ### Endpoint and auth
 
-- Endpoint: `POST https://api.prospeo.io/bulk-enrich-company`
+- Company endpoint: `POST https://api.prospeo.io/bulk-enrich-company`
+- People endpoint: `POST https://api.prospeo.io/search-person`
 - Headers:
   - `Content-Type: application/json`
   - `X-KEY: <api_key>`
+
+When `PROSPEO_URL_TEMPLATE=https://api.prospeo.io/bulk-enrich-company`, the backend calls both official endpoints and merges the payloads before envelope parsing.
 
 ### Request fields (high-confidence)
 
@@ -68,6 +72,17 @@ Relevant-individual and persona signals:
 
 - `company.job_postings.active_count`
 - `company.job_postings.active_titles[]`
+- `data.results[].person.first_name` / `last_name` / `full_name`
+- `data.results[].person.job_title`
+- `data.results[].person.linkedin_url`
+- `data.results[].person.email.email`
+- `data.results[].person.email.status` / `revealed`
+- current-role/job-change dates such as `data.results[].person.current_position.start_date`, `job_start_date`, or `job_change.date`
+- new-hire flags such as `recent_hire`, `new_hire`, or `job_change`
+
+Scoring note:
+
+- Recent desired-role hires, including Head/Director of Ecommerce, are normalized into `hiring_signals_<company>.new_senior_hires[]` and used as a bounded timing/motion boost. This reorders otherwise qualified accounts; it does not override the product-fit gate.
 
 Tech and stack context:
 
@@ -80,6 +95,13 @@ Commercial/change context:
 
 - `company.funding.*`
 - `company.attributes.*` (for example B2B, free trial, pricing availability)
+- `company_intent.topic_ids[]` using the selected Prospeo/Bombora topic names from Intent settings, such as `Payment Orchestration Platform`, `Payment Gateway`, and `Foreign Exchange Risk Management`
+
+Intent configuration:
+
+- Set `PROSPEO_INTENT_TOPIC_IDS` to the selected topic names or IDs, comma-separated.
+- The backend sends those values to `/search-company` separately from `/search-person`, so people discovery still runs even when a company has no matching intent surge.
+- Positive intent matches normalize into `intent_signals_<company>` and influence scoring/Gemini as internal evidence only.
 
 ## PhantomBuster
 
@@ -113,6 +135,35 @@ High-value categories to extract when present:
 - Prefer explicit mapping per configured PhantomBuster agent type.
 - Preserve raw payload snapshots for audit/debug.
 - Normalize only fields needed by scoring + outreach + YAMM.
+
+## Intent Signals
+
+### API surface relevant to this app
+
+The app exposes a provider-neutral `intent` connector via:
+
+- `INTENT_SIGNALS_URL_TEMPLATE`
+- `INTENT_SIGNALS_API_KEY`
+- `INTENT_SIGNALS_AUTH_HEADER`
+- `INTENT_SIGNALS_AUTH_SCHEME`
+
+Cursor or any other mapped intent source can feed this connector. The provider name stays internal.
+
+### Useful response fields
+
+- `intent_signals[]`, `intent.signals[]`, `company_intent[]`, `buyer_intent[]`
+- `topics[]`, `intent_topics[]`, `keywords[]`, `surging_topics[]`
+- per-signal `topic`, `intent_topic`, `keyword`, `signal`, `title`
+- per-signal `motion`, `product_motion`, `motions[]`, `product_motions[]`
+- per-signal `strength`, `intent_strength`, `score`, `intent_score`, `confidence_score`
+- per-signal `recency_days`, `freshness_days`, `observed_at`, `detected_at`, `last_seen_at`
+- per-signal `evidence`, `description`, `snippet`, `context`, `summary`
+
+### Scoring and sequence use
+
+- Scoring uses intent as a capped, freshness-decayed timing and motion-relevance boost after the core product-fit evidence has been established.
+- Gemini/YAMM uses topics, motions, and evidence snippets as internal context for natural commercial hypotheses.
+- Outbound copy must never mention provider names or direct phrases such as "intent data shows".
 
 ## Suggested Normalized Person Fields (cross-connector)
 
@@ -151,3 +202,4 @@ Where available, keep these stable fields for all provider payloads:
 2. Add optional `RecipientSource` column in YAMM rows.
 3. Add UI panel in Gemini YAMM preview for `RelevantIndividuals` roster per company.
 4. Add per-provider freshness stamps for person rows to prevent stale targeting.
+5. Add a UI preview of normalized `intent_signals` topics and motion hints before sequence generation.
