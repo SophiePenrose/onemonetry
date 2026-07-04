@@ -876,6 +876,27 @@ export function setSetting(key, value) {
   ).run(key, JSON.stringify(value));
 }
 
+export function listSettingsByPrefix(prefix) {
+  const normalizedPrefix = String(prefix || "");
+  if (!normalizedPrefix) return [];
+
+  return db.prepare("SELECT key, value FROM settings WHERE key LIKE ? ORDER BY key")
+    .all(`${normalizedPrefix}%`)
+    .map((row) => {
+      let parsedValue = row.value;
+      try {
+        parsedValue = JSON.parse(row.value);
+      } catch {
+        // Keep the raw value when older settings were stored as plain text.
+      }
+
+      return {
+        key: row.key,
+        value: parsedValue,
+      };
+    });
+}
+
 // --- Website Resolution Cache ---
 
 const stmtGetWebsiteResolution = db.prepare("SELECT * FROM website_resolution_cache WHERE company_number = ?");
