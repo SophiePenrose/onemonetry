@@ -15,6 +15,7 @@ import {
   setExclusions as dbSetExclusions,
   getSetting,
   setSetting,
+  listSettingsByPrefix,
   createImportJob,
   updateImportJob,
   getImportJob,
@@ -10910,6 +10911,178 @@ app.post("/api/gemini/gem-instructions/reload", (_req, res) => {
     reloaded_at: new Date().toISOString(),
     runtime,
   });
+});
+
+function normalizeCoverageDomain(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+    return String(parsed.hostname || "").replace(/^www\./, "");
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, "")
+      .replace(/^www\./i, "")
+      .split(/[/?#]/)[0]
+      .trim();
+  }
+}
+
+function hasProspeoMatchedCompany(payload) {
+  const roots = [];
+  const addRoot = (candidate) => {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) roots.push(candidate);
+  };
+
+  addRoot(payload);
+  if (Array.isArray(payload?.connector_payloads)) {
+    for (const entry of payload.connector_payloads) {
+      addRoot(entry?.payload);
+    }
+  }
+
+  return roots.some((root) => {
+    const matched = root?.matched || root?.data?.matched || root?.result?.matched;
+    return Array.isArray(matched)
+      && matched.some((row) => row && typeof row === "object" && row.company && typeof row.company === "object");
+  });
+}
+
+function hasProspeoPeopleResults(payload) {
+  const roots = [];
+  const addRoot = (candidate) => {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) roots.push(candidate);
+  };
+
+  addRoot(payload);
+  if (Array.isArray(payload?.connector_payloads)) {
+    for (const entry of payload.connector_payloads) {
+      addRoot(entry?.payload);
+    }
+  }
+
+  return roots.some((root) => {
+    const results = root?.results
+      || root?.data?.results
+      || root?.people
+      || root?.matched_people
+      || root?.rows;
+    return Array.isArray(results) && results.length > 0;
+  });
+}
+
+function buildProspeoMatchCoverage() {
+  const companies = loadCompanies();
+  const monitoredCompanies = dbGetMonitoredCompanies({ limit: 100000 });
+  const byCompanyNumber = new Map();
+
+  for (const company of companies) {
+    const companyNumber = normalizeCompanyNumber(company?.company_number || companyNumberFromId(company?.id));
+    const coverageKey = companyNumber || `company_file:${company?.id || company?.name || byCompanyNumber.size}`;
+
+    byCompanyNumber.set(coverageKey, {
+      company_number: companyNumber,
+      company_name: company?.name || company?.company_name || null,
+      company_domain: normalizeCoverageDomain(company?.company_domain || company?.domain || company?.website || company?.company_website),
+      company_website: company?.company_website || company?.website || null,
+      company_linkedin_url: company?.company_linkedin_url || company?.linkedin_url || null,
+      source: "companies_file",
+    });
+  }
+
+  for (const monitored of monitoredCompanies) {
+    const companyNumber = normalizeCompanyNumber(monitored?.company_number);
+    if (!companyNumber) continue;
+
+    const existing = byCompanyNumber.get(companyNumber) || {
+      company_number: companyNumber,
+      company_name: null,
+      company_domain: "",
+      company_website: null,
+      company_linkedin_url: null,
+      source: "monitor",
+    };
+
+    byCompanyNumber.set(companyNumber, {
+      ...existing,
+      company_name: monitored?.company_name || existing.company_name,
+      company_domain: normalizeCoverageDomain(monitored?.company_domain || monitored?.company_website) || existing.company_domain,
+      company_website: monitored?.company_website || existing.company_website,
+      source: existing.source === "companies_file" ? "companies_file+monitor" : "monitor",
+    });
+  }
+
+  const rows = [...byCompanyNumber.values()];
+  const prospeoSettings = listSettingsByPrefix("external_signal_prospeo_")
+    .filter((entry) => !String(entry.key || "").startsWith("external_signal_prospeo_person_enrichment_"));
+  const prospeoByCompanyNumber = new Map();
+
+  for (const entry of prospeoSettings) {
+    const companyNumber = normalizeCompanyNumber(String(entry.key || "").replace(/^external_signal_prospeo_/, ""));
+    if (!companyNumber) continue;
+    prospeoByCompanyNumber.set(companyNumber, entry.value || {});
+  }
+
+  const enrichedRows = rows.map((row) => {
+    const raw = prospeoByCompanyNumber.get(row.company_number);
+    const payload = raw?.payload || raw;
+    const hasRawPayload = !!raw;
+    const companyMatched = hasRawPayload && hasProspeoMatchedCompany(payload);
+    const peopleMatched = hasRawPayload && hasProspeoPeopleResults(payload);
+    const hasResolver = Boolean(row.company_domain || row.company_website || row.company_linkedin_url);
+
+    return {
+      ...row,
+      has_resolver: hasResolver,
+      prospeo_raw_payload: hasRawPayload,
+      prospeo_company_matched: companyMatched,
+      prospeo_people_results: peopleMatched,
+      match_status: companyMatched ? "matched" : hasRawPayload ? "synced_no_company_match" : "not_synced",
+    };
+  });
+
+  const total = enrichedRows.length;
+  const matchedCount = enrichedRows.filter((row) => row.prospeo_company_matched).length;
+  const rawPayloadCount = enrichedRows.filter((row) => row.prospeo_raw_payload).length;
+  const resolverCount = enrichedRows.filter((row) => row.has_resolver).length;
+  const peopleResultsCount = enrichedRows.filter((row) => row.prospeo_people_results).length;
+  const validCompanyNumberCount = enrichedRows.filter((row) => !!row.company_number).length;
+
+  return {
+    updated_at: new Date().toISOString(),
+    total_companies: total,
+    valid_company_number_count: validCompanyNumberCount,
+    missing_company_number_count: total - validCompanyNumberCount,
+    prospeo_raw_payload_count: rawPayloadCount,
+    prospeo_company_matched_count: matchedCount,
+    prospeo_people_results_count: peopleResultsCount,
+    high_confidence_matchable_count: resolverCount,
+    attemptable_count: validCompanyNumberCount,
+    percentages: {
+      prospeo_company_matched: total > 0 ? matchedCount / total : 0,
+      high_confidence_matchable: total > 0 ? resolverCount / total : 0,
+      attempted_or_synced: total > 0 ? rawPayloadCount / total : 0,
+      attemptable: total > 0 ? validCompanyNumberCount / total : 0,
+    },
+    recommendations: [
+      "Add company_domain/company_website or company_linkedin_url before running Prospeo sync for higher-confidence matching.",
+      "Run POST /api/signals/sync/:company_number with connectors:[\"prospeo\"] after resolver data is present.",
+      "Use selected-contact enrich-person only after company/person candidates exist; it improves contacts, not company matching.",
+    ],
+    companies: enrichedRows,
+  };
+}
+
+app.get("/api/integrations/prospeo/match-coverage", (_req, res) => {
+  try {
+    return res.json(buildProspeoMatchCoverage());
+  } catch (err) {
+    return res.status(500).json({
+      error: "prospeo_match_coverage_failed",
+      detail: err?.message || "unknown_error",
+    });
+  }
 });
 
 app.get("/api/integrations/status", (_req, res) => {

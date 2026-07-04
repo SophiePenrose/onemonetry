@@ -360,6 +360,15 @@ function formatIntegerLabel(value) {
   return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(numeric);
 }
 
+function formatPercentLabel(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "Unknown";
+  return new Intl.NumberFormat("en-GB", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(numeric);
+}
+
 function formatShortDateLabel(value) {
   if (!value) return "Unknown";
   const ts = Date.parse(String(value));
@@ -453,6 +462,10 @@ export default function Settings({ onNavigateToCompany }) {
   const [prospeoAccountLoading, setProspeoAccountLoading] = useState(false);
   const [prospeoAccountError, setProspeoAccountError] = useState(null);
   const [prospeoAccountCheckedAt, setProspeoAccountCheckedAt] = useState(null);
+  const [prospeoMatchCoverage, setProspeoMatchCoverage] = useState(null);
+  const [prospeoMatchCoverageLoading, setProspeoMatchCoverageLoading] = useState(false);
+  const [prospeoMatchCoverageError, setProspeoMatchCoverageError] = useState(null);
+  const [prospeoMatchCoverageCheckedAt, setProspeoMatchCoverageCheckedAt] = useState(null);
   const [targetedSyncCompanyNumber, setTargetedSyncCompanyNumber] = useState("");
   const [targetedSyncLoading, setTargetedSyncLoading] = useState(false);
   const [targetedSyncMessage, setTargetedSyncMessage] = useState(null);
@@ -482,6 +495,7 @@ export default function Settings({ onNavigateToCompany }) {
   const [ownershipCopyFallbackType, setOwnershipCopyFallbackType] = useState(null);
   const integrationRequestRef = useRef(0);
   const prospeoAccountRequestRef = useRef(0);
+  const prospeoMatchCoverageRequestRef = useRef(0);
   const ownershipChangesRequestRef = useRef(0);
   const ownershipMonitorRequestRef = useRef(0);
   const previewRequestRef = useRef(0);
@@ -573,6 +587,11 @@ export default function Settings({ onNavigateToCompany }) {
   const formattedProspeoAccountCheckedAt = useMemo(
     () => (prospeoAccountCheckedAt ? new Date(prospeoAccountCheckedAt).toLocaleString("en-GB") : null),
     [prospeoAccountCheckedAt],
+  );
+
+  const formattedProspeoCoverageCheckedAt = useMemo(
+    () => (prospeoMatchCoverageCheckedAt ? new Date(prospeoMatchCoverageCheckedAt).toLocaleString("en-GB") : null),
+    [prospeoMatchCoverageCheckedAt],
   );
 
   const formattedOwnershipCheckedAt = useMemo(
@@ -1035,6 +1054,38 @@ export default function Settings({ onNavigateToCompany }) {
       });
   }, []);
 
+  const loadProspeoMatchCoverage = useCallback(() => {
+    const requestId = prospeoMatchCoverageRequestRef.current + 1;
+    prospeoMatchCoverageRequestRef.current = requestId;
+
+    setProspeoMatchCoverageLoading(true);
+    setProspeoMatchCoverageError(null);
+    fetch("/api/integrations/prospeo/match-coverage")
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || payload.detail || `Failed to load Prospeo match coverage (${response.status})`);
+        }
+        return payload;
+      })
+      .then((payload) => {
+        if (prospeoMatchCoverageRequestRef.current !== requestId) return;
+        setProspeoMatchCoverage(payload);
+        setProspeoMatchCoverageCheckedAt(new Date().toISOString());
+      })
+      .catch((err) => {
+        if (prospeoMatchCoverageRequestRef.current !== requestId) return;
+        setProspeoMatchCoverage(null);
+        setProspeoMatchCoverageError(err?.message || "Prospeo match coverage unavailable");
+        setProspeoMatchCoverageCheckedAt(new Date().toISOString());
+      })
+      .finally(() => {
+        if (prospeoMatchCoverageRequestRef.current === requestId) {
+          setProspeoMatchCoverageLoading(false);
+        }
+      });
+  }, []);
+
   const runTargetedConnectorSync = useCallback(async () => {
     const companyNumber = normalizeCompanyNumberToken(targetedSyncCompanyNumber);
     if (!companyNumber) {
@@ -1079,6 +1130,10 @@ export default function Settings({ onNavigateToCompany }) {
           ? `${targetedSyncConnectorLabel} sync completed for ${companyNumber}${summary}`
           : (data?.error || `${targetedSyncConnectorLabel} sync finished with no updates.`),
       });
+
+      if (targetedSyncConnectorId === "prospeo") {
+        loadProspeoMatchCoverage();
+      }
     } catch (err) {
       setTargetedSyncMessage({
         type: "error",
@@ -1087,7 +1142,7 @@ export default function Settings({ onNavigateToCompany }) {
     } finally {
       setTargetedSyncLoading(false);
     }
-  }, [targetedSyncCompanyNumber, targetedSyncConnectorId, targetedSyncConnectorLabel]);
+  }, [loadProspeoMatchCoverage, targetedSyncCompanyNumber, targetedSyncConnectorId, targetedSyncConnectorLabel]);
 
   const loadOwnershipChanges = useCallback((options = {}) => {
     const requestId = ownershipChangesRequestRef.current + 1;
@@ -1384,6 +1439,10 @@ export default function Settings({ onNavigateToCompany }) {
   useEffect(() => {
     loadIntegrationStatus();
   }, [loadIntegrationStatus]);
+
+  useEffect(() => {
+    loadProspeoMatchCoverage();
+  }, [loadProspeoMatchCoverage]);
 
   useEffect(() => {
     if (integrationStatus?.integrations?.prospeo?.configured === true) {
@@ -1743,6 +1802,99 @@ export default function Settings({ onNavigateToCompany }) {
               {integrationStatus.ready_for_production
                 ? "Required integrations are configured."
                 : `Missing required: ${(integrationStatus.missing_required || []).join(", ")}`}
+            </div>
+
+            <div style={{
+              marginTop: 12,
+              border: "1px solid #e2e8f0",
+              background: "#f8fafc",
+              borderRadius: 6,
+              padding: "10px 12px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937" }}>Prospeo Match Coverage</div>
+                  {formattedProspeoCoverageCheckedAt && (
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      Last checked: {formattedProspeoCoverageCheckedAt}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={loadProspeoMatchCoverage}
+                  disabled={prospeoMatchCoverageLoading}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #d1d5db",
+                    background: "#fff",
+                    color: "#374151",
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: prospeoMatchCoverageLoading ? "wait" : "pointer",
+                  }}
+                >
+                  {prospeoMatchCoverageLoading ? "Checking..." : "Refresh Coverage"}
+                </button>
+              </div>
+
+              {prospeoMatchCoverageError && (
+                <div style={{ fontSize: 12, color: "#991b1b", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 6, padding: "7px 8px" }}>
+                  {prospeoMatchCoverageError}
+                </div>
+              )}
+
+              {!prospeoMatchCoverageError && prospeoMatchCoverage && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Company matches</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {formatIntegerLabel(prospeoMatchCoverage.prospeo_company_matched_count)} / {formatIntegerLabel(prospeoMatchCoverage.total_companies)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        {formatPercentLabel(prospeoMatchCoverage.percentages?.prospeo_company_matched)}
+                      </div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>High-confidence matchable</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {formatIntegerLabel(prospeoMatchCoverage.high_confidence_matchable_count)} / {formatIntegerLabel(prospeoMatchCoverage.total_companies)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        {formatPercentLabel(prospeoMatchCoverage.percentages?.high_confidence_matchable)}
+                      </div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Synced payloads</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {formatIntegerLabel(prospeoMatchCoverage.prospeo_raw_payload_count)} / {formatIntegerLabel(prospeoMatchCoverage.total_companies)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        {formatPercentLabel(prospeoMatchCoverage.percentages?.attempted_or_synced)}
+                      </div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>People results</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {formatIntegerLabel(prospeoMatchCoverage.prospeo_people_results_count)} / {formatIntegerLabel(prospeoMatchCoverage.total_companies)}
+                      </div>
+                    </div>
+                    <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "7px 8px" }}>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>Sync-attemptable</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>
+                        {formatIntegerLabel(prospeoMatchCoverage.attemptable_count)} / {formatIntegerLabel(prospeoMatchCoverage.total_companies)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        {formatPercentLabel(prospeoMatchCoverage.percentages?.attemptable)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 11, color: "#475569" }}>
+                    Add company domains/websites or LinkedIn URLs before running Prospeo sync. The backend can attempt every company with an identifier, but resolver coverage is the practical matchability gate.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{
