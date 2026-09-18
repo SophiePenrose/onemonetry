@@ -7,6 +7,15 @@ export const DEFAULT_BUYER_TITLES = [
   "Payments Manager", "Procurement Director", "Head of Ecommerce", "Director of Ecommerce",
 ];
 
+export const DEFAULT_WEEKLY_OUTREACH_POLICY = Object.freeze({
+  linkedin_weekly_cap: 100,
+  linkedin_automated_target: 90,
+  linkedin_manual_reserve: 10,
+  default_company_contact_cap: 3,
+  strategic_company_contact_cap: 4,
+  minimum_turnover_gbp: 30000000,
+});
+
 function configuredValue(value) {
   const token = String(value || "").trim();
   if (!token) return "";
@@ -57,6 +66,60 @@ function candidateKey(candidate = {}) {
   return `identity:${normalizeText(candidate.full_name).toLowerCase()}::${normalizeText(candidate.company_name).toLowerCase()}`;
 }
 
+function parseBoolean(value) {
+  if (typeof value === "boolean") return value;
+  return ["1", "true", "yes", "on", "approved"].includes(String(value || "").trim().toLowerCase());
+}
+
+function parseOptionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/[,£$]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeEmail(value) {
+  const email = normalizeText(value).toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function normalizePhone(value) {
+  const phone = normalizeText(value);
+  if (!phone) return null;
+  const compact = phone.replace(/[^+\d]/g, "");
+  return /^\+?\d{7,15}$/.test(compact) ? compact : null;
+}
+
+function rolePriority(role) {
+  const token = normalizeText(role).toLowerCase();
+  const priorities = [
+    [/chief financial officer|\bcfo\b/, 100],
+    [/finance director|director of finance/, 96],
+    [/head of treasury|treasury director|vp treasury/, 94],
+    [/head of finance|vp finance/, 92],
+    [/treasury manager/, 88],
+    [/head of payments|payments director|director of payments/, 86],
+    [/chief operating officer|\bcoo\b/, 82],
+    [/chief executive officer|\bceo\b|managing director/, 80],
+    [/head of e.?commerce|e.?commerce director|director of e.?commerce/, 78],
+    [/financial controller|controller/, 76],
+    [/payments manager|procurement director/, 72],
+  ];
+  return priorities.find(([pattern]) => pattern.test(token))?.[1] ?? 50;
+}
+
+function outreachPriority(candidate) {
+  const explicit = parseOptionalNumber(candidate.priority_score) ?? parseOptionalNumber(candidate.score) ?? 0;
+  const confidence = confidenceRank(candidate.confidence) * 3;
+  return rolePriority(candidate.role) + Math.max(-20, Math.min(20, explicit)) + confidence;
+}
+
+function companyKey(candidate) {
+  return normalizeText(candidate.company_number).toUpperCase()
+    || normalizeDomain(candidate.company_domain)
+    || normalizeText(candidate.company_name).toLowerCase()
+    || "unknown-company";
+}
+
 export function normalizeContactCandidate(raw = {}, source = "unknown") {
   const firstName = normalizeText(raw.first_name || raw.firstName);
   const lastName = normalizeText(raw.last_name || raw.lastName);
@@ -74,12 +137,174 @@ export function normalizeContactCandidate(raw = {}, source = "unknown") {
     last_name: lastName || null,
     role: normalizeText(raw.role || raw.title || raw.job_title || raw.headline) || null,
     company_name: normalizeText(raw.company_name || raw.organization_name || organization.name) || null,
+    company_number: normalizeText(raw.company_number || raw.registration_number) || null,
     company_domain: normalizeDomain(raw.company_domain || raw.organization_domain || organization.primary_domain || organization.website_url) || null,
     email,
     email_status: normalizeText(raw.email_status || raw.emailStatus) || (email ? "provided" : "missing"),
     linkedin_url: normalizeLinkedInUrl(raw.linkedin_url || raw.linkedinUrl || raw.linkedin),
+    phone: normalizePhone(raw.phone || raw.phone_number || raw.mobile_phone || raw.mobile),
     confidence: normalizeText(raw.confidence || raw.match_confidence) || "medium",
     provider_payload: raw,
+  };
+}
+
+export function planWeeklyOutreach(input = {}) {
+  if (!Array.isArray(input.contacts)) {
+    const error = new Error("contacts must be an array");
+    error.code = "weekly_contacts_required";
+    throw error;
+  }
+
+  const requestedCap = Math.max(1, Math.floor(parseOptionalNumber(input.linkedin_weekly_cap) ?? DEFAULT_WEEKLY_OUTREACH_POLICY.linkedin_weekly_cap));
+  const requestedReserve = Math.max(0, Math.floor(parseOptionalNumber(input.linkedin_manual_reserve) ?? DEFAULT_WEEKLY_OUTREACH_POLICY.linkedin_manual_reserve));
+  const automaticTarget = Math.max(0, Math.min(
+    requestedCap - Math.min(requestedCap, requestedReserve),
+    Math.floor(parseOptionalNumber(input.linkedin_automated_target) ?? DEFAULT_WEEKLY_OUTREACH_POLICY.linkedin_automated_target)
+  ));
+  const defaultCompanyCap = Math.max(1, Math.min(4, Math.floor(
+    parseOptionalNumber(input.default_company_contact_cap) ?? DEFAULT_WEEKLY_OUTREACH_POLICY.default_company_contact_cap
+  )));
+  const minimumTurnover = Math.max(0, parseOptionalNumber(input.minimum_turnover_gbp) ?? DEFAULT_WEEKLY_OUTREACH_POLICY.minimum_turnover_gbp);
+  const campaignId = normalizeText(input.we_connect_campaign_id);
+
+  const rejected = [];
+  const deduped = new Map();
+  for (const raw of input.contacts) {
+    const source = normalizeText(raw?.source) || "approved_contact";
+    const candidate = { ...normalizeContactCandidate(raw, source), ...raw };
+    candidate.linkedin_url = normalizeLinkedInUrl(raw?.linkedin_url || raw?.linkedinUrl || raw?.linkedin);
+    candidate.email = normalizeEmail(raw?.email || raw?.email_address || raw?.work_email);
+    candidate.phone = normalizePhone(raw?.phone || raw?.phone_number || raw?.mobile_phone || raw?.mobile);
+    candidate.company_number = normalizeText(raw?.company_number || raw?.registration_number) || null;
+    candidate.company_name = normalizeText(raw?.company_name || raw?.organization_name || candidate.company_name) || null;
+    candidate.company_domain = normalizeDomain(raw?.company_domain || raw?.organization_domain || candidate.company_domain) || null;
+
+    const approvalStatus = normalizeText(raw?.approval_status).toLowerCase();
+    const crmApproved = parseBoolean(raw?.crm_approved) || approvalStatus === "approved";
+    const turnover = parseOptionalNumber(raw?.company_turnover_gbp ?? raw?.turnover_gbp);
+    const suppressed = parseBoolean(raw?.suppressed) || parseBoolean(raw?.do_not_contact);
+    if (!crmApproved) {
+      rejected.push({ candidate, reason: "crm_approval_required" });
+      continue;
+    }
+    if (turnover !== null && turnover < minimumTurnover && !parseBoolean(raw?.turnover_override_approved)) {
+      rejected.push({ candidate, reason: "below_turnover_floor" });
+      continue;
+    }
+    if (suppressed) {
+      rejected.push({ candidate, reason: "suppressed" });
+      continue;
+    }
+
+    const emailAllowed = Boolean(candidate.email) && !parseBoolean(raw?.do_not_email);
+    const linkedinAllowed = Boolean(candidate.linkedin_url) && !parseBoolean(raw?.do_not_linkedin);
+    const phoneAllowed = Boolean(candidate.phone) && !parseBoolean(raw?.do_not_call) && !parseBoolean(raw?.phone_dnc);
+    candidate.channels = { linkedin: linkedinAllowed, email: emailAllowed, phone: phoneAllowed };
+    candidate.priority = outreachPriority(candidate);
+    if (!emailAllowed && !linkedinAllowed && !phoneAllowed) {
+      rejected.push({ candidate, reason: "no_usable_channel" });
+      continue;
+    }
+
+    const key = candidateKey(candidate);
+    const existing = deduped.get(key);
+    if (!existing || candidate.priority > existing.priority) deduped.set(key, candidate);
+  }
+
+  const byCompany = new Map();
+  for (const candidate of deduped.values()) {
+    const key = companyKey(candidate);
+    if (!byCompany.has(key)) byCompany.set(key, []);
+    byCompany.get(key).push(candidate);
+  }
+
+  const selected = [];
+  const overflow = [];
+  for (const [key, contacts] of byCompany.entries()) {
+    contacts.sort((a, b) => b.priority - a.priority || normalizeText(a.full_name).localeCompare(normalizeText(b.full_name)));
+    const strategic = contacts.some((contact) => parseBoolean(contact.allow_fourth_contact) || parseBoolean(contact.strategic_company));
+    const cap = strategic ? DEFAULT_WEEKLY_OUTREACH_POLICY.strategic_company_contact_cap : defaultCompanyCap;
+    selected.push(...contacts.slice(0, cap));
+    overflow.push(...contacts.slice(cap).map((candidate) => ({ candidate, reason: "company_contact_cap", company_key: key })));
+  }
+  selected.sort((a, b) => b.priority - a.priority || companyKey(a).localeCompare(companyKey(b)));
+
+  let linkedinAllocated = 0;
+  const assignments = [];
+  for (const candidate of selected) {
+    const linkedinSelected = candidate.channels.linkedin && linkedinAllocated < automaticTarget;
+    if (linkedinSelected) linkedinAllocated += 1;
+    const linkedinStatus = !candidate.channels.linkedin
+      ? "unavailable"
+      : linkedinSelected ? "awaiting_human_approval" : "queued_next_week";
+    const routes = {
+      linkedin: linkedinStatus,
+      email: candidate.channels.email ? "ready" : "unavailable",
+      phone: candidate.channels.phone ? "call_task_ready" : "unavailable",
+    };
+    const assignment = {
+      ...candidate,
+      routes,
+      stop_conditions: ["positive_reply", "meeting_booked", "opt_out", "suppression_added"],
+      we_connect_preview: linkedinSelected && campaignId
+        ? buildWeConnectEnrollmentPreview({ ...candidate, campaign_id: campaignId })
+        : null,
+    };
+    assignments.push(assignment);
+    if (candidate.channels.linkedin && !linkedinSelected) {
+      overflow.push({
+        candidate,
+        reason: "linkedin_weekly_capacity",
+        company_key: companyKey(candidate),
+        other_routes_active: candidate.channels.email || candidate.channels.phone,
+      });
+    }
+  }
+
+  const thisWeek = assignments.filter((assignment) => (
+    assignment.routes.linkedin === "awaiting_human_approval"
+    || assignment.routes.email === "ready"
+    || assignment.routes.phone === "call_task_ready"
+  ));
+  const companyCounts = new Map();
+  for (const assignment of thisWeek) {
+    const key = companyKey(assignment);
+    companyCounts.set(key, (companyCounts.get(key) || 0) + 1);
+  }
+
+  return {
+    status: "preview_only",
+    send_performed: false,
+    policy: {
+      linkedin_weekly_cap: requestedCap,
+      linkedin_automated_target: automaticTarget,
+      linkedin_manual_reserve: Math.max(0, requestedCap - automaticTarget),
+      default_company_contact_cap: defaultCompanyCap,
+      strategic_company_contact_cap: DEFAULT_WEEKLY_OUTREACH_POLICY.strategic_company_contact_cap,
+      minimum_turnover_gbp: minimumTurnover,
+    },
+    summary: {
+      submitted_contacts: input.contacts.length,
+      unique_eligible_contacts: deduped.size,
+      active_contacts_this_week: thisWeek.length,
+      active_companies_this_week: companyCounts.size,
+      linkedin_automated_selected: linkedinAllocated,
+      linkedin_manual_slots_reserved: Math.max(0, requestedCap - automaticTarget),
+      email_ready: thisWeek.filter((item) => item.routes.email === "ready").length,
+      phone_tasks_ready: thisWeek.filter((item) => item.routes.phone === "call_task_ready").length,
+      overflow_contacts: overflow.length,
+      rejected_contacts: rejected.length,
+    },
+    assignments: thisWeek,
+    overflow,
+    rejected,
+    safeguards: {
+      crm_approval_required: true,
+      human_approval_required_for_we_connect: true,
+      deduplication_enabled: true,
+      stop_on_response_enabled: true,
+      send_performed: false,
+    },
   };
 }
 
