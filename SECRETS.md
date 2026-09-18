@@ -6,6 +6,8 @@ Do not commit real API keys to this repository.
 
 - `OPENAI_API_KEY`: enables rich filing analysis, stakeholder review, email generation, and richer scoring.
 - `COMPANIES_HOUSE_API_KEY`: enables live Companies House name/status lookups.
+- `SUPABASE_URL` + `SUPABASE_SECRET_KEY`: enables the backend-only, read-only live prospecting adapter. The legacy `SUPABASE_SERVICE_ROLE_KEY` name is accepted as a fallback. Never expose either secret key to frontend/Vite variables.
+- `APOLLO_API_KEY`: enables backend-only Apollo people search and explicitly approved selected-person enrichment. Search and enrichment are separate so discovery cannot silently consume enrichment credits.
 
 ## Local development
 
