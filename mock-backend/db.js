@@ -246,6 +246,51 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_type_value ON suppression_list(type, value_normalized);
   CREATE INDEX IF NOT EXISTS idx_suppression_type ON suppression_list(type);
 
+  CREATE TABLE IF NOT EXISTS we_connect_export_batches (
+    id TEXT PRIMARY KEY,
+    saved_list_name TEXT,
+    campaign_name TEXT,
+    status TEXT NOT NULL DEFAULT 'prepared',
+    prepared_count INTEGER NOT NULL DEFAULT 0,
+    skipped_count INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    confirmed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS we_connect_export_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL,
+    contact_key TEXT,
+    full_name TEXT,
+    company_name TEXT,
+    role TEXT,
+    linkedin_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'prepared',
+    last_event_category TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (batch_id) REFERENCES we_connect_export_batches(id),
+    UNIQUE(batch_id, linkedin_url)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_we_connect_items_url ON we_connect_export_items(linkedin_url);
+  CREATE INDEX IF NOT EXISTS idx_we_connect_items_status ON we_connect_export_items(status);
+
+  CREATE TABLE IF NOT EXISTS we_connect_webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    event_category TEXT NOT NULL,
+    linkedin_url TEXT,
+    stop_other_channels INTEGER NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_we_connect_events_url ON we_connect_webhook_events(linkedin_url);
+  CREATE INDEX IF NOT EXISTS idx_we_connect_events_category ON we_connect_webhook_events(event_category);
+
   CREATE TABLE IF NOT EXISTS gemini_handoff_requests (
     request_id TEXT PRIMARY KEY,
     contract_version TEXT NOT NULL,
@@ -4019,6 +4064,115 @@ export function getStakeholderAlertTypeCounts(companyId, options = {}) {
     counts[key] = Number(row?.count || 0);
   }
   return counts;
+}
+
+export function listConfirmedWeConnectUrls() {
+  return db.prepare(`
+    SELECT DISTINCT linkedin_url
+    FROM we_connect_export_items
+    WHERE status != 'prepared'
+    ORDER BY linkedin_url
+  `).all().map((row) => row.linkedin_url);
+}
+
+export function createWeConnectExportBatch({ id, savedListName, campaignName, included = [], skipped = [] } = {}) {
+  const batchId = String(id || "").trim();
+  if (!batchId) throw new Error("we_connect_batch_id_required");
+  const insertBatch = db.prepare(`
+    INSERT INTO we_connect_export_batches (
+      id, saved_list_name, campaign_name, status, prepared_count, skipped_count, metadata_json
+    ) VALUES (?, ?, ?, 'prepared', ?, ?, ?)
+  `);
+  const insertItem = db.prepare(`
+    INSERT OR IGNORE INTO we_connect_export_items (
+      batch_id, contact_key, full_name, company_name, role, linkedin_url, status
+    ) VALUES (?, ?, ?, ?, ?, ?, 'prepared')
+  `);
+  db.transaction(() => {
+    insertBatch.run(
+      batchId,
+      String(savedListName || "").trim() || null,
+      String(campaignName || "").trim() || null,
+      included.length,
+      skipped.length,
+      JSON.stringify({ skipped })
+    );
+    for (const item of included) {
+      insertItem.run(batchId, item.contact_key || null, item.full_name || null, item.company_name || null, item.role || null, item.linkedin_url);
+    }
+  })();
+  return getWeConnectExportBatch(batchId);
+}
+
+export function getWeConnectExportBatch(id) {
+  const batch = db.prepare("SELECT * FROM we_connect_export_batches WHERE id = ?").get(String(id || "").trim());
+  if (!batch) return null;
+  const items = db.prepare(`
+    SELECT contact_key, full_name, company_name, role, linkedin_url, status, last_event_category, created_at, updated_at
+    FROM we_connect_export_items WHERE batch_id = ? ORDER BY id
+  `).all(batch.id);
+  return {
+    id: batch.id,
+    saved_list_name: batch.saved_list_name,
+    campaign_name: batch.campaign_name,
+    status: batch.status,
+    prepared_count: Number(batch.prepared_count || 0),
+    skipped_count: Number(batch.skipped_count || 0),
+    created_at: batch.created_at,
+    confirmed_at: batch.confirmed_at,
+    items,
+  };
+}
+
+export function confirmWeConnectExportBatch(id) {
+  const batchId = String(id || "").trim();
+  const result = db.prepare(`
+    UPDATE we_connect_export_batches
+    SET status = 'confirmed_pasted', confirmed_at = datetime('now')
+    WHERE id = ? AND status = 'prepared'
+  `).run(batchId);
+  if (result.changes > 0) {
+    db.prepare(`UPDATE we_connect_export_items SET status = 'confirmed_pasted', updated_at = datetime('now') WHERE batch_id = ? AND status = 'prepared'`).run(batchId);
+  }
+  return getWeConnectExportBatch(batchId);
+}
+
+export function completeWeConnectApiImport(id, { success, detail = null } = {}) {
+  const batchId = String(id || "").trim();
+  const status = success ? "imported_api" : "import_failed";
+  const result = db.prepare(`
+    UPDATE we_connect_export_batches
+    SET status = ?, confirmed_at = CASE WHEN ? = 1 THEN datetime('now') ELSE confirmed_at END,
+        metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.api_result', json(?))
+    WHERE id = ? AND status = 'prepared'
+  `).run(status, success ? 1 : 0, JSON.stringify(detail || {}), batchId);
+  if (result.changes > 0) {
+    db.prepare(`UPDATE we_connect_export_items SET status = ?, updated_at = datetime('now') WHERE batch_id = ? AND status = 'prepared'`).run(status, batchId);
+  }
+  return getWeConnectExportBatch(batchId);
+}
+
+export function recordWeConnectWebhookEvent(event = {}) {
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO we_connect_webhook_events (
+      event_key, event_type, event_category, linkedin_url, stop_other_channels, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    event.event_key,
+    event.event_type || "unknown",
+    event.event_category || "activity",
+    event.linkedin_url || null,
+    event.stop_other_channels ? 1 : 0,
+    JSON.stringify(event.received_payload || {})
+  );
+  if (result.changes > 0 && event.linkedin_url) {
+    db.prepare(`
+      UPDATE we_connect_export_items
+      SET status = ?, last_event_category = ?, updated_at = datetime('now')
+      WHERE linkedin_url = ? AND status != 'prepared'
+    `).run(event.event_category || "activity", event.event_category || "activity", event.linkedin_url);
+  }
+  return { duplicate: result.changes === 0, event_key: event.event_key };
 }
 
 export function closeDb() {

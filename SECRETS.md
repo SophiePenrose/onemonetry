@@ -8,6 +8,8 @@ Do not commit real API keys to this repository.
 - `COMPANIES_HOUSE_API_KEY`: enables live Companies House name/status lookups.
 - `SUPABASE_URL` + `SUPABASE_SECRET_KEY`: enables the backend-only, read-only live prospecting adapter. The legacy `SUPABASE_SERVICE_ROLE_KEY` name is accepted as a fallback. Never expose either secret key to frontend/Vite variables.
 - `APOLLO_API_KEY`: enables backend-only Apollo people search and explicitly approved selected-person enrichment. Search and enrichment are separate so discovery cannot silently consume enrichment credits.
+- `WE_CONNECT_WEBHOOK_SECRET`: protects the public outbound We-Connect callback. Generate a long random value and include it only in the We-Connect callback URL as `?token=...`; do not expose it in frontend code.
+- `WE_CONNECT_API_KEY`: enables backend-only import of approved LinkedIn contacts into a named We-Connect campaign. Never expose it in frontend/Vite variables.
 
 ## Local development
 
