@@ -77,11 +77,14 @@ export default function WeeklyOutreach() {
   const [contacts, setContacts] = useState([]);
   const [selectedContacts, setSelectedContacts] = useState(new Set());
   const [plan, setPlan] = useState(null);
-  const [campaignId, setCampaignId] = useState("");
+  const [campaignName, setCampaignName] = useState("");
+  const [weConnectStatus, setWeConnectStatus] = useState({ configured: false, loading: true });
+  const [weConnectExport, setWeConnectExport] = useState(null);
   const [companySearch, setCompanySearch] = useState("");
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const [planning, setPlanning] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState(null);
   const [discoveryNotes, setDiscoveryNotes] = useState([]);
 
@@ -97,6 +100,17 @@ export default function WeeklyOutreach() {
         if (fetchError?.name !== "AbortError") setError(fetchError.message || "Could not load companies");
       })
       .finally(() => setLoadingCompanies(false));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/integrations/we-connect/status", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not check We-Connect configuration")))
+      .then((payload) => setWeConnectStatus({ ...payload, loading: false }))
+      .catch((statusError) => {
+        if (statusError?.name !== "AbortError") setWeConnectStatus({ configured: false, loading: false });
+      });
     return () => controller.abort();
   }, []);
 
@@ -204,7 +218,6 @@ export default function WeeklyOutreach() {
           linkedin_weekly_cap: 100,
           linkedin_automated_target: LINKEDIN_TARGET,
           linkedin_manual_reserve: 10,
-          we_connect_campaign_id: campaignId.trim() || undefined,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -214,6 +227,70 @@ export default function WeeklyOutreach() {
       setError(planError.message || "Weekly planning failed");
     } finally {
       setPlanning(false);
+    }
+  }
+
+  async function prepareWeConnectExport() {
+    if (!plan?.assignments?.length) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/linkedin/we-connect/manual-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contacts: plan.assignments, campaign_name: campaignName.trim() || undefined }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail || payload?.error || "Could not prepare the We-Connect list");
+      setWeConnectExport(payload);
+    } catch (exportError) {
+      setError(exportError.message || "Could not prepare the We-Connect list");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function importToWeConnect() {
+    if (!plan?.assignments?.length || !campaignName.trim()) {
+      setError("Enter the exact We-Connect campaign name before importing.");
+      return;
+    }
+    setExporting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/linkedin/we-connect/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: true, campaign_name: campaignName.trim(), contacts: plan.assignments }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail || payload?.error || "Could not add contacts to We-Connect");
+      setWeConnectExport(payload);
+    } catch (importError) {
+      setError(importError.message || "Could not add contacts to We-Connect");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function copyWeConnectUrls() {
+    if (!weConnectExport?.url_text) return;
+    await navigator.clipboard.writeText(weConnectExport.url_text);
+  }
+
+  async function confirmWeConnectPaste() {
+    const batchId = weConnectExport?.batch?.id;
+    if (!batchId) return;
+    setExporting(true);
+    try {
+      const response = await fetch(`/api/linkedin/we-connect/manual-export/${encodeURIComponent(batchId)}/confirm`, { method: "POST" });
+      const batch = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(batch?.detail || batch?.error || "Could not confirm the handoff");
+      setWeConnectExport((current) => ({ ...current, batch }));
+    } catch (confirmError) {
+      setError(confirmError.message || "Could not confirm the handoff");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -286,7 +363,6 @@ export default function WeeklyOutreach() {
           </div>
         )}
         <div className="outreach-plan-controls">
-          <label>We-Connect campaign ID <input value={campaignId} onChange={(event) => setCampaignId(event.target.value)} placeholder="Optional until campaign is created" /></label>
           <button type="button" className="outreach-primary-button" onClick={generatePlan} disabled={planning || approvedContacts.length === 0}>{planning ? "Calculating…" : "Generate weekly plan"}</button>
         </div>
       </section>
@@ -307,11 +383,28 @@ export default function WeeklyOutreach() {
                 <td>{Math.round(Number(assignment.priority || 0))}</td><td><strong>{assignment.full_name}</strong><small className="outreach-table-sub">{assignment.role}</small></td><td>{assignment.company_name}</td>
                 <td>{assignment.routes?.linkedin === "awaiting_human_approval" ? "Ready for approval" : assignment.routes?.linkedin === "queued_next_week" ? "Next week" : "—"}</td>
                 <td>{assignment.routes?.email === "ready" ? "Ready" : "—"}</td><td>{assignment.routes?.phone === "call_task_ready" ? "Call task" : "—"}</td>
-                <td>{assignment.we_connect_preview ? "Preview built" : campaignId.trim() ? "Not selected" : "Campaign ID needed"}</td>
+                <td>{assignment.routes?.linkedin === "awaiting_human_approval" ? "Ready to add" : "Not selected"}</td>
               </tr>)}</tbody>
             </table>
           </div>
-          <div className="outreach-safety-note"><strong>Sending remains locked.</strong> Live We-Connect enrolment will only be enabled after its authenticated API schema is verified and a persisted final approval step is added.</div>
+          <div className="outreach-manual-handoff">
+            <div><h3>Send approved contacts to We-Connect</h3><p>Enter the campaign name exactly as it appears in We-Connect, then confirm the import. Only the LinkedIn contacts selected for this week are sent.</p></div>
+            <label>Campaign name <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Exact We-Connect campaign name" /></label>
+            <div className="outreach-step-actions">
+              {weConnectStatus.configured && <button type="button" className="outreach-primary-button" onClick={importToWeConnect} disabled={exporting || !campaignName.trim()}>{exporting ? "Adding…" : `Confirm and add ${plan.summary?.linkedin_automated_selected || 0} contacts`}</button>}
+              <button type="button" className="outreach-secondary-button" onClick={prepareWeConnectExport} disabled={exporting}>{exporting ? "Preparing…" : "Prepare manual fallback"}</button>
+              {weConnectExport?.summary?.ready_to_paste > 0 && <button type="button" className="outreach-secondary-button" onClick={copyWeConnectUrls}>Copy {weConnectExport.summary.ready_to_paste} LinkedIn URLs</button>}
+              {weConnectExport?.batch?.status === "prepared" && <button type="button" className="outreach-secondary-button" onClick={confirmWeConnectPaste} disabled={exporting}>I’ve pasted the fallback list</button>}
+            </div>
+            {weConnectExport && <div className="outreach-export-summary" role="status">
+              <strong>{weConnectExport.summary?.ready_to_import ?? weConnectExport.summary?.ready_to_paste ?? 0} ready</strong>
+              <span>{weConnectExport.summary?.previously_exported || 0} previously exported</span>
+              <span>{weConnectExport.summary?.skipped || 0} skipped</span>
+              {weConnectExport.batch?.status === "confirmed_pasted" && <strong>Handoff recorded</strong>}
+              {weConnectExport.batch?.status === "imported_api" && <strong>Added to {weConnectExport.campaign_name}</strong>}
+            </div>}
+          </div>
+          <div className="outreach-safety-note"><strong>Human approval stays mandatory.</strong> {weConnectStatus.configured ? "Nothing is added until you press the confirmation button." : "Direct API import is not configured yet, so use the manual fallback."} We-Connect activity can flow back through the protected webhook.</div>
         </>}
       </section>
     </div>
