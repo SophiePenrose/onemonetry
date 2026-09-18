@@ -163,6 +163,7 @@ import {
   buildLinkedInFallbackRequests,
   buildWeConnectEnrollmentPreview,
   mergeContactCandidates,
+  planWeeklyOutreach,
 } from "./contact-orchestration.js";
 import {
   dispatchGeminiHandoffRequest,
@@ -207,6 +208,7 @@ function sendContactIntegrationError(res, error) {
     "apollo_person_identifier_required",
     "linkedin_profile_required",
     "we_connect_campaign_required",
+    "weekly_contacts_required",
   ]);
   const status = error?.code === "apollo_not_configured" ? 503 : clientErrors.has(error?.code) ? 400 : 502;
   res.status(status).json({ error: error?.code || "contact_integration_failed", detail: error?.message || "unknown_error" });
@@ -252,6 +254,14 @@ app.post("/api/contacts/resolve", (req, res) => {
 app.post("/api/linkedin/we-connect/enrollment-preview", (req, res) => {
   try {
     res.json(buildWeConnectEnrollmentPreview(req.body || {}));
+  } catch (error) {
+    sendContactIntegrationError(res, error);
+  }
+});
+
+app.post("/api/contacts/weekly-plan", (req, res) => {
+  try {
+    res.json(planWeeklyOutreach(req.body || {}));
   } catch (error) {
     sendContactIntegrationError(res, error);
   }
