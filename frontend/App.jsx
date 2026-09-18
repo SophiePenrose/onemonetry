@@ -6,6 +6,7 @@ import Reports from "./pages/Reports";
 import AddCompany from "./pages/AddCompany";
 import Import from "./pages/Import";
 import Settings from "./pages/Settings";
+import WeeklyOutreach from "./pages/WeeklyOutreach";
 
 export default function App() {
   const [view, setView] = useState("shortlist");
@@ -94,6 +95,12 @@ export default function App() {
     setReturnView(null);
   }
 
+  function navigateOutreach() {
+    setView("outreach");
+    setSelectedCompanyId(null);
+    setReturnView(null);
+  }
+
   function navigateToCompany(companyId, fromView) {
     setSelectedCompanyId(companyId);
     setReturnView(fromView || view);
@@ -122,6 +129,7 @@ export default function App() {
     { id: "shortlist", label: "This Week", action: navigateShortlist },
     { id: "home", label: "All Companies", action: navigateHome },
     { id: "reports", label: "Performance", action: navigateReports },
+    { id: "outreach", label: "Outreach Planner", action: navigateOutreach },
     { id: "import", label: "Data Pipeline", action: navigateImport },
   ];
   const showRuntimeBanner = !runtimeStatus.loading && (!runtimeStatus.backendReachable || !runtimeStatus.openaiConfigured);
@@ -225,6 +233,7 @@ export default function App() {
         {view === "reports" && (
           <Reports onNavigateToCompany={(id) => navigateToCompany(id, "reports")} />
         )}
+        {view === "outreach" && <WeeklyOutreach />}
         {view === "company_detail" && selectedCompanyId && (
           <div>
             <button
