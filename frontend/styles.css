@@ -4,6 +4,61 @@
   padding: 0;
 }
 
+/* Weekly outreach planner */
+.outreach-page { display: flex; flex-direction: column; gap: 20px; }
+.outreach-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px; color: #fff; background: linear-gradient(135deg, #17324d, #245f78); border-radius: 16px; }
+.outreach-header h1 { margin: 4px 0 8px; }
+.outreach-header p { max-width: 760px; margin: 0; color: #dcebf1; }
+.outreach-eyebrow { color: #9ed8e7; font-size: .76rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+.outreach-capacity-pill { min-width: 190px; padding: 16px; text-align: center; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 12px; }
+.outreach-capacity-pill strong, .outreach-capacity-pill span, .outreach-capacity-pill small { display: block; }
+.outreach-capacity-pill strong { font-size: 2.3rem; line-height: 1; }
+.outreach-capacity-pill small { margin-top: 5px; color: #cce2e9; }
+.outreach-step-card { padding: 22px; background: #fff; border: 1px solid #dfe7ec; border-radius: 14px; box-shadow: 0 3px 14px rgba(22,45,62,.06); }
+.outreach-step-heading, .outreach-step-heading > div, .outreach-toolbar, .outreach-step-actions, .outreach-plan-controls { display: flex; align-items: center; gap: 14px; }
+.outreach-step-heading { justify-content: space-between; }
+.outreach-step-heading h2 { margin: 0 0 3px; }
+.outreach-step-heading p { margin: 0; color: #667785; }
+.outreach-step-heading > div > span { display: grid; flex: 0 0 34px; width: 34px; height: 34px; color: #fff; background: #245f78; border-radius: 50%; place-items: center; font-weight: 800; }
+.outreach-toolbar { flex-wrap: wrap; margin: 18px 0 12px; }
+.outreach-toolbar input { flex: 1 1 280px; }
+.outreach-company-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 10px; max-height: 390px; overflow-y: auto; padding: 2px; }
+.outreach-company-card { display: flex; gap: 9px; padding: 12px; border: 1px solid #dce5ea; border-radius: 10px; cursor: pointer; }
+.outreach-company-card.selected { background: #f1fbfe; border-color: #2b89a8; }
+.outreach-company-card small, .outreach-table-sub { display: block; margin-top: 3px; color: #72828e; }
+.outreach-step-actions { justify-content: flex-end; margin-top: 16px; color: #667785; }
+.outreach-primary-button, .outreach-secondary-button { min-height: 40px; padding: 9px 15px; border-radius: 8px; font-weight: 750; cursor: pointer; }
+.outreach-primary-button { color: #fff; background: #206c88; border: 1px solid #206c88; }
+.outreach-secondary-button { color: #245f78; background: #fff; border: 1px solid #aac3ce; }
+.outreach-primary-button:disabled, .outreach-secondary-button:disabled { cursor: not-allowed; opacity: .5; }
+.outreach-alert, .outreach-safety-note { padding: 12px 14px; color: #665817; background: #fff8d8; border-radius: 9px; }
+.outreach-alert-error { color: #862b2b; background: #fdecec; }
+.outreach-empty { margin-top: 16px; padding: 28px; color: #71818d; text-align: center; background: #f7f9fa; border-radius: 9px; }
+.outreach-table-shell { margin-top: 16px; overflow-x: auto; }
+.outreach-table { min-width: 850px; }
+.outreach-channel-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.outreach-channel-list span { padding: 3px 7px; border-radius: 999px; font-size: .72rem; }
+.outreach-channel-list .available { color: #176443; background: #e3f6ec; }
+.outreach-channel-list .missing { color: #7a858c; background: #eef1f3; }
+.outreach-plan-controls { justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.outreach-plan-controls label { display: flex; flex: 1 1 320px; flex-direction: column; gap: 5px; color: #52636f; font-size: .82rem; }
+.outreach-plan-controls input, .outreach-toolbar input { padding: 10px 11px; border: 1px solid #cbd6dc; border-radius: 8px; }
+.outreach-metrics { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; margin-top: 16px; }
+.outreach-metric { padding: 14px; background: #edf7fb; border-top: 3px solid #3689a6; border-radius: 9px; }
+.outreach-metric strong, .outreach-metric span, .outreach-metric small { display: block; }
+.outreach-metric strong { font-size: 1.65rem; }
+.outreach-metric small { margin-top: 3px; color: #667785; }
+.outreach-metric-green { background: #edf9f3; border-color: #3f9b70; }
+.outreach-metric-purple { background: #f5f0fb; border-color: #8660b0; }
+.outreach-metric-amber { background: #fff8e8; border-color: #cf932d; }
+.outreach-safety-note { margin-top: 16px; }
+
+@media (max-width: 760px) {
+  .outreach-header, .outreach-step-heading, .outreach-step-actions { align-items: flex-start; flex-direction: column; }
+  .outreach-capacity-pill { min-width: 0; text-align: left; }
+  .outreach-metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+}
+
 :root {
   --brand-900: #1d2738;
   --brand-700: #2e4666;
