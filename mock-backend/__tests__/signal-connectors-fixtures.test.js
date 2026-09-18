@@ -459,7 +459,11 @@ describe("external signal connector native fixtures", () => {
     assert.equal(reputation.status_incidents_total >= 2, true);
     assert.equal(reputation.status_incidents_open >= 1, true);
     assert.equal(reputation.status_major_incidents_open >= 1, true);
-    assert.equal(reputation.status_incident_severity_score >= 0.4, true);
+    assert.equal(reputation.status_incident_weighted_open, 2.5);
+    assert.equal(
+      reputation.status_incident_severity_score,
+      Math.round((2.5 / 4) * reputation.status_incident_recency_multiplier * 100) / 100
+    );
     assert.equal(typeof reputation.status_health_band, "string");
     assert.equal(reputation.payment_related_complaints >= 1, true);
     assert.equal(reputation.checkout_related_complaints >= 1, true);
