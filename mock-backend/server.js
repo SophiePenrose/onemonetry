@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHash } from "crypto";
+import { createHash, randomUUID, timingSafeEqual } from "crypto";
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -29,6 +29,12 @@ import {
   listSuppressions,
   getSuppressionCount,
   isContactSuppressed,
+  listConfirmedWeConnectUrls,
+  createWeConnectExportBatch,
+  getWeConnectExportBatch,
+  confirmWeConnectExportBatch,
+  completeWeConnectApiImport,
+  recordWeConnectWebhookEvent,
 } from "./db.js";
 import {
   isCompaniesHouseConfigured,
@@ -165,6 +171,8 @@ import {
   mergeContactCandidates,
   planWeeklyOutreach,
 } from "./contact-orchestration.js";
+import { buildManualWeConnectExport, normalizeWeConnectWebhook } from "./we-connect-manual.js";
+import { buildWeConnectApiImport, weConnectApiClient } from "./we-connect-api.js";
 import {
   dispatchGeminiHandoffRequest,
   getGeminiHandoffTransportRuntimeInfo,
@@ -180,6 +188,31 @@ const COMPANIES_FILE = configuredCompaniesPath
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+
+function secureTokenMatches(provided, configured) {
+  const left = Buffer.from(String(provided || ""));
+  const right = Buffer.from(String(configured || ""));
+  return left.length > 0 && left.length === right.length && timingSafeEqual(left, right);
+}
+
+// We-Connect calls this route directly, so it must sit before interactive app authentication.
+// A dedicated shared secret is mandatory and may be supplied in the callback URL query string.
+app.post("/api/linkedin/we-connect/webhook", (req, res) => {
+  const configuredSecret = String(process.env.WE_CONNECT_WEBHOOK_SECRET || "").trim();
+  if (!configuredSecret) return res.status(503).json({ error: "we_connect_webhook_not_configured" });
+  const providedSecret = req.headers["x-we-connect-webhook-secret"] || req.query?.token;
+  if (!secureTokenMatches(providedSecret, configuredSecret)) return res.status(401).json({ error: "invalid_webhook_secret" });
+  const event = normalizeWeConnectWebhook(req.body || {});
+  const stored = recordWeConnectWebhookEvent(event);
+  return res.status(stored.duplicate ? 200 : 202).json({
+    accepted: true,
+    duplicate: stored.duplicate,
+    event_key: event.event_key,
+    event_category: event.event_category,
+    stop_other_channels: event.stop_other_channels,
+  });
+});
+
 app.use(authMiddleware);
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
@@ -208,9 +241,10 @@ function sendContactIntegrationError(res, error) {
     "apollo_person_identifier_required",
     "linkedin_profile_required",
     "we_connect_campaign_required",
+    "we_connect_contacts_required",
     "weekly_contacts_required",
   ]);
-  const status = error?.code === "apollo_not_configured" ? 503 : clientErrors.has(error?.code) ? 400 : 502;
+  const status = ["apollo_not_configured", "we_connect_not_configured"].includes(error?.code) ? 503 : clientErrors.has(error?.code) ? 400 : 502;
   res.status(status).json({ error: error?.code || "contact_integration_failed", detail: error?.message || "unknown_error" });
 }
 
@@ -221,6 +255,14 @@ app.get("/api/integrations/apollo/status", (_req, res) => {
     enrichment_requires_explicit_approval: true,
     phone_reveal_enabled: false,
     personal_email_reveal_enabled: false,
+  });
+});
+
+app.get("/api/integrations/we-connect/status", (_req, res) => {
+  res.json({
+    configured: weConnectApiClient.configured,
+    mode: weConnectApiClient.configured ? "direct_api" : "manual_fallback",
+    approval_required: true,
   });
 });
 
@@ -264,6 +306,68 @@ app.post("/api/contacts/weekly-plan", (req, res) => {
     res.json(planWeeklyOutreach(req.body || {}));
   } catch (error) {
     sendContactIntegrationError(res, error);
+  }
+});
+
+app.post("/api/linkedin/we-connect/manual-export", (req, res) => {
+  const prepared = buildManualWeConnectExport({
+    contacts: req.body?.contacts,
+    previously_exported_urls: listConfirmedWeConnectUrls(),
+  });
+  const batch = createWeConnectExportBatch({
+    id: randomUUID(),
+    savedListName: req.body?.saved_list_name,
+    campaignName: req.body?.campaign_name,
+    included: prepared.included,
+    skipped: prepared.skipped,
+  });
+  res.status(201).json({ ...prepared, batch });
+});
+
+app.get("/api/linkedin/we-connect/manual-export/:batchId", (req, res) => {
+  const batch = getWeConnectExportBatch(req.params.batchId);
+  if (!batch) return res.status(404).json({ error: "we_connect_export_not_found" });
+  return res.json(batch);
+});
+
+app.post("/api/linkedin/we-connect/manual-export/:batchId/confirm", (req, res) => {
+  const batch = confirmWeConnectExportBatch(req.params.batchId);
+  if (!batch) return res.status(404).json({ error: "we_connect_export_not_found" });
+  return res.json(batch);
+});
+
+app.post("/api/linkedin/we-connect/import", async (req, res) => {
+  if (req.body?.approved !== true) {
+    return res.status(400).json({ error: "we_connect_explicit_approval_required" });
+  }
+  const campaignName = String(req.body?.campaign_name || "").trim();
+  const prepared = buildWeConnectApiImport({
+    contacts: req.body?.contacts,
+    previously_exported_urls: listConfirmedWeConnectUrls(),
+  });
+  if (!campaignName) return res.status(400).json({ error: "we_connect_campaign_required" });
+  if (prepared.contacts.length === 0) {
+    return res.status(400).json({ error: "we_connect_contacts_required", summary: prepared.summary, skipped: prepared.skipped });
+  }
+  const batch = createWeConnectExportBatch({
+    id: randomUUID(),
+    campaignName,
+    included: prepared.included,
+    skipped: prepared.skipped,
+  });
+  try {
+    const result = await weConnectApiClient.importContacts({ campaignName, contacts: prepared.contacts });
+    const completedBatch = completeWeConnectApiImport(batch.id, { success: true, detail: result.response });
+    return res.status(201).json({
+      success: true,
+      send_performed: true,
+      campaign_name: campaignName,
+      summary: prepared.summary,
+      batch: completedBatch,
+    });
+  } catch (error) {
+    completeWeConnectApiImport(batch.id, { success: false, detail: { error: error?.code || "we_connect_import_failed" } });
+    return sendContactIntegrationError(res, error);
   }
 });
 
