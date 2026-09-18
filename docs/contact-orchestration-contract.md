@@ -35,10 +35,14 @@ Defines the approval-gated path from a qualified company to stakeholder discover
 
 - `POST /api/linkedin/we-connect/enrollment-preview` produces the canonical enrolment payload.
 - Preview generation never sends a request or enrols a contact.
-- The preview status is always `awaiting_human_approval` and includes a campaign/profile dedupe key.
-- A later send endpoint must require a persisted approval record, idempotency key and selected campaign ID.
-- Webhook reconciliation should record invite sent, accepted, replied, failed and removed events.
-- No live send endpoint should be implemented until authenticated We-Connect API schemas and account permissions have been verified.
+- `POST /api/linkedin/we-connect/import` sends an explicitly approved, deduplicated batch to We-Connect's documented `POST /api/v1/campaign/contacts` endpoint. The API key remains backend-only and the exact campaign name is required.
+- `GET /api/integrations/we-connect/status` reports whether direct import is configured without exposing the key.
+- `POST /api/linkedin/we-connect/manual-export` remains a fallback that prepares newline-separated profile URLs for We-Connect's Bulk Add screen and persists a prepared batch.
+- `POST /api/linkedin/we-connect/manual-export/:batchId/confirm` is called only after the user confirms the URLs were pasted. Confirmed URLs are excluded from later exports.
+- Direct import records successful and failed batches. Both are excluded from automatic resubmission: an uncertain failure is held for manual reconciliation before any retry, preventing duplicates when We-Connect received a request but its response was lost.
+- `POST /api/linkedin/we-connect/webhook?token=...` accepts outbound We-Connect activity when `WE_CONNECT_WEBHOOK_SECRET` is configured. Events are idempotent and retain the original payload for later schema reconciliation.
+- Generic replies are recorded but do not automatically stop other channels. Only an explicit positive reply/lead, meeting or opt-out produces `stop_other_channels: true`.
+- Once the app has a public HTTPS base URL, configure the exact webhook callback in We-Connect using the endpoint above and the secret token from the deployment environment.
 
 ## Weekly multichannel capacity plan
 
@@ -52,7 +56,7 @@ Defines the approval-gated path from a qualified company to stakeholder discover
 - Contacts above the company cap or LinkedIn capacity are returned in `overflow[]` for a later week; they are not discarded.
 - Positive replies, meetings, opt-outs and new suppressions are stop conditions for all remaining channels.
 - Suppressed contacts, companies without CRM approval and companies below the £30m turnover floor are rejected. A below-floor company requires an explicit audited turnover override.
-- When a We-Connect campaign ID is supplied, selected LinkedIn contacts receive an approval-gated enrolment preview. The endpoint never sends or enrols anyone.
+- When a We-Connect campaign is supplied, selected LinkedIn contacts receive an approval-gated enrolment preview. Sending occurs only through the separate direct-import endpoint with `approved: true`.
 
 ### Expected weekly funnel
 
