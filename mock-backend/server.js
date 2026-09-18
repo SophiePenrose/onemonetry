@@ -157,6 +157,13 @@ import {
 } from "./website-resolver.js";
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 import { validateJsonSchema } from "./json-schema-lite.js";
+import { supabaseReadModel } from "./supabase-read-model.js";
+import {
+  apolloContactSource,
+  buildLinkedInFallbackRequests,
+  buildWeConnectEnrollmentPreview,
+  mergeContactCandidates,
+} from "./contact-orchestration.js";
 import {
   dispatchGeminiHandoffRequest,
   getGeminiHandoffTransportRuntimeInfo,
@@ -178,6 +185,93 @@ const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
 const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(
   String(process.env.IGNORE_RUNTIME_SIGTERM || "").trim().toLowerCase()
 );
+
+function sendSupabaseReadError(res, error) {
+  if (error?.code === "supabase_not_configured") {
+    return res.status(503).json({ error: error.code });
+  }
+  return res.status(502).json({
+    error: error?.code || "supabase_read_failed",
+    detail: error?.message || "unknown_error",
+  });
+}
+
+app.get("/api/supabase/status", async (_req, res) => {
+  res.json(await supabaseReadModel.getStatus());
+});
+
+function sendContactIntegrationError(res, error) {
+  const clientErrors = new Set([
+    "apollo_company_identifier_required",
+    "apollo_credit_approval_required",
+    "apollo_person_identifier_required",
+    "linkedin_profile_required",
+    "we_connect_campaign_required",
+  ]);
+  const status = error?.code === "apollo_not_configured" ? 503 : clientErrors.has(error?.code) ? 400 : 502;
+  res.status(status).json({ error: error?.code || "contact_integration_failed", detail: error?.message || "unknown_error" });
+}
+
+app.get("/api/integrations/apollo/status", (_req, res) => {
+  res.json({
+    configured: apolloContactSource.configured,
+    search_credit_cost: 0,
+    enrichment_requires_explicit_approval: true,
+    phone_reveal_enabled: false,
+    personal_email_reveal_enabled: false,
+  });
+});
+
+app.post("/api/contacts/apollo/search", async (req, res) => {
+  try {
+    res.json(await apolloContactSource.searchPeople({
+      companyDomain: req.body?.company_domain,
+      organizationIds: Array.isArray(req.body?.organization_ids) ? req.body.organization_ids : [],
+      titles: Array.isArray(req.body?.titles) ? req.body.titles : undefined,
+      page: req.body?.page,
+      perPage: req.body?.per_page,
+    }));
+  } catch (error) {
+    sendContactIntegrationError(res, error);
+  }
+});
+
+app.post("/api/contacts/apollo/enrich-selected", async (req, res) => {
+  try {
+    res.json(await apolloContactSource.enrichSelectedPerson(req.body || {}));
+  } catch (error) {
+    sendContactIntegrationError(res, error);
+  }
+});
+
+app.post("/api/contacts/resolve", (req, res) => {
+  const candidates = mergeContactCandidates(Array.isArray(req.body?.sources) ? req.body.sources : []);
+  res.json({ candidates, linkedin_fallback_requests: buildLinkedInFallbackRequests(candidates) });
+});
+
+app.post("/api/linkedin/we-connect/enrollment-preview", (req, res) => {
+  try {
+    res.json(buildWeConnectEnrollmentPreview(req.body || {}));
+  } catch (error) {
+    sendContactIntegrationError(res, error);
+  }
+});
+
+app.get("/api/supabase/companies", async (req, res) => {
+  try {
+    res.json(await supabaseReadModel.listCompanies(req.query));
+  } catch (error) {
+    sendSupabaseReadError(res, error);
+  }
+});
+
+app.get("/api/supabase/alerts", async (req, res) => {
+  try {
+    res.json(await supabaseReadModel.listAlerts(req.query));
+  } catch (error) {
+    sendSupabaseReadError(res, error);
+  }
+});
 const LIGHTWEIGHT_RUNTIME = ["1", "true", "yes", "on"].includes(
   String(process.env.LIGHTWEIGHT_RUNTIME || "").trim().toLowerCase()
 );
