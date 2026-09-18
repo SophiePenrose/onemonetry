@@ -67,6 +67,7 @@ before(async () => {
       PORT: String(TEST_PORT),
       DATABASE_PATH: testDatabasePath,
       COMPANIES_PATH: testCompaniesPath,
+      WE_CONNECT_WEBHOOK_SECRET: "test-we-connect-webhook-secret",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -272,6 +273,83 @@ function buildGeminiHandoffResponsePayload(requestId) {
 }
 
 describe("API endpoints", () => {
+  describe("We-Connect handoff", () => {
+    it("requires configuration and explicit approval for direct imports", async () => {
+      const status = await fetch(`${BASE}/api/integrations/we-connect/status`);
+      assert.equal(status.status, 200);
+      assert.equal((await status.json()).configured, false);
+
+      const denied = await fetch(`${BASE}/api/linkedin/we-connect/import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ campaign_name: "Weekly Finance Leaders", contacts: [] }),
+      });
+      assert.equal(denied.status, 400);
+      assert.equal((await denied.json()).error, "we_connect_explicit_approval_required");
+    });
+
+    it("prepares, confirms, and deduplicates a pasted LinkedIn batch", async () => {
+      const contact = {
+        person_id: "wc-person-1",
+        full_name: "We Connect Person",
+        company_name: "Example Ltd",
+        linkedin_url: "https://www.linkedin.com/in/we-connect-person/",
+        routes: { linkedin: "awaiting_human_approval" },
+      };
+      const prepared = await fetch(`${BASE}/api/linkedin/we-connect/manual-export`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contacts: [contact], saved_list_name: "Weekly approved prospects" }),
+      });
+      assert.equal(prepared.status, 201);
+      const first = await prepared.json();
+      assert.equal(first.summary.ready_to_paste, 1);
+      assert.equal(first.url_text, "https://linkedin.com/in/we-connect-person");
+
+      const confirmed = await fetch(`${BASE}/api/linkedin/we-connect/manual-export/${first.batch.id}/confirm`, { method: "POST" });
+      assert.equal(confirmed.status, 200);
+      assert.equal((await confirmed.json()).status, "confirmed_pasted");
+
+      const repeated = await fetch(`${BASE}/api/linkedin/we-connect/manual-export`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contacts: [contact] }),
+      });
+      const second = await repeated.json();
+      assert.equal(second.summary.ready_to_paste, 0);
+      assert.equal(second.summary.previously_exported, 1);
+    });
+
+    it("protects and deduplicates the outbound webhook receiver", async () => {
+      const payload = { event_id: "wc-event-1", action: "Contact marked as lead", contact: { linkedin_url: "https://linkedin.com/in/we-connect-person" } };
+      const denied = await fetch(`${BASE}/api/linkedin/we-connect/webhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(denied.status, 401);
+
+      const callbackUrl = `${BASE}/api/linkedin/we-connect/webhook?token=test-we-connect-webhook-secret`;
+      const accepted = await fetch(callbackUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(accepted.status, 202);
+      const acceptedBody = await accepted.json();
+      assert.equal(acceptedBody.event_category, "positive_reply");
+      assert.equal(acceptedBody.stop_other_channels, true);
+
+      const duplicate = await fetch(callbackUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(duplicate.status, 200);
+      assert.equal((await duplicate.json()).duplicate, true);
+    });
+  });
+
   describe("GET /api/motions", () => {
     it("returns all 8 product motions", async () => {
       const { status, data } = await fetchJSON("/api/motions");
