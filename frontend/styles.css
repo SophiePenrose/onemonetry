@@ -52,6 +52,12 @@
 .outreach-metric-purple { background: #f5f0fb; border-color: #8660b0; }
 .outreach-metric-amber { background: #fff8e8; border-color: #cf932d; }
 .outreach-safety-note { margin-top: 16px; }
+.outreach-manual-handoff { margin-top: 16px; padding: 16px; background: #f7fafc; border: 1px solid #dce5ea; border-radius: 10px; }
+.outreach-manual-handoff h3 { margin: 0 0 4px; }
+.outreach-manual-handoff p { margin: 0 0 14px; color: #667785; }
+.outreach-manual-handoff > label { display: flex; flex-direction: column; gap: 5px; color: #52636f; font-size: .82rem; }
+.outreach-manual-handoff input { padding: 10px 11px; border: 1px solid #cbd6dc; border-radius: 8px; }
+.outreach-export-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; padding: 10px 12px; color: #425461; background: #fff; border-radius: 8px; }
 
 @media (max-width: 760px) {
   .outreach-header, .outreach-step-heading, .outreach-step-actions { align-items: flex-start; flex-direction: column; }
