@@ -11,7 +11,8 @@ Pause source-file editing while this runs. SQLite can remain open: the online ba
 This command fetches both refs, reads the reviewed helper directly from its branch, and stages the latest fetched `main`. It does not merge or check out either branch over your work:
 
 ```bash
-git fetch origin main chore/safe-codespace-upgrade && \
+git fetch origin main:refs/remotes/origin/main \
+  chore/safe-codespace-upgrade:refs/remotes/origin/chore/safe-codespace-upgrade && \
 upgrade_script="$(mktemp /tmp/onemonetry-upgrade-XXXXXX.py)" && \
 git show origin/chore/safe-codespace-upgrade:scripts/prepare-codespace-upgrade.py > "$upgrade_script" && \
 python3 "$upgrade_script" \
