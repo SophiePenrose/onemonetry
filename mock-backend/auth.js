@@ -71,7 +71,7 @@ export function createSession(userAgent) {
 
 export function validateSession(token) {
   if (!token) return false;
-  const session = db.prepare("SELECT * FROM auth_sessions WHERE token = ? AND expires_at > datetime('now')").get(token);
+  const session = db.prepare("SELECT * FROM auth_sessions WHERE token = ? AND julianday(expires_at) > julianday('now')").get(token);
   return !!session;
 }
 
@@ -80,7 +80,7 @@ export function destroySession(token) {
 }
 
 export function cleanExpiredSessions() {
-  db.prepare("DELETE FROM auth_sessions WHERE expires_at < datetime('now')").run();
+  db.prepare("DELETE FROM auth_sessions WHERE (julianday(expires_at) <= julianday('now') OR julianday(expires_at) IS NULL)").run();
 }
 
 export function authMiddleware(req, res, next) {

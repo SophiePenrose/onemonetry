@@ -23,7 +23,7 @@ describe("manual We-Connect handoff", () => {
     assert.equal(normalizeLinkedInProfileUrl("https://linkedin.com/company/example"), null);
   });
 
-  it("normalizes outbound webhook events and only stops other channels for explicit outcomes", () => {
+  it("normalizes webhook events and pauses other channels on any reply", () => {
     const positive = normalizeWeConnectWebhook({ event_id: "evt-1", action: "Contact marked as lead", contact: { linkedin_url: "https://www.linkedin.com/in/jane-doe/" } });
     assert.equal(positive.event_category, "positive_reply");
     assert.equal(positive.stop_other_channels, true);
@@ -31,6 +31,7 @@ describe("manual We-Connect handoff", () => {
 
     const genericReply = normalizeWeConnectWebhook({ action: "Message received", profile_url: "https://linkedin.com/in/jane-doe" });
     assert.equal(genericReply.event_category, "reply_received");
-    assert.equal(genericReply.stop_other_channels, false);
+    assert.equal(genericReply.stop_other_channels, true);
+    assert.equal(normalizeWeConnectWebhook({ action: "Connection accepted" }).stop_other_channels, false);
   });
 });

@@ -144,6 +144,8 @@ export function normalizeContactCandidate(raw = {}, source = "unknown") {
     linkedin_url: normalizeLinkedInUrl(raw.linkedin_url || raw.linkedinUrl || raw.linkedin),
     phone: normalizePhone(raw.phone || raw.phone_number || raw.mobile_phone || raw.mobile),
     confidence: normalizeText(raw.confidence || raw.match_confidence) || "medium",
+    ...Object.fromEntries(["suppressed", "do_not_contact", "do_not_email", "do_not_linkedin", "do_not_call", "phone_dnc"]
+      .filter(key => key in raw).map(key => [key, parseBoolean(raw[key])])),
     provider_payload: raw,
   };
 }

@@ -29,7 +29,6 @@ import {
   listSuppressions,
   getSuppressionCount,
   isContactSuppressed,
-  listConfirmedWeConnectUrls,
   createWeConnectExportBatch,
   getWeConnectExportBatch,
   confirmWeConnectExportBatch,
@@ -165,6 +164,8 @@ import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from 
 import { validateJsonSchema } from "./json-schema-lite.js";
 import { supabaseReadModel } from "./supabase-read-model.js";
 import database from "./db.js";
+import { createOutreachCompanyResolver } from "./outreach-eligibility.js";
+import { createOutreachReliability, createOutreachRouter } from "./outreach-reliability.js";
 import { createOutreachDraftRouter, createOutreachDraftStore } from "./outreach-drafts.js";
 import { createMonitoringRouter } from "./monitoring-routes.js";
 import { createMonitoringResearch } from "./monitoring-research.js";
@@ -173,10 +174,9 @@ import {
   buildLinkedInFallbackRequests,
   buildWeConnectEnrollmentPreview,
   mergeContactCandidates,
-  planWeeklyOutreach,
 } from "./contact-orchestration.js";
-import { buildManualWeConnectExport, normalizeWeConnectWebhook } from "./we-connect-manual.js";
-import { buildWeConnectApiImport, weConnectApiClient } from "./we-connect-api.js";
+import { normalizeWeConnectWebhook } from "./we-connect-manual.js";
+import { weConnectApiClient } from "./we-connect-api.js";
 import {
   dispatchGeminiHandoffRequest,
   getGeminiHandoffTransportRuntimeInfo,
@@ -218,7 +218,19 @@ app.post("/api/linkedin/we-connect/webhook", (req, res) => {
 });
 
 app.use(authMiddleware);
-app.use("/api/outreach/draft", createOutreachDraftRouter({ store: createOutreachDraftStore({ db: database }) }));
+const outreachDraftStore = createOutreachDraftStore({ db: database });
+app.use("/api/outreach/draft", createOutreachDraftRouter({ store: outreachDraftStore }));
+const outreachReliability = createOutreachReliability({
+  db: database, draftStore: outreachDraftStore, resolveCompany: createOutreachCompanyResolver({ normalizeCompanyNumber, loadCompanies, getMonitoredCompany,
+    getStoredScore, isExcluded, isSuppressed, getSetting, getTurnoverThreshold, getTurnoverMaxThreshold }), suppressed: isContactSuppressed,
+  createBatch: createWeConnectExportBatch, getBatch: getWeConnectExportBatch, completeBatch: completeWeConnectApiImport,
+});
+app.use("/api", createOutreachRouter({ service: outreachReliability, apiClient: weConnectApiClient,
+  getBatch: getWeConnectExportBatch, confirmBatch: confirmWeConnectExportBatch,
+  actor: req => validateSession(req.headers["x-auth-token"]) ? "authenticated-workspace-owner" : "local-development-owner",
+}));
+
+
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
 const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(
@@ -303,76 +315,6 @@ app.post("/api/linkedin/we-connect/enrollment-preview", (req, res) => {
     res.json(buildWeConnectEnrollmentPreview(req.body || {}));
   } catch (error) {
     sendContactIntegrationError(res, error);
-  }
-});
-
-app.post("/api/contacts/weekly-plan", (req, res) => {
-  try {
-    res.json(planWeeklyOutreach(req.body || {}));
-  } catch (error) {
-    sendContactIntegrationError(res, error);
-  }
-});
-
-app.post("/api/linkedin/we-connect/manual-export", (req, res) => {
-  const prepared = buildManualWeConnectExport({
-    contacts: req.body?.contacts,
-    previously_exported_urls: listConfirmedWeConnectUrls(),
-  });
-  const batch = createWeConnectExportBatch({
-    id: randomUUID(),
-    savedListName: req.body?.saved_list_name,
-    campaignName: req.body?.campaign_name,
-    included: prepared.included,
-    skipped: prepared.skipped,
-  });
-  res.status(201).json({ ...prepared, batch });
-});
-
-app.get("/api/linkedin/we-connect/manual-export/:batchId", (req, res) => {
-  const batch = getWeConnectExportBatch(req.params.batchId);
-  if (!batch) return res.status(404).json({ error: "we_connect_export_not_found" });
-  return res.json(batch);
-});
-
-app.post("/api/linkedin/we-connect/manual-export/:batchId/confirm", (req, res) => {
-  const batch = confirmWeConnectExportBatch(req.params.batchId);
-  if (!batch) return res.status(404).json({ error: "we_connect_export_not_found" });
-  return res.json(batch);
-});
-
-app.post("/api/linkedin/we-connect/import", async (req, res) => {
-  if (req.body?.approved !== true) {
-    return res.status(400).json({ error: "we_connect_explicit_approval_required" });
-  }
-  const campaignName = String(req.body?.campaign_name || "").trim();
-  const prepared = buildWeConnectApiImport({
-    contacts: req.body?.contacts,
-    previously_exported_urls: listConfirmedWeConnectUrls(),
-  });
-  if (!campaignName) return res.status(400).json({ error: "we_connect_campaign_required" });
-  if (prepared.contacts.length === 0) {
-    return res.status(400).json({ error: "we_connect_contacts_required", summary: prepared.summary, skipped: prepared.skipped });
-  }
-  const batch = createWeConnectExportBatch({
-    id: randomUUID(),
-    campaignName,
-    included: prepared.included,
-    skipped: prepared.skipped,
-  });
-  try {
-    const result = await weConnectApiClient.importContacts({ campaignName, contacts: prepared.contacts });
-    const completedBatch = completeWeConnectApiImport(batch.id, { success: true, detail: result.response });
-    return res.status(201).json({
-      success: true,
-      send_performed: true,
-      campaign_name: campaignName,
-      summary: prepared.summary,
-      batch: completedBatch,
-    });
-  } catch (error) {
-    completeWeConnectApiImport(batch.id, { success: false, detail: { error: error?.code || "we_connect_import_failed" } });
-    return sendContactIntegrationError(res, error);
   }
 });
 
@@ -10275,7 +10217,8 @@ app.get("/api/gemini/handoff/:requestId/yamm-rows", (req, res) => {
   }
 
   const approvals = listGeminiHandoffApprovals(requestId);
-  const allRows = extractGeminiYammRows(record.response, approvals, record.request);
+  const allRows = extractGeminiYammRows(record.response, approvals, record.request)
+    .filter(row => !isContactSuppressed({ company_number: row.CompanyNumber, email: row.To }));
   const approvalFilteredRows = rawApprovalStatus
     ? allRows.filter((row) => String(row?.ApprovalStatus || "").trim().toLowerCase() === rawApprovalStatus)
     : allRows;
@@ -13440,6 +13383,7 @@ app.get("/api/email/export/csv/:sequenceId", (req, res) => {
     }
   } catch (err) {
     console.warn("[email-audit] Unable to record CSV export audit", err?.message || err);
+    return res.status(503).json({ error: "export_safety_check_failed" });
   }
 
   const csv = generateCSV(exported.rows);
@@ -13483,6 +13427,7 @@ app.get("/api/email/export/json/:sequenceId", (req, res) => {
     recordAuditForExportRows(exported.rows, sequencesById, "json", suppressionBySequenceId);
   } catch (err) {
     console.warn("[email-audit] Unable to record JSON export audit", err?.message || err);
+    return res.status(503).json({ error: "export_safety_check_failed" });
   }
 
   if (suppressionForSequence) {
@@ -13553,6 +13498,7 @@ app.get("/api/email/export/company/:companyId", (req, res) => {
     });
   } catch (err) {
     console.warn("[email-audit] Unable to record company export audit", err?.message || err);
+    return res.status(503).json({ error: "export_safety_check_failed" });
   }
 
   if (req.query.format === "csv") {

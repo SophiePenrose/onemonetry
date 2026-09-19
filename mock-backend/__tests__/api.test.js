@@ -288,36 +288,13 @@ describe("API endpoints", () => {
       assert.equal((await denied.json()).error, "we_connect_explicit_approval_required");
     });
 
-    it("prepares, confirms, and deduplicates a pasted LinkedIn batch", async () => {
-      const contact = {
-        person_id: "wc-person-1",
-        full_name: "We Connect Person",
-        company_name: "Example Ltd",
-        linkedin_url: "https://www.linkedin.com/in/we-connect-person/",
-        routes: { linkedin: "awaiting_human_approval" },
-      };
-      const prepared = await fetch(`${BASE}/api/linkedin/we-connect/manual-export`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ contacts: [contact], saved_list_name: "Weekly approved prospects" }),
+    it("rejects client-forged LinkedIn handoffs without a persisted reviewed plan", async () => {
+      const response = await fetch(`${BASE}/api/linkedin/we-connect/manual-export`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approved: true, contacts: [{ linkedin_url: "https://linkedin.com/in/synthetic", routes: { linkedin: "awaiting_human_approval" } }] }),
       });
-      assert.equal(prepared.status, 201);
-      const first = await prepared.json();
-      assert.equal(first.summary.ready_to_paste, 1);
-      assert.equal(first.url_text, "https://linkedin.com/in/we-connect-person");
-
-      const confirmed = await fetch(`${BASE}/api/linkedin/we-connect/manual-export/${first.batch.id}/confirm`, { method: "POST" });
-      assert.equal(confirmed.status, 200);
-      assert.equal((await confirmed.json()).status, "confirmed_pasted");
-
-      const repeated = await fetch(`${BASE}/api/linkedin/we-connect/manual-export`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ contacts: [contact] }),
-      });
-      const second = await repeated.json();
-      assert.equal(second.summary.ready_to_paste, 0);
-      assert.equal(second.summary.previously_exported, 1);
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error, "reviewed_plan_required");
     });
 
     it("protects and deduplicates the outbound webhook receiver", async () => {
