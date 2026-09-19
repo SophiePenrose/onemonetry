@@ -28,12 +28,21 @@ function seed(count = 3, prefix = "first") {
 function plan() { const d = drafts.get(); return service.makePlan({ week_start: d.week_start, draft_revision: d.revision, crm_confirmed: true }, "test-owner"); }
 function reserve(p, mode = "manual") { return service.reserve({ plan_id: p.plan_id, campaign_name: "Synthetic cadence" }, mode); }
 beforeEach(() => {
+  db.exec("DROP TABLE IF EXISTS prospect_workspace");
   for (const table of ["outreach_handoff_reviews", "outreach_handoffs", "outreach_crm_clearances", "outreach_reviewed_plans", "weekly_outreach_drafts", "we_connect_export_items", "we_connect_export_batches", "we_connect_webhook_events", "outreach_contact_stops", "outreach_contact_identities", "suppression_list"]) db.prepare(`DELETE FROM ${table}`).run();
   clock = new Date("2026-09-19T12:00:00Z"); eligible = true;
 });
 after(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe("Authoritative outreach review and capacity", () => {
+  it("rechecks a restored workspace stop before handoff even if the draft has no stop flag", () => {
+    const contacts = seed(); const reviewed = plan();
+    db.exec("CREATE TABLE prospect_workspace (id INTEGER PRIMARY KEY, email TEXT, linkedin_url TEXT, availability_status TEXT)");
+    db.prepare("INSERT INTO prospect_workspace VALUES (1, ?, ?, 'do_not_contact')").run(contacts[0].email, contacts[0].linkedin_url);
+    assert.throws(() => reserve(reviewed), { code: "outreach_eligibility_changed" });
+    assert.equal(service.capacity().used, 0);
+    assert.equal(plan().assignments.length, 2);
+  });
   it("preserves provider opt-outs through normalization before a draft is saved", () => {
     const candidate = normalizeContactCandidate({ name: "Synthetic", phone: "+442000000000", phone_dnc: true, do_not_email: "true", do_not_contact: true }, "apollo");
     assert.equal(candidate.phone_dnc, true); assert.equal(candidate.do_not_email, true); assert.equal(candidate.do_not_contact, true);

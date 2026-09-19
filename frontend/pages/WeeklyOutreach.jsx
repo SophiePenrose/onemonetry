@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import HandoffReviews from "../components/HandoffReviews";
 import useOutreachDraft from "../hooks/useOutreachDraft";
+import { mergeOutreachContacts, outreachContactKey as contactKey } from "../utils/mergeOutreachContacts";
 
 const COMPANY_REVIEW_TARGET = 35;
 
@@ -49,10 +50,6 @@ function formatMoney(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "Not recorded";
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", notation: "compact", maximumFractionDigits: 1 }).format(parsed);
-}
-
-function contactKey(contact, index = 0) {
-  return String(contact?.person_id || contact?.source_id || contact?.linkedin_url || contact?.email || `${contact?.full_name || "contact"}-${index}`);
 }
 
 async function runWithConcurrency(items, limit, worker) {
@@ -229,8 +226,7 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
         priority_score: Number(company?.priority_score || company?.composite_score || 0),
         crm_approved: true,
       })));
-      updateDraft(current => ({ ...current, contacts: discovered,
-        selected_contact_keys: discovered.map((contact, index) => contactKey(contact, index)) }));
+      updateDraft(current => mergeOutreachContacts(current, discovered, { selectNew: true }));
       setDiscoveryNotes(results.map((result) => result.note).filter(Boolean));
       if (discovered.length === 0) setError("Apollo returned no contacts for the selected companies. Check the recorded domains or widen the role search later.");
     } catch (discoveryError) {
@@ -238,6 +234,23 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
     } finally {
       setDiscovering(false);
     }
+  }
+
+  async function loadSavedContacts() {
+    setDiscovering(true);
+    setError(null);
+    setPlan(null);
+    try {
+      const numbers = approvedCompanies.map(companyNumber).join(",");
+      const response = await fetch(`/api/contacts/saved?company_numbers=${encodeURIComponent(numbers)}`, { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(outreachError(payload.error) || "Could not load saved people.");
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      updateDraft(current => mergeOutreachContacts(current, candidates));
+      setDiscoveryNotes([`${candidates.length} saved people loaded for review. New people are unchecked; previous selections are preserved.`,
+        ...(payload.omitted || []).map(row => `${row.company_number}: ${outreachError(row.reason)}`)]);
+    } catch (loadError) { setError(loadError.message || "Could not load saved people."); }
+    finally { setDiscovering(false); }
   }
 
   async function generatePlan() {
@@ -389,10 +402,14 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
           </div>
         )}
         <div className="outreach-step-actions">
+          <button type="button" className="outreach-secondary-button" onClick={loadSavedContacts} disabled={discovering || approvedCompanies.length === 0 || approvedCompanies.length > 40}>
+            Load saved people
+          </button>
           <button type="button" className="outreach-primary-button" onClick={discoverContacts} disabled={discovering || approvedCompanies.length === 0}>
             {discovering ? "Finding contacts…" : `Find contacts for ${approvedCompanies.length} companies`}
           </button>
           <span>Zero-credit Apollo search; no email or phone enrichment.</span>
+          {approvedCompanies.length > 40 && <span>Select up to 40 companies at a time to load saved people.</span>}
         </div>
       </section>
 
@@ -401,7 +418,7 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
           <div><span>2</span><div><h2>Review the stakeholders</h2><p>Remove anyone unsuitable. Generating the plan confirms you have checked the selected companies in the CRM; that clearance is dated and recorded.</p></div></div>
           <strong>{approvedContacts.length} of {contacts.length} included</strong>
         </div>
-        {contacts.length === 0 ? <div className="outreach-empty">Run Apollo discovery to populate this review queue.</div> : (
+        {contacts.length === 0 ? <div className="outreach-empty">Load your saved people or run Apollo discovery, then review them here.</div> : (
           <div className="table-shell outreach-table-shell">
             <table className="data-table outreach-table">
               <thead><tr><th>Include</th><th>Person</th><th>Company</th><th>Role</th><th>Channels found</th></tr></thead>

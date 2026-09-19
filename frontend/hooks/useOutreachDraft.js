@@ -65,8 +65,9 @@ export function createOutreachDraftClient(fetcher = (...args) => fetch(...args))
     start() { if (!loading && !saving && generation === savedGeneration && ["loading", "saved"].includes(state.status)) return load(); },
     update(updater) {
       if (!state.loaded || ["loading", "conflict"].includes(state.status)) return;
+      const draft = updater(state.draft);
       generation += 1;
-      publish({ draft: updater(state.draft) });
+      publish({ draft });
       if (state.status !== "save_error") void flush();
     },
     retry: flush,

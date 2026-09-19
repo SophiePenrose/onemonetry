@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { normalizeLinkedInProfileUrl } from "./we-connect-manual.js";
 import { sqliteUtcTimestamp } from "./utc-timestamp.js";
+import { findSavedContactStop } from "./saved-prospects.js";
 import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -901,6 +902,8 @@ export function getSuppressionCount() {
 }
 
 export function isContactSuppressed({ company_number, email, domain, linkedin_url } = {}) {
+  const savedStop = findSavedContactStop(db, { email, linkedin_url });
+  if (savedStop) return savedStop;
   const url = normalizeLinkedInProfileUrl(linkedin_url);
   const stop = db.prepare(`SELECT s.* FROM outreach_contact_stops s WHERE s.linkedin_url = ? OR s.linkedin_url IN
     (SELECT linkedin_url FROM outreach_contact_identities WHERE email = ?) LIMIT 1`)

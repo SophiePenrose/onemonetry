@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createRecoveredWorkspace, createRecoveredWorkspaceRouter } from "./recovered-workspace.js";
 import { createHash, randomUUID, timingSafeEqual } from "crypto";
 import express from "express";
 import fs from "fs";
@@ -220,9 +221,13 @@ app.post("/api/linkedin/we-connect/webhook", (req, res) => {
 app.use(authMiddleware);
 const outreachDraftStore = createOutreachDraftStore({ db: database });
 app.use("/api/outreach/draft", createOutreachDraftRouter({ store: outreachDraftStore }));
+const resolveOutreachCompany = createOutreachCompanyResolver({ normalizeCompanyNumber, loadCompanies, getMonitoredCompany,
+  getStoredScore, isExcluded, isSuppressed, getSetting, getTurnoverThreshold, getTurnoverMaxThreshold });
+app.use("/api", createRecoveredWorkspaceRouter(createRecoveredWorkspace({ db: database, loadCompanies,
+  normalizeCompanyNumber, getMonitoredCompany, getStoredScore, getCompanyState, resolveCompany: resolveOutreachCompany,
+  suppressed: isContactSuppressed })));
 const outreachReliability = createOutreachReliability({
-  db: database, draftStore: outreachDraftStore, resolveCompany: createOutreachCompanyResolver({ normalizeCompanyNumber, loadCompanies, getMonitoredCompany,
-    getStoredScore, isExcluded, isSuppressed, getSetting, getTurnoverThreshold, getTurnoverMaxThreshold }), suppressed: isContactSuppressed,
+  db: database, draftStore: outreachDraftStore, resolveCompany: resolveOutreachCompany, suppressed: isContactSuppressed,
   createBatch: createWeConnectExportBatch, getBatch: getWeConnectExportBatch, completeBatch: completeWeConnectApiImport,
 });
 app.use("/api", createOutreachRouter({ service: outreachReliability, apiClient: weConnectApiClient,

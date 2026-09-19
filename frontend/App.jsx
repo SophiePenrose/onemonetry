@@ -8,9 +8,17 @@ import Import from "./pages/Import";
 import Settings from "./pages/Settings";
 import WeeklyOutreach from "./pages/WeeklyOutreach";
 import Monitoring from "./pages/Monitoring";
+import ActiveOpportunities from "./pages/ActiveOpportunities";
+
+const APP_VIEW_IDS = new Set(["shortlist", "home", "active_opportunities", "reports", "outreach", "monitoring", "import", "settings"]);
+function getInitialView() {
+  const query = new URLSearchParams(window.location.search).get("view");
+  const hash = window.location.hash.replace(/^#/, "");
+  return APP_VIEW_IDS.has(query) ? query : APP_VIEW_IDS.has(hash) ? hash : "shortlist";
+}
 
 export default function App() {
-  const [view, setView] = useState("shortlist");
+  const [view, setView] = useState(getInitialView);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [returnView, setReturnView] = useState(null);
   const [outreachSearch, setOutreachSearch] = useState("");
@@ -110,6 +118,12 @@ export default function App() {
     setReturnView(null);
   }
 
+  function navigateActiveOpportunities() {
+    setView("active_opportunities");
+    setSelectedCompanyId(null);
+    setReturnView(null);
+  }
+
   function navigateToCompany(companyId, fromView) {
     setSelectedCompanyId(companyId);
     setReturnView(fromView || view);
@@ -123,7 +137,7 @@ export default function App() {
     setReturnView(null);
   }
 
-  const backLabel = returnView === "monitoring" ? "Signals & Research" : returnView === "reports"
+  const backLabel = returnView === "active_opportunities" ? "Active Opportunities" : returnView === "monitoring" ? "Signals & Research" : returnView === "reports"
     ? "Performance"
     : returnView === "shortlist"
       ? "This Week"
@@ -140,6 +154,7 @@ export default function App() {
     { id: "home", label: "All Companies", action: navigateHome },
     { id: "reports", label: "Performance", action: navigateReports },
     { id: "outreach", label: "Outreach Planner", action: navigateOutreach },
+    { id: "active_opportunities", label: "Active Opportunities", action: navigateActiveOpportunities },
     { id: "import", label: "Data Pipeline", action: navigateImport },
   ];
   const showRuntimeBanner = !runtimeStatus.loading && (!runtimeStatus.backendReachable || !runtimeStatus.openaiConfigured);
@@ -245,6 +260,7 @@ export default function App() {
         )}
         {view === "outreach" && <WeeklyOutreach initialSearch={outreachSearch} />}
         {view === "monitoring" && <Monitoring onOpenCompany={(id) => navigateToCompany(id, "monitoring")} />}
+        {view === "active_opportunities" && <ActiveOpportunities onNavigateToCompany={(id) => navigateToCompany(id, "active_opportunities")} />}
         {view === "company_detail" && selectedCompanyId && (
           <div>
             <button
