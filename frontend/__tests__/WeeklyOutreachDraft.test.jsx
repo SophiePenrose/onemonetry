@@ -20,11 +20,23 @@ function setup(turnover = 50000000) {
     if (url.startsWith("/api/unified-shortlist")) return json({ companies: [{ company_number: "00123456", name: "Example Ltd", turnover, website: "example.com" }] });
     if (url === "/api/integrations/we-connect/status") return json({ configured: true });
     if (url === "/api/contacts/weekly-plan") return json({ summary: {}, assignments: [] });
+    if (url.startsWith("/api/contacts/saved?")) return json({ candidates: [{ person_id: "saved-2", full_name: "Saved Person", company_number: "00123456", company_name: "Example Ltd", email: "saved@example.test", linkedin_url: "https://linkedin.com/in/saved-person" }], omitted: [] });
     throw new Error(`Unexpected request: ${url}`);
   });
   return fetcher;
 }
 describe("Saved outreach review", () => {
+  it("loads legacy people unchecked without replacing the draft, approving or calling Apollo", async () => {
+    const fetcher = setup(); render(<WeeklyOutreach draftClient={createOutreachDraftClient()} />);
+    await screen.findByLabelText("Include Jane Example");
+    fireEvent.click(screen.getByRole("button", { name: "Load saved people" }));
+    expect(await screen.findByLabelText("Include Saved Person")).not.toBeChecked();
+    expect(screen.getByLabelText("Include Jane Example")).toBeChecked();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Draft saved"));
+    expect(fetcher.mock.calls.some(([url]) => /apollo|weekly-plan|we-connect\/import/.test(url))).toBe(false);
+    const save = fetcher.mock.calls.find(([url, options]) => url === "/api/outreach/draft" && options.method === "PUT");
+    expect(JSON.parse(save[1].body).draft.selected_contact_keys).toEqual(["person-1"]);
+  });
   it("restores review choices after remount without restoring a sendable plan or calling a provider", async () => {
     const fetcher = setup();
     const first = render(<WeeklyOutreach draftClient={createOutreachDraftClient()} />);
