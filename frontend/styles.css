@@ -1257,3 +1257,43 @@ button {
     align-items: flex-start;
   }
 }
+/* Shared company-change research surface, using the existing workspace palette. */
+.monitoring-workspace { background: #fff; padding: 24px; border: 1px solid #dce3ed; border-radius: 12px; color: #172b4d; }
+.monitoring-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.monitoring-heading h2 { margin: 0 0 8px; font-size: 26px; }
+.monitoring-heading p { margin: 0 0 20px; color: #53647d; font-size: 16px; }
+.monitoring-workspace button, .company-monitoring-section button, .monitoring-caution button { border: 1px solid #becbe0; background: #f7faff; color: #163f75; border-radius: 6px; padding: 8px 12px; font-size: 14px; cursor: pointer; }
+.monitoring-workspace button:disabled, .monitoring-caution button:disabled { opacity: .55; cursor: default; }
+.monitoring-workspace button:focus-visible, .monitoring-workspace a:focus-visible, .company-section-nav a:focus-visible { outline: 3px solid #0075eb; outline-offset: 3px; }
+.monitoring-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid #dce3ed; }
+.monitoring-tabs button[aria-current="page"] { background: #173d73; border-color: #173d73; color: white; }
+.monitoring-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding: 22px 0; }
+.monitoring-metrics > div { padding-left: 14px; border-left: 3px solid #0075eb; display: flex; flex-direction: column; gap: 6px; }
+.monitoring-metrics strong { font-size: 26px; }.monitoring-metrics span { font-size: 14px; color: #53647d; }
+.monitoring-toolbar { display: flex; flex-wrap: wrap; gap: 18px; margin: 18px 0; }
+.monitoring-workspace label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; }
+.monitoring-workspace input, .monitoring-workspace select, .monitoring-workspace textarea { padding: 9px; border: 1px solid #becbe0; border-radius: 6px; font: inherit; background: white; color: #172b4d; max-width: 100%; }
+.monitoring-workspace textarea { min-height: 110px; resize: vertical; }
+.monitoring-toolbar input { width: min(360px, 100%); }
+.monitoring-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.monitoring-layout:has(.monitoring-detail) { grid-template-columns: minmax(0, 1.2fr) minmax(290px, .8fr); }
+.monitoring-table-wrap { overflow-x: auto; }.monitoring-results { min-width: 0; }
+.monitoring-workspace .data-table { width: 100%; font-size: 14px; }
+.monitoring-workspace .data-table td { vertical-align: top; padding: 14px 10px; }
+.monitoring-workspace .data-table th { padding: 12px 10px; text-align: left; }
+.monitoring-workspace small { display: block; color: #53647d; margin-top: 6px; font-size: 13px; }
+.monitoring-workspace .monitoring-name { padding: 0; border: none; background: none; font-weight: 650; text-align: left; }
+.monitoring-detail { padding: 20px; background: #f6f8fc; border: 1px solid #dce3ed; border-radius: 10px; overflow-wrap: anywhere; }
+.monitoring-detail h3 { font-size: 18px; }.monitoring-detail p { font-size: 15px; line-height: 1.6; }
+.monitoring-detail section { margin-top: 20px; padding-top: 8px; border-top: 1px solid #dce3ed; }.monitoring-detail form { display: grid; gap: 14px; }
+.monitoring-source { display: block; color: #1254a0; padding: 5px 0; font-size: 14px; }
+.monitoring-muted { color: #53647d; font-size: 14px; line-height: 1.6; }.monitoring-caution { background: #fff8e9; color: #624519; padding: 16px; border: 1px solid #e9d39a; border-radius: 8px; margin: 16px 0; }
+.monitoring-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin: 16px 0; font-size: 14px; }.monitoring-pagination span { margin-right: auto; }
+.monitoring-empty { padding: 30px 12px; color: #53647d; }
+.company-section-nav { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 16px; padding: 14px; background: #fff; border: 1px solid #dce3ed; border-radius: 8px; }
+.company-section-nav a { color: #163f75; text-decoration: none; font-size: 14px; }
+.company-monitoring-section { background: white; border: 1px solid #dce3ed; border-radius: 8px; padding: 20px; margin: 16px 0; }
+.company-monitoring-section h3 { margin-top: 0; }.company-monitoring-section p { font-size: 15px; color: #53647d; }
+.monitoring-compact { margin-top: 16px; padding: 16px; }
+@media (max-width: 1050px) { .monitoring-layout:has(.monitoring-detail) { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .monitoring-workspace { padding: 14px; }.monitoring-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.monitoring-heading { flex-wrap: wrap; }.monitoring-toolbar label { width: 100%; }.monitoring-toolbar input { width: 100%; box-sizing: border-box; }.monitoring-pagination { flex-wrap: wrap; } }

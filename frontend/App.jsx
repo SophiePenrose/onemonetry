@@ -7,11 +7,13 @@ import AddCompany from "./pages/AddCompany";
 import Import from "./pages/Import";
 import Settings from "./pages/Settings";
 import WeeklyOutreach from "./pages/WeeklyOutreach";
+import Monitoring from "./pages/Monitoring";
 
 export default function App() {
   const [view, setView] = useState("shortlist");
   const [selectedCompanyId, setSelectedCompanyId] = useState(null);
   const [returnView, setReturnView] = useState(null);
+  const [outreachSearch, setOutreachSearch] = useState("");
   const [runtimeStatus, setRuntimeStatus] = useState({
     loading: true,
     backendReachable: true,
@@ -96,7 +98,14 @@ export default function App() {
   }
 
   function navigateOutreach() {
+    setOutreachSearch("");
     setView("outreach");
+    setSelectedCompanyId(null);
+    setReturnView(null);
+  }
+
+  function navigateMonitoring() {
+    setView("monitoring");
     setSelectedCompanyId(null);
     setReturnView(null);
   }
@@ -114,7 +123,7 @@ export default function App() {
     setReturnView(null);
   }
 
-  const backLabel = returnView === "reports"
+  const backLabel = returnView === "monitoring" ? "Signals & Research" : returnView === "reports"
     ? "Performance"
     : returnView === "shortlist"
       ? "This Week"
@@ -127,6 +136,7 @@ export default function App() {
             : "Workspace";
   const tabs = [
     { id: "shortlist", label: "This Week", action: navigateShortlist },
+    { id: "monitoring", label: "Signals & Research", action: navigateMonitoring },
     { id: "home", label: "All Companies", action: navigateHome },
     { id: "reports", label: "Performance", action: navigateReports },
     { id: "outreach", label: "Outreach Planner", action: navigateOutreach },
@@ -233,7 +243,8 @@ export default function App() {
         {view === "reports" && (
           <Reports onNavigateToCompany={(id) => navigateToCompany(id, "reports")} />
         )}
-        {view === "outreach" && <WeeklyOutreach />}
+        {view === "outreach" && <WeeklyOutreach initialSearch={outreachSearch} />}
+        {view === "monitoring" && <Monitoring onOpenCompany={(id) => navigateToCompany(id, "monitoring")} />}
         {view === "company_detail" && selectedCompanyId && (
           <div>
             <button
@@ -242,7 +253,7 @@ export default function App() {
             >
               ← Back to {backLabel}
             </button>
-            <CompanyDetail companyId={selectedCompanyId} />
+            <CompanyDetail companyId={selectedCompanyId} onOpenOutreach={(number) => { navigateOutreach(); setOutreachSearch(number); }} />
           </div>
         )}
       </main>

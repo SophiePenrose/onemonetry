@@ -71,7 +71,7 @@ Metric.propTypes = {
   tone: PropTypes.string,
 };
 
-export default function WeeklyOutreach() {
+export default function WeeklyOutreach({ initialSearch = "" }) {
   const [companies, setCompanies] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState(new Set());
   const [contacts, setContacts] = useState([]);
@@ -80,7 +80,7 @@ export default function WeeklyOutreach() {
   const [campaignName, setCampaignName] = useState("");
   const [weConnectStatus, setWeConnectStatus] = useState({ configured: false, loading: true });
   const [weConnectExport, setWeConnectExport] = useState(null);
-  const [companySearch, setCompanySearch] = useState("");
+  const [companySearch, setCompanySearch] = useState(initialSearch);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const [planning, setPlanning] = useState(false);
@@ -412,3 +412,5 @@ export default function WeeklyOutreach() {
 }
 
 export { companyDomain, companyName, turnoverValue };
+
+WeeklyOutreach.propTypes = { initialSearch: PropTypes.string };

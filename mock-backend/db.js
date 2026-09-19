@@ -92,6 +92,8 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_filings_company ON company_filings(company_number);
+  CREATE INDEX IF NOT EXISTS idx_filings_source_company_extracted_nonempty ON company_filings(source, company_number, extracted_at DESC) WHERE LENGTH(TRIM(COALESCE(raw_data, ''))) > 0;
+  CREATE INDEX IF NOT EXISTS idx_filings_company_nonempty_text ON company_filings(company_number) WHERE LENGTH(TRIM(COALESCE(raw_data, ''))) > 0;
   CREATE INDEX IF NOT EXISTS idx_filings_date ON company_filings(filing_date);
 
   CREATE TABLE IF NOT EXISTS company_groups (
