@@ -8,6 +8,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('upgrade', Path(__file__).parents[1] / 'prepare-codespace-upgrade.py')
@@ -56,9 +57,80 @@ class UpgradeTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(['git', '-C', str(self.source), *args], stderr=subprocess.DEVNULL).decode()
 
-    def prepare(self):
+    def prepare(self, **options):
         with contextlib.redirect_stdout(io.StringIO()):
-            return upgrade.prepare(self.source, self.target, self.database, self.companies, self.base / 'backups')
+            return upgrade.prepare(self.source, self.target, self.database, self.companies,
+                                   self.base / 'backups', **options)
+
+    def download_fixture(self):
+        with (self.source / '.gitignore').open('a') as stream:
+            stream.write('mock-backend/data/\nmock-backend/mock-backend/data/\n')
+        download = self.source / 'mock-backend/data/Accounts_Monthly_Data-April2026.zip'
+        download.parent.mkdir(parents=True)
+        with zipfile.ZipFile(download, 'w') as archive:
+            archive.writestr('accounts.xml', 'synthetic account data' * 10000)
+        return download
+
+    def test_download_mode_preserves_originals_and_backs_up_other_local_work(self):
+        download = self.download_fixture()
+        checksum = upgrade.digest(download)
+        extra_state = download.parent / 'import-progress.json'
+        extra_state.write_text('{"last_import": "fixture"}')
+        exports = self.source / 'exports'
+        exports.mkdir()
+        (exports / 'unfinished-yamm.csv').write_text('synthetic work')
+        before = self.git('status', '--porcelain=v1')
+        result = self.prepare(leave_downloads=True)
+        manifest = json.loads((result / 'manifest.json').read_text())
+        self.assertEqual(manifest['downloads_left_in_place'], [{
+            'path': str(download.relative_to(self.source)), 'bytes': download.stat().st_size,
+            'sha256': checksum, 'backed_up': False,
+        }])
+        self.assertEqual(upgrade.digest(download), checksum)
+        self.assertEqual(self.git('status', '--porcelain=v1'), before)
+        with tarfile.open(result / 'backup/source.tar') as archive:
+            self.assertNotIn(str(download.relative_to(self.source)), archive.getnames())
+            self.assertIn(str(extra_state.relative_to(self.source)), archive.getnames())
+            self.assertIn('exports/unfinished-yamm.csv', archive.getnames())
+            self.assertIn('.env', archive.getnames())
+        self.assertIn('original checkout', (result / 'NEXT-STEPS.txt').read_text())
+        self.assertTrue((result / 'candidate-data/onemonetry.db').is_file())
+
+    def test_default_backup_still_copies_downloads(self):
+        download = self.download_fixture()
+        result = self.prepare()
+        with tarfile.open(result / 'backup/source.tar') as archive:
+            self.assertIn(str(download.relative_to(self.source)), archive.getnames())
+        self.assertEqual(json.loads((result / 'manifest.json').read_text())['downloads_left_in_place'], [])
+
+    def test_download_filter_retains_tracked_invalid_and_unrelated_archives(self):
+        download = self.download_fixture()
+        self.git('add', '-f', str(download.relative_to(self.source)))
+        invalid = download.with_name('Accounts_Bulk_Data-2026-07-18.zip')
+        invalid.write_text('not a zip, retain for inspection')
+        other = download.with_name('my-work.zip')
+        other.write_bytes(download.read_bytes())
+        elsewhere = self.source / download.name
+        elsewhere.write_bytes(download.read_bytes())
+        files, _ = upgrade.inventory(self.source)
+        self.assertEqual(upgrade.downloads_to_leave(self.source, files, set()), [])
+
+    def test_space_gate_uses_archive_contents_selected_by_download_mode(self):
+        download = self.download_fixture()
+        files, databases = upgrade.inventory(self.source)
+        patches = len(upgrade.git(self.source, 'diff', '--binary', '--no-ext-diff', '--no-textconv'))
+        patches += len(upgrade.git(self.source, 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv'))
+        patches += len(upgrade.git(self.source, 'status', '--porcelain=v1', '-z'))
+        full = sum(upgrade.estimate_space(self.source, self.target, files, databases,
+                                         self.database, self.companies, patches).values())
+        reduced = sum(upgrade.estimate_space(self.source, self.target, [p for p in files if p != download],
+                                            databases, self.database, self.companies, patches).values())
+        self.assertLess(reduced, full)
+        with patch.object(upgrade.shutil, 'disk_usage', return_value=type('Disk', (), {'free': reduced})()):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient'):
+                self.prepare()
+            result = self.prepare(leave_downloads=True)
+        self.assertFalse((result / 'INCOMPLETE').exists())
 
     def test_preserves_work_and_recovers_wal_into_independent_candidate(self):
         result = self.prepare()

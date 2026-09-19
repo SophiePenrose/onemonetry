@@ -19,12 +19,17 @@ python3 "$upgrade_script" \
   --source "$PWD" \
   --target-ref origin/main \
   --database "$PWD/mock-backend/onemonetry.db" \
-  --companies "$PWD/mock-backend/companies.json"
+  --companies "$PWD/mock-backend/companies.json" \
+  --leave-downloads
 ```
 
 Run from `/workspaces/onemonetry`. Once this PR is merged and the helper branch is deleted, use `git fetch origin main` and `git show origin/main:scripts/prepare-codespace-upgrade.py` instead.
 
 The last line should say `PREPARED: /workspaces/onemonetry-upgrades/...`. Only share that result or an error message; do not upload the backup or paste configuration contents. Nothing is deployed by this command.
+
+The command above opts into `--leave-downloads` for the space-constrained Codespace. This leaves existing Companies House account ZIPs in their original locations instead of copying them into the source backup. It never deletes, moves or changes those files. Only valid ZIPs named `Accounts_Bulk_Data-*.zip` or `Accounts_Monthly_Data-*.zip`, directly inside `mock-backend/data/` or `mock-backend/mock-backend/data/`, and ignored/untracked by Git, qualify. Other local data, exports, code, configuration and all detected SQLite databases remain covered. Remove the option for the original full source backup.
+
+Each omitted download is recorded by relative path, size and SHA-256 in `backup/left-in-place-downloads.json` and the manifest, explicitly marked `backed_up: false`. The space report shows how much duplication is avoided. Hashing large downloads can take a few minutes. These ZIPs are **not contained in the new backup or candidate**; keep the originals, and preserve them separately before deleting the old checkout or Codespace. Do not assume historical downloads will remain available online. Final cutover review must check whether any pending import still needs them.
 
 ## What it preserves
 
@@ -32,7 +37,7 @@ Each run creates a new directory, accessible only to your account, outside the s
 
 - `backup/history.bundle`: Git history and refs, verified with Git.
 - `backup/staged.patch` and `unstaged.patch`: binary-capable patches preserving the index/worktree distinction.
-- `backup/source.tar`: current source, untracked and ignored local files, including local configuration. Excludes Git internals, dependency directories, cache directories, frontend build output, and SQLite files/sidecars.
+- `backup/source.tar`: current source, untracked and ignored local files, including local configuration. Excludes Git internals, dependency directories, cache directories, frontend build output, SQLite files/sidecars, and the explicitly listed account downloads when `--leave-downloads` is used.
 - `backup/database-*.sqlite`: independent online snapshots of SQLite files found in the checkout, plus the explicitly selected database. Each passes `PRAGMA quick_check` and has a SHA-256 checksum.
 - `backup/companies.json`: checked copy of the explicitly selected companies file.
 - `candidate/`: an independent Git clone, detached at the selected merged commit. Unfinished old work is archived for reconciliation; it is not silently applied to the new version.

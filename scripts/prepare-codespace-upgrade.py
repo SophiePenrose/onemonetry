@@ -5,15 +5,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
 import tarfile
 import tempfile
 import time
+import zipfile
 
 EXCLUDED_DIRS = {'.git', 'node_modules', '__pycache__', '.cache'}
 EXCLUDED_PATHS = {'frontend/dist'}
+DOWNLOAD_DIRS = {'mock-backend/data', 'mock-backend/mock-backend/data'}
+DOWNLOAD_NAME = re.compile(r'Accounts_(?:Bulk|Monthly)_Data-[A-Za-z0-9-]+\.zip')
 
 
 def git(source, *args):
@@ -57,6 +61,21 @@ def inventory(source):
             (databases if is_database else files).append(path)
     companions = {Path(str(db) + suffix) for db in databases for suffix in ('-wal', '-shm', '-journal')}
     return sorted(set(files) - companions), sorted(databases)
+
+
+def downloads_to_leave(source, files, protected):
+    # Only ignored, untracked CH account ZIPs in the two known download folders.
+    # Never omit whole directories: they can contain other state or user work.
+    ignored = set(git(source, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z',
+                      '--', *sorted(DOWNLOAD_DIRS)).split(b'\0'))
+    selected = []
+    for path in files:
+        relative = path.relative_to(source)
+        if (path not in protected and relative.parent.as_posix() in DOWNLOAD_DIRS
+                and DOWNLOAD_NAME.fullmatch(path.name)
+                and os.fsencode(relative.as_posix()) in ignored and zipfile.is_zipfile(path)):
+            selected.append(path)
+    return selected
 
 
 def snapshot_database(source, target, timeout=300):
@@ -129,7 +148,7 @@ def space_report(output_base, components):
     return available, required
 
 
-def prepare(source, target_ref, database, companies, output_base, check_space=False):
+def prepare(source, target_ref, database, companies, output_base, check_space=False, leave_downloads=False):
     source, database, companies = (p.resolve(strict=True) for p in (source, database, companies))
     output_base = output_base.resolve()
     if output_base == source or source in output_base.parents:
@@ -154,7 +173,13 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
     files, databases = inventory(source)
     databases = sorted(set(databases + [database]))
     signatures = {p: signature(p) for p in files}
-    components = estimate_space(source, target, files, databases, database, companies,
+    left_in_place = downloads_to_leave(source, files, {database, companies}) if leave_downloads else []
+    archive_files = sorted(set(files) - set(left_in_place))
+    if left_in_place:
+        size = sum(p.stat().st_size for p in left_in_place)
+        print(f'LEAVING IN PLACE: {len(left_in_place)} account download ZIPs ({size / (1024 ** 2):.1f} MiB). '
+              'Their contents will not be included in this backup; originals are not modified.', flush=True)
+    components = estimate_space(source, target, archive_files, databases, database, companies,
                                 len(index_diff) + len(working_diff) + len(status))
     available, required = space_report(output_base, components)
     if check_space:
@@ -174,9 +199,18 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
     (backups / 'staged.patch').write_bytes(index_diff)
     (backups / 'unstaged.patch').write_bytes(working_diff)
     (backups / 'git-status.z').write_bytes(status)
+    download_records = []
+    for index, path in enumerate(left_in_place):
+        print(f'Recording checksum for download left in place {index + 1}/{len(left_in_place)}.', flush=True)
+        download_records.append({'path': str(path.relative_to(source)), 'bytes': signatures[path][0],
+                                 'sha256': digest(path), 'backed_up': False})
+        if signatures[path] != signature(path):
+            raise RuntimeError('A download changed while recording its checksum; pause downloads and retry.')
+    if download_records:
+        (backups / 'left-in-place-downloads.json').write_text(json.dumps(download_records, indent=2) + '\n')
     print('Saving source files and unfinished work (including private local configuration).', flush=True)
     with tarfile.open(backups / 'source.tar', 'w') as archive:
-        for path in files:
+        for path in archive_files:
             archive.add(path, arcname=str(path.relative_to(source)), recursive=False)
             if signatures[path] != signature(path):
                 raise RuntimeError('Source changed during backup; pause edits and retry.')
@@ -214,6 +248,7 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
         'target_commit': target, 'candidate': str(candidate),
         'database_path': str(data / 'onemonetry.db'), 'companies_path': str(data / 'companies.json'),
         'database_snapshots': database_records,
+        'downloads_left_in_place': download_records,
         'backup_sha256': {p.name: digest(p) for p in backups.iterdir() if p.is_file()},
         'excluded_directories': sorted(EXCLUDED_DIRS | EXCLUDED_PATHS),
         'credentials': 'Local files archived privately; process environment secrets are not exported.',
@@ -231,6 +266,9 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
         'Cutover requires pausing live writes, a fresh snapshot, and a separate validation step.\n'
         'Keep backup private: it can contain API keys, contact data and authentication records.\n'
         'This backup is on the same disk. Copy it to protected off-machine storage before deleting the Codespace.\n'
+        + ('Some downloaded ZIPs remain only in the original checkout, listed in left-in-place-downloads.json.\n'
+           'Preserve those originals separately before deleting the old checkout or Codespace.\n'
+           if download_records else '')
     )
     (destination / 'INCOMPLETE').unlink()
     print(f'PREPARED: {destination}\nLive app unchanged. No integrations called or services started.', flush=True)
@@ -245,10 +283,13 @@ def main():
     parser.add_argument('--companies', type=Path, required=True, help='Actual live companies JSON path')
     parser.add_argument('--output-base', type=Path, help='Private backup parent outside the repo')
     parser.add_argument('--check-space', action='store_true', help='Only report space needs; do not create a backup or candidate')
+    parser.add_argument('--leave-downloads', action='store_true',
+                        help='Leave ignored CH account ZIPs in place and record checksums instead of duplicating them')
     args = parser.parse_args()
     try:
         prepare(args.source, args.target_ref, args.database, args.companies,
-                args.output_base or args.source.resolve().parent / 'onemonetry-upgrades', args.check_space)
+                args.output_base or args.source.resolve().parent / 'onemonetry-upgrades',
+                args.check_space, args.leave_downloads)
     except RuntimeError as error:
         print(f'Preparation stopped: {error}', flush=True)
         print('Live files were not changed. Any INCOMPLETE folder must not be used.', flush=True)
