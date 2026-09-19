@@ -14,6 +14,7 @@ import EnrichmentSignalsPanel from "../components/EnrichmentSignalsPanel";
 import GeminiYammPanel from "../components/GeminiYammPanel";
 import StakeholderAlertsPanel from "../components/StakeholderAlertsPanel";
 import { DetailSkeleton } from "../components/LoadingSkeleton";
+import Monitoring from "./Monitoring";
 
 const EMPTY_ARRAY = [];
 
@@ -129,7 +130,10 @@ export function selectCompetitorContextMotion(allMotionScores = []) {
   }, null);
 }
 
-export default function CompanyDetail({ companyId }) {
+export default function CompanyDetail({ companyId, onOpenOutreach }) {
+  const [showMonitoring, setShowMonitoring] = useState(false);
+  const [shortlistError, setShortlistError] = useState("");
+  const [shortlisting, setShortlisting] = useState(false);
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -138,6 +142,8 @@ export default function CompanyDetail({ companyId }) {
   const [transitions, setTransitions] = useState({});
   const companyRequestRef = useRef(0);
   const companyPendingRequestsRef = useRef(0);
+
+  useEffect(() => { setShowMonitoring(false); setShortlistError(""); }, [companyId]);
 
   useEffect(() => {
     fetch("/api/workflow-states")
@@ -297,9 +303,22 @@ export default function CompanyDetail({ companyId }) {
   if (error) return <div style={{ color: "#c0392b" }}>{error}</div>;
   if (!company) return null;
 
+  async function addToShortlist() {
+    setShortlisting(true); setShortlistError("");
+    try {
+      const response = await fetch(`/api/monitoring/companies/${encodeURIComponent(company.company_number)}/shortlist`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(({ product_fit_research_required: "Complete the product-fit research first. The company must clear the existing fit gate.", company_outside_turnover_scope: "Verify turnover against the configured prospecting range (minimum £30m).", company_suppressed: "This company is restricted from outreach. Review its workflow and exclusions." })[body.error] || "Could not add this company to the shortlist.");
+      loadCompanyDetail();
+    } catch (err) { setShortlistError(err.message); } finally { setShortlisting(false); }
+  }
+
   return (
     <div>
-      <div style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+      <nav className="company-section-nav" aria-label="Company sections">
+        <a href="#company-overview">Overview & fit</a><a href="#company-changes">Changes</a><a href="#company-research">Research & evidence</a><a href="#company-people">People</a><a href="#company-outreach">Outreach</a><a href="#company-history">History</a>
+      </nav>
+      <div id="company-overview" style={{ background: "#fff", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 22 }}>{company.name}</h2>
@@ -380,6 +399,14 @@ export default function CompanyDetail({ companyId }) {
           </Field>
         )}
       </div>
+
+      {company.monitoring_research_only && <section className="monitoring-caution"><h3>Research candidate</h3><p>This company is being investigated. It is outside the weekly shortlist until turnover and product fit have been checked.</p><button disabled={shortlisting} onClick={addToShortlist}>{shortlisting ? "Checking…" : "Check fit and add to shortlist"}</button>{shortlistError && <p role="alert">{shortlistError}</p>}</section>}
+      <section id="company-changes" className="company-monitoring-section">
+        <h3>What changed at this company?</h3>
+        {company.monitoring_context && <p>{company.monitoring_context.ultimate_parent_name ? `Parent: ${company.monitoring_context.ultimate_parent_name}. ` : ""}Monitoring snapshot captured {formatOwnershipTimestamp(company.monitoring_context.fetched_at)}. Open the live view for the latest alerts and reviews.</p>}
+        <button aria-expanded={showMonitoring} onClick={() => setShowMonitoring(value => !value)}>{showMonitoring ? "Hide monitoring evidence" : "Show monitoring evidence"}</button>
+        {showMonitoring && <Monitoring key={company.company_number} compact initialSearch={company.company_number} />}
+      </section>
 
       {company.propensity && (
         <div style={{ background: "#fff", borderRadius: 8, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.08)", marginTop: 16 }}>
@@ -504,7 +531,7 @@ export default function CompanyDetail({ companyId }) {
         )}
       </div>
 
-      <div className="detail-two-column">
+      <div id="company-people" className="detail-two-column">
         <CompetitorPanel
           competitors={company.competitors}
           companyId={companyId}
@@ -529,6 +556,7 @@ export default function CompanyDetail({ companyId }) {
 
       <MerchantSpendPanel merchantSpend={company.merchant_spend} />
 
+      <div id="company-research" />
       <CompanyAnalysis
         companyNumber={company.company_number || companyId.replace("ch-", "")}
         initialAnalysis={company.analysis}
@@ -547,6 +575,8 @@ export default function CompanyDetail({ companyId }) {
         companyDomain={company.company_domain || company.company_website || company.website || company.domain || ""}
       />
 
+      <div id="company-outreach" />
+      {onOpenOutreach && <section className="company-monitoring-section"><h3>Plan contact across channels</h3><p>Review CRM clearance and contacts in the weekly planner. Opening it does not select or approve this company.</p><button onClick={() => onOpenOutreach(company.company_number)}>Open weekly contact planner</button></section>}
       <GeminiYammPanel
         companyId={companyId}
         companyNumber={company.company_number}
@@ -560,6 +590,7 @@ export default function CompanyDetail({ companyId }) {
         motions={allMotionScores}
       />
 
+      <div id="company-history" />
       <NotesPanel companyId={companyId} initialNotes={company.notes} />
 
       <CadenceLog cadenceHistory={cadenceHistory} companyId={companyId} onEntryAdded={refreshCompany} />
@@ -577,4 +608,5 @@ export default function CompanyDetail({ companyId }) {
 
 CompanyDetail.propTypes = {
   companyId: PropTypes.string.isRequired,
+  onOpenOutreach: PropTypes.func,
 };

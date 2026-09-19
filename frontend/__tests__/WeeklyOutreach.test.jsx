@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createOutreachDraftClient } from "../hooks/useOutreachDraft";
 import WeeklyOutreach, { companyDomain, turnoverValue } from "../pages/WeeklyOutreach";
 
 function jsonResponse(data, ok = true) {
@@ -20,6 +21,10 @@ describe("WeeklyOutreach", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((url, options = {}) => {
+      if (url === "/api/outreach/draft") {
+        if (options.method === "PUT") return jsonResponse({ revision: JSON.parse(options.body).expected_revision + 1 });
+        return jsonResponse({ revision: 0, week_start: "2026-09-14", draft: { selected_company_numbers: [], contacts: [], selected_contact_keys: [], campaign_name: "" } });
+      }
       if (String(url).startsWith("/api/unified-shortlist")) {
         return jsonResponse({ companies: [
           { id: "company-1", company_number: "01234567", name: "Example Ltd", website: "https://example.com", turnover: 50000000, priority_score: 92 },
@@ -59,7 +64,7 @@ describe("WeeklyOutreach", () => {
       throw new Error(`Unexpected fetch: ${url} ${options.method || "GET"}`);
     });
 
-    render(<WeeklyOutreach />);
+    render(<WeeklyOutreach draftClient={createOutreachDraftClient()} />);
     expect(await screen.findByText("Example Ltd")).toBeInTheDocument();
     expect(screen.queryByText("Too Small Ltd")).not.toBeInTheDocument();
 
@@ -85,6 +90,6 @@ describe("WeeklyOutreach", () => {
     expect(await screen.findByText("Added to Weekly Finance Leaders")).toBeInTheDocument();
     const importCall = fetchMock.mock.calls.find(([url]) => url === "/api/linkedin/we-connect/import");
     expect(JSON.parse(importCall[1].body)).toMatchObject({ approved: true, campaign_name: "Weekly Finance Leaders" });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(3));
   });
 });

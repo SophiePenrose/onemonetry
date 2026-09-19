@@ -69,7 +69,7 @@ import { generateFullSequence, getEmailLlmRuntimeInfo } from "./email-generator.
 import { validateEmail, isCompanyExcluded } from "./email-qc.js";
 import { detectTriggers, selectArchetype, ARCHETYPES } from "./email-archetypes.js";
 import { exportSequenceForYAMM, exportMultipleSequencesForYAMM, generateCSV, generateGoogleSheetsJSON, pauseSequenceOnReply, resumeSequence } from "./yamm-export.js";
-import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession } from "./auth.js";
+import { authMiddleware, isAuthConfigured, setupAuth, verifyPassword, createSession, destroySession, validateSession } from "./auth.js";
 import { scoreAllStakeholders, getOutreachReadiness, checkDuplicateContact, registerActiveContact, getActiveContactsForCompany } from "./stakeholder-scoring.js";
 import { runMigrations } from "./migrations.js";
 import {
@@ -164,6 +164,10 @@ import {
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 import { validateJsonSchema } from "./json-schema-lite.js";
 import { supabaseReadModel } from "./supabase-read-model.js";
+import database from "./db.js";
+import { createOutreachDraftRouter, createOutreachDraftStore } from "./outreach-drafts.js";
+import { createMonitoringRouter } from "./monitoring-routes.js";
+import { createMonitoringResearch } from "./monitoring-research.js";
 import {
   apolloContactSource,
   buildLinkedInFallbackRequests,
@@ -214,6 +218,7 @@ app.post("/api/linkedin/we-connect/webhook", (req, res) => {
 });
 
 app.use(authMiddleware);
+app.use("/api/outreach/draft", createOutreachDraftRouter({ store: createOutreachDraftStore({ db: database }) }));
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
 const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(
@@ -386,6 +391,20 @@ app.get("/api/supabase/alerts", async (req, res) => {
     sendSupabaseReadError(res, error);
   }
 });
+
+app.use("/api/monitoring", createMonitoringRouter({
+  ...createMonitoringResearch({
+    normalizeCompanyNumber, loadCompanies, getMonitoredCompany, getCompanyState,
+    isSuppressed, getStoredScore, upsertMonitoredCompany, setSetting, getSetting,
+    getTurnoverThreshold, getTurnoverMaxThreshold,
+  }),
+  authenticateReviewer(req) {
+    const email = String(process.env.MONITORING_REVIEWER_EMAIL || "").trim();
+    // Never accept a reviewer from the request body or an unauthenticated development session.
+    if (!email || !validateSession(req.headers["x-auth-token"] || req.cookies?.auth_token)) return null;
+    return { id: "onemonetry-owner", email };
+  },
+}));
 const LIGHTWEIGHT_RUNTIME = ["1", "true", "yes", "on"].includes(
   String(process.env.LIGHTWEIGHT_RUNTIME || "").trim().toLowerCase()
 );
@@ -7076,7 +7095,7 @@ app.get("/api/company/:id", async (req, res) => {
           upsertCompanyChargeSummary(companyNumber, chargeSummary, "companies_house_api");
         }
       }
-      if (!rawAnalysis && !isClosedWonCompanyNumber(companyNumber)) {
+      if (!rawAnalysis && monitored.source !== "supabase_monitoring" && !isClosedWonCompanyNumber(companyNumber)) {
         enqueueCompanyForAnalysis({ company_number: companyNumber, company_name: monitored.company_name }, "detail_view_auto_seed");
         maybeKickShortlistAutoAnalysis(2);
       }
@@ -7103,7 +7122,7 @@ app.get("/api/company/:id", async (req, res) => {
       const cadenceHistory = getCadenceLog(profileId);
       const ownershipStructure = getSetting(`ownership_${companyNumber}`, null);
       const sicCodes = getStoredSicCodes(companyNumber);
-      const baseScore = score?.composite_score ?? (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / getTurnoverMaxThreshold(), 1) * 0.7 + 0.3) * 100) / 100 : 0);
+      const baseScore = score?.composite_score ?? (monitored.source === "supabase_monitoring" ? null : (monitored.latest_turnover ? Math.round((Math.min(monitored.latest_turnover / getTurnoverMaxThreshold(), 1) * 0.7 + 0.3) * 100) / 100 : 0));
 
       return res.json({
         company: {
@@ -7129,6 +7148,8 @@ app.get("/api/company/:id", async (req, res) => {
           workflow_history: ws.history || [],
           below_threshold: monitored.below_threshold === 1,
           source: monitored.source,
+          monitoring_research_only: monitored.source === "supabase_monitoring" && monitored.status === "research",
+          monitoring_context: getSetting(`monitoring_context_${companyNumber}`, null),
           latest_filing_date: filingsForResponse[0]?.filing_date || null,
           filings: filingsForResponse.slice(0, 120).map((f) => ({
             date: f.filing_date,
@@ -13644,6 +13665,7 @@ app.post("/api/score/batch-llm", async (req, res) => {
 const frontendDist = path.join(REPO_ROOT, "frontend", "dist");
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
+  app.use("/api", (_req, res) => res.status(404).json({ error: "api_route_not_found" }));
   app.get("*", (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
