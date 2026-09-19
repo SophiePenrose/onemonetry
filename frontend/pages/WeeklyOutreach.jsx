@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import useOutreachDraft from "../hooks/useOutreachDraft";
 
 const LINKEDIN_TARGET = 90;
 const COMPANY_REVIEW_TARGET = 35;
@@ -71,13 +72,22 @@ Metric.propTypes = {
   tone: PropTypes.string,
 };
 
-export default function WeeklyOutreach({ initialSearch = "" }) {
+export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
   const [companies, setCompanies] = useState([]);
-  const [selectedCompanies, setSelectedCompanies] = useState(new Set());
-  const [contacts, setContacts] = useState([]);
-  const [selectedContacts, setSelectedContacts] = useState(new Set());
+  const { draft, status: draftStatus, loaded: draftLoaded, error: draftError, week_start: draftWeek, updateDraft, retrySave, reloadDraft } = useOutreachDraft(draftClient);
+  const selectedCompanies = useMemo(() => new Set(draft.selected_company_numbers), [draft.selected_company_numbers]);
+  const selectedContacts = useMemo(() => new Set(draft.selected_contact_keys), [draft.selected_contact_keys]);
+  const contacts = draft.contacts;
+  const campaignName = draft.campaign_name;
+  const draftBlocked = !draftLoaded || draftStatus === "conflict" || draftStatus === "loading";
+  function setSelectedCompanies(updater) {
+    updateDraft(current => ({ ...current, selected_company_numbers: [...(typeof updater === "function" ? updater(new Set(current.selected_company_numbers)) : updater)] }));
+  }
+  function setSelectedContacts(updater) {
+    updateDraft(current => ({ ...current, selected_contact_keys: [...(typeof updater === "function" ? updater(new Set(current.selected_contact_keys)) : updater)] }));
+  }
+  function setCampaignName(value) { updateDraft(current => ({ ...current, campaign_name: value })); }
   const [plan, setPlan] = useState(null);
-  const [campaignName, setCampaignName] = useState("");
   const [weConnectStatus, setWeConnectStatus] = useState({ configured: false, loading: true });
   const [weConnectExport, setWeConnectExport] = useState(null);
   const [companySearch, setCompanySearch] = useState(initialSearch);
@@ -114,6 +124,8 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => { setPlan(null); setWeConnectExport(null); }, [draft.selected_company_numbers, draft.selected_contact_keys, draft.contacts]);
+
   const filteredCompanies = useMemo(() => {
     const query = companySearch.trim().toLowerCase();
     const rows = companies.filter((company) => {
@@ -126,13 +138,18 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
   }, [companies, companySearch]);
 
   const approvedCompanies = useMemo(
-    () => companies.filter((company) => selectedCompanies.has(companyNumber(company))),
+    () => companies.filter((company) => selectedCompanies.has(companyNumber(company)) && turnoverValue(company) >= 30000000),
     [companies, selectedCompanies]
   );
 
   const approvedContacts = useMemo(
-    () => contacts.filter((contact, index) => selectedContacts.has(contactKey(contact, index))),
-    [contacts, selectedContacts]
+    () => contacts.filter((contact, index) => selectedContacts.has(contactKey(contact, index))
+      && approvedCompanies.some(company => companyNumber(company) === contact.company_number))
+      .map(contact => {
+        const company = approvedCompanies.find(row => companyNumber(row) === contact.company_number);
+        return { ...contact, company_turnover_gbp: turnoverValue(company), crm_approved: true };
+      }),
+    [contacts, selectedContacts, approvedCompanies]
   );
 
   function toggleCompany(company) {
@@ -191,8 +208,8 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
         priority_score: Number(company?.priority_score || company?.composite_score || 0),
         crm_approved: true,
       })));
-      setContacts(discovered);
-      setSelectedContacts(new Set(discovered.map((contact, index) => contactKey(contact, index))));
+      updateDraft(current => ({ ...current, contacts: discovered,
+        selected_contact_keys: discovered.map((contact, index) => contactKey(contact, index)) }));
       setDiscoveryNotes(results.map((result) => result.note).filter(Boolean));
       if (discovered.length === 0) setError("Apollo returned no contacts for the selected companies. Check the recorded domains or widen the role search later.");
     } catch (discoveryError) {
@@ -305,12 +322,20 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
         <div className="outreach-capacity-pill"><strong>90</strong><span>automated LinkedIn slots</span><small>10 kept for manual outreach</small></div>
       </header>
 
+      <div className="outreach-alert" role="status">
+        {draftStatus === "loading" ? "Loading weekly draft…" : draftStatus === "saving" ? "Saving draft…" : draftStatus === "saved" ? `Draft saved · week of ${draftWeek}` : "Draft needs attention"}
+        <span> · Saved choices do not enrol contacts. Generate a fresh plan before confirming an import.</span>
+      </div>
+      {draftError && <div className="outreach-alert outreach-alert-error" role="alert">{draftError} {draftStatus === "save_error"
+        ? <button type="button" onClick={retrySave}>Retry save</button>
+        : <button type="button" onClick={reloadDraft}>Reload saved draft</button>}</div>}
+      <fieldset disabled={draftBlocked || discovering || planning || exporting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       {error && <div className="outreach-alert outreach-alert-error" role="alert">{error}</div>}
       {discoveryNotes.length > 0 && <div className="outreach-alert">{discoveryNotes.slice(0, 5).join(" ")}</div>}
 
       <section className="outreach-step-card">
         <div className="outreach-step-heading">
-          <div><span>1</span><div><h2>CRM-clear the companies</h2><p>Selecting a company records your manual CRM clearance for this planning preview.</p></div></div>
+          <div><span>1</span><div><h2>CRM-clear the companies</h2><p>Select after checking the CRM. Choices are saved for this week; confirmed turnover of at least £30m is required to include contacts.</p></div></div>
           <button type="button" className="outreach-secondary-button" onClick={selectSuggestedCompanies} disabled={loadingCompanies}>Select top {COMPANY_REVIEW_TARGET}</button>
         </div>
         <div className="outreach-toolbar">
@@ -351,10 +376,11 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
               <thead><tr><th>Include</th><th>Person</th><th>Company</th><th>Role</th><th>Channels found</th></tr></thead>
               <tbody>{contacts.map((contact, index) => {
                 const key = contactKey(contact, index);
+                const companyIncluded = approvedCompanies.some(company => companyNumber(company) === contact.company_number);
                 return <tr key={key}>
-                  <td><input aria-label={`Include ${contact.full_name}`} type="checkbox" checked={selectedContacts.has(key)} onChange={() => toggleContact(contact, index)} /></td>
+                  <td><input aria-label={`Include ${contact.full_name}`} type="checkbox" checked={companyIncluded && selectedContacts.has(key)} disabled={!companyIncluded} onChange={() => toggleContact(contact, index)} /></td>
                   <td><strong>{contact.full_name || "Unnamed contact"}</strong></td>
-                  <td>{contact.company_name}</td>
+                  <td>{contact.company_name}{!companyIncluded && <small className="outreach-table-sub">Select an eligible, CRM-cleared company to include this contact.</small>}</td>
                   <td>{contact.role || "Role unavailable"}</td>
                   <td><div className="outreach-channel-list"><span className={contact.linkedin_url ? "available" : "missing"}>LinkedIn</span><span className={contact.email ? "available" : "missing"}>Email</span><span className={contact.phone ? "available" : "missing"}>Phone</span></div></td>
                 </tr>;
@@ -368,7 +394,7 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
       </section>
 
       <section className="outreach-step-card">
-        <div className="outreach-step-heading"><div><span>3</span><div><h2>Approval queue</h2><p>Preview only. No LinkedIn, email or phone action is sent from this screen.</p></div></div>{plan && <strong>{plan.summary?.active_companies_this_week || 0} active companies</strong>}</div>
+        <div className="outreach-step-heading"><div><span>3</span><div><h2>Approval queue</h2><p>Review the allocation, then explicitly confirm any We-Connect import below.</p></div></div>{plan && <strong>{plan.summary?.active_companies_this_week || 0} active companies</strong>}</div>
         {!plan ? <div className="outreach-empty">Generate the weekly plan to see capacity and channel assignments.</div> : <>
           <div className="outreach-metrics">
             <Metric value={plan.summary?.linkedin_automated_selected || 0} label="LinkedIn selected" detail="of 90 automated slots" />
@@ -407,10 +433,11 @@ export default function WeeklyOutreach({ initialSearch = "" }) {
           <div className="outreach-safety-note"><strong>Human approval stays mandatory.</strong> {weConnectStatus.configured ? "Nothing is added until you press the confirmation button." : "Direct API import is not configured yet, so use the manual fallback."} We-Connect activity can flow back through the protected webhook.</div>
         </>}
       </section>
+      </fieldset>
     </div>
   );
 }
 
 export { companyDomain, companyName, turnoverValue };
 
-WeeklyOutreach.propTypes = { initialSearch: PropTypes.string };
+WeeklyOutreach.propTypes = { initialSearch: PropTypes.string, draftClient: PropTypes.object };

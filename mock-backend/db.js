@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { sqliteUtcTimestamp } from "./utc-timestamp.js";
 import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -1804,7 +1805,7 @@ const stmtCompleteGeminiHandoffRequest = db.prepare(`
     response_payload_sha256 = ?,
     response_id = ?,
     completed_at = ?,
-    updated_at = datetime('now')
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE request_id = ?
 `);
 
@@ -1813,8 +1814,8 @@ const stmtIncrementGeminiHandoffRetry = db.prepare(`
   SET
     retry_count = retry_count + 1,
     status = 'retry_requested',
-    last_retry_requested_at = datetime('now'),
-    updated_at = datetime('now')
+    last_retry_requested_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE request_id = ?
 `);
 
@@ -1826,7 +1827,7 @@ const stmtDeleteGeminiApprovalsByRequest = db.prepare(`
 const stmtIncrementGeminiApprovalRevision = db.prepare(`
   UPDATE gemini_handoff_requests
   SET approvals_revision = approvals_revision + 1,
-      updated_at = datetime('now')
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE request_id = ?
     AND approvals_revision = ?
 `);
@@ -1908,17 +1909,17 @@ function hydrateGeminiHandoffRequest(row) {
     request_id: row.request_id,
     contract_version: row.contract_version,
     status: row.status,
-    accepted_at: row.accepted_at,
+    accepted_at: sqliteUtcTimestamp(row.accepted_at),
     approvals_revision: Number(row.approvals_revision || 0),
     retry_count: Number(row.retry_count || 0),
-    last_retry_requested_at: row.last_retry_requested_at,
+    last_retry_requested_at: sqliteUtcTimestamp(row.last_retry_requested_at),
     request: parseJsonText(row.request_payload, {}),
     request_payload_sha256: row.request_payload_sha256 || null,
     response: parseJsonText(row.response_payload, null),
     response_payload_sha256: row.response_payload_sha256 || null,
     response_id: row.response_id,
-    completed_at: row.completed_at,
-    updated_at: row.updated_at,
+    completed_at: sqliteUtcTimestamp(row.completed_at),
+    updated_at: sqliteUtcTimestamp(row.updated_at),
   };
 }
 
@@ -2237,15 +2238,15 @@ export function listGeminiHandoffRequests(filters = {}) {
     request_id: row.request_id,
     contract_version: row.contract_version,
     status: row.status,
-    accepted_at: row.accepted_at,
+    accepted_at: sqliteUtcTimestamp(row.accepted_at),
     approvals_revision: Number(row.approvals_revision || 0),
     retry_count: Number(row.retry_count || 0),
-    last_retry_requested_at: row.last_retry_requested_at || null,
+    last_retry_requested_at: sqliteUtcTimestamp(row.last_retry_requested_at),
     request_payload_sha256: row.request_payload_sha256 || null,
     response_payload_sha256: row.response_payload_sha256 || null,
     response_id: row.response_id || null,
-    completed_at: row.completed_at || null,
-    updated_at: row.updated_at,
+    completed_at: sqliteUtcTimestamp(row.completed_at),
+    updated_at: sqliteUtcTimestamp(row.updated_at),
     event_count: Number(row.event_count || 0),
     approval_count: Number(row.approval_count || 0),
   }));

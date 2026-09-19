@@ -164,6 +164,8 @@ import {
 import { LAYER_NAMES, DEFAULT_SEGMENT_WEIGHTS, DEFAULT_PROPENSITY_WEIGHT } from "./scoring-weights.js";
 import { validateJsonSchema } from "./json-schema-lite.js";
 import { supabaseReadModel } from "./supabase-read-model.js";
+import database from "./db.js";
+import { createOutreachDraftRouter, createOutreachDraftStore } from "./outreach-drafts.js";
 import { createMonitoringRouter } from "./monitoring-routes.js";
 import { createMonitoringResearch } from "./monitoring-research.js";
 import {
@@ -216,6 +218,7 @@ app.post("/api/linkedin/we-connect/webhook", (req, res) => {
 });
 
 app.use(authMiddleware);
+app.use("/api/outreach/draft", createOutreachDraftRouter({ store: createOutreachDraftStore({ db: database }) }));
 const parsedPort = Number.parseInt(process.env.PORT || "8000", 10);
 const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8000;
 const IGNORE_RUNTIME_SIGTERM = ["1", "true", "yes", "on"].includes(

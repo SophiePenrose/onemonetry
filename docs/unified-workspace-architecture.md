@@ -50,6 +50,9 @@ Monitoring review status is distinct from company workflow and contact/channel a
 - Explicit promotion to the shortlist requires the existing full product-fit gate, configured turnover range and existing suppression checks. This does not approve CRM clearance or outreach.
 - Company navigation connects changes, product-fit evidence, people, emails and history. Opening the weekly planner from a company carries its search context but does not auto-select it.
 - The two partial filing indexes previously verified during Codespace recovery are now in versioned schema initialization. This preserves the fix for nonempty-filing lookups; the first creation on the large live database can take time.
+- Weekly outreach drafts now persist in the existing SQLite database by UK planning week. Company choices, reviewed contacts and campaign name autosave with a server revision; conflicting tab edits stop instead of overwriting. Saved drafts preserve opt-outs but exclude provider payloads, generated plans, export results and approval flags. Navigation can finish an in-flight save; failed saves are visible and retryable. Reopening a new week loads an empty draft.
+- Restored contacts are included only while their company remains selected in the current shortlist with confirmed turnover of at least £30m. Removing a company invalidates the plan and excludes its contacts. Draft restoration never calls discovery, enrichment or campaign-import APIs.
+- Gemini handoff retry/update timestamps now carry explicit UTC. Legacy SQLite UTC strings are normalized on detail/list responses, fixing date filters and retry cooldowns in non-UTC server timezones without weakening the checks.
 - Unknown `/api` requests return JSON 404 instead of the frontend HTML fallback when serving the built app, avoiding false-positive integration health checks.
 
 ## How useful insights should be assembled
@@ -75,7 +78,7 @@ Facts, commercial inferences and missing information must remain separate. Do no
 | `computeProductFitGate` is a multiplier of .35/.6/.8/1, not a binary eligibility gate | The written product-fit principle is stronger than some legacy ranking paths | Calibrate a shared eligibility decision using reviewed examples; no weight change in this PR |
 | Some legacy company GETs and shortlist reads enqueue analysis; fallback detail score can use turnover alone | Browsing can trigger work and make thin evidence look scored | New monitoring path avoids both. Separate all remaining read and job-trigger paths in a dedicated change |
 | Existing SQLite and Supabase contain overlapping company facts but different histories | Blind migration could overwrite better facts or lose notes/suppression | Keep field-level provenance, explicit conflicts, canonical company-number mapping and rollback checks before migration |
-| `WeeklyOutreach` keeps contact selection/CRM clearance in React state | Refresh/navigation loses draft plans; approval is not yet a durable company-level ledger | Persist draft plans and dated CRM clearance, then enforce the same server-side decision across discovery, export and enrolment |
+| Weekly choices now persist, but CRM clearance is still a planning choice rather than an authoritative ledger | Navigation/refresh retain review work; a saved choice alone cannot authorize unattended sending | Add dated, attributable CRM clearance and enforce the same server-side decision across discovery, export and enrolment |
 | Unknown turnover can reach legacy planner previews; client-supplied approval data is used in older routes | UI checks alone cannot be the final outreach gate | Consolidate authoritative eligibility and suppression at every send/export boundary |
 | We-Connect webhook records stop signals but generic events do not enforce cross-channel cancellation everywhere | A recorded reply is not the same as stopping all future actions | Shared contact stop-state and idempotent executor before unattended multi-channel operation |
 | Customer/applicant matching and research exist in Supabase but were absent from the published frontend | Relevant enquiry lines were effectively hidden | Now visible in the same workspace; next add verified person/appointment linkage and confidence review |
@@ -92,17 +95,25 @@ No permanent Node hosting account has been established in this session. The forw
 
 Release sequence:
 
-1. Review this GitHub PR and resolve the two independently reproduced baseline API failures before treating CI as green.
+1. Review this GitHub PR and verify the checks on its latest commit. The two reproduced baseline API failures are fixed here; local test results do not substitute for GitHub checks.
 2. Preserve/back up the existing Codespace's uncommitted work and database before combining its older working branch with main. Do not overwrite its database or silently discard its Gemini/YAMM work.
 3. Configure one of the supported backend source connections in the selected runtime. GitHub Actions secrets alone are not runtime environment variables. Never copy secrets into the React bundle or commit them.
 4. Verify the four monitoring views from that runtime, company-number deduplication, existing notes/scores, session-protected review and a small research handoff. Use mocked/isolated writes for automated tests.
 5. Configure authenticated persistent hosting, restore the verified live database, and make that origin the everyday app. Keep the existing private dashboard available until parity is accepted.
-6. Persist planning/approval state and reconcile reply stops before enabling unattended outreach. No outreach is sent as part of this integration.
+6. Add an authoritative approval ledger and reconcile reply stops before enabling unattended outreach. Weekly draft persistence is implemented; it is not a sending approval ledger. No outreach is sent as part of this integration.
 
 ## Verification record
 
 - Current Supabase RPCs inspected and called read-only; no alert was qualified, no candidate enrolled and no provider credits consumed.
-- Frontend production build and all 84 frontend tests passed; final focused rerun results are recorded in the PR.
-- Full backend suite: 243 passed, two Gemini handoff tests failed. Both failures were independently reproduced by running the original API suite on unchanged main (`e30d2a6`). They concern handoff-request pagination/status filtering and retry-429 cooldown handling. Additional focused integration tests were added after that full run.
+- Frontend production build and all 94 frontend tests passed, including draft restoration, rapid edits, failed-save recovery, competing tabs, and removal/revalidation of companies.
+- The two Gemini failures from unchanged main (`e30d2a6`) were traced to timezone-free SQLite timestamps. After the fix, all 84 API tests pass with `TZ=Europe/Vienna`; legacy-date regression checks also cover UTC and New York. The full backend suite now passes all 259 tests. Draft tests cover database restart, preserved opt-outs, stripped approvals, write conflicts, request boundaries and UK week rollover.
 - Focused tests exercise source errors, leading-zero identifiers, exact-company matching, optimistic concurrency, owner attribution, idempotent handoff, preservation of existing facts/state, and promotion gates.
 - Cloud browser could not open this environment's local preview (`ERR_BLOCKED_BY_CLIENT`). DOM interaction tests and the production build were used; no visual browser verification is claimed.
+
+## Weekly draft storage and limits
+
+`GET /api/outreach/draft` returns the current UK Monday, revision, timestamp and draft. `PUT` requires that same week and the last observed revision. Writes use an immediate SQLite transaction and reject stale revisions or a changed week with HTTP 409. Normal app authentication applies; cross-site and non-JSON writes are rejected and responses are not cached.
+
+The draft lives in `weekly_outreach_drafts` on the existing `DATABASE_PATH`, so it is included in database backups. It is shared within this single-owner workspace, not a multi-user CRM approval system. Earlier weeks are retained in the database but are not automatically copied to a new week; archive/retention controls are follow-up work. Stored contact fields are bounded and omit raw provider payloads. Opt-outs and phone restrictions are retained.
+
+Wait for “Draft saved” before closing the page. The client serializes changes and keeps pending saves alive across internal navigation; closing a browser cannot guarantee an unfinished network request completes. A save failure preserves local work and offers retry; a revision conflict offers an explicit reload of the server draft. Loaded choices never restore a generated plan or send consent. Generating the current plan and confirming any campaign import remain separate user actions.
