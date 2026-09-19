@@ -74,3 +74,17 @@ These backups can contain API keys, contacts and authentication records. Keep th
 ## Recovery drill
 
 Recover into a **new empty directory**, never over a live database or source checkout. Verify `manifest.json` checksums first. Clone `backup/history.bundle`, check out `source_head`, apply `staged.patch` with `git apply --index`, then apply `unstaged.patch` with `git apply`. Restore the private source archive over that recovered checkout to recover untracked/ignored files. Copy the selected verified SQLite snapshot and companies file into separate recovered data paths, configure those absolute paths, and reinstall dependencies. Keep the original backup intact. The automated fixture tests prove bundle/patch recovery, committed WAL recovery and isolation from the source database.
+
+## Export preserved code for review after preparation succeeds
+
+Use `scripts/export-upgrade-review.py` to create a small ZIP for code review from the successful backup. It verifies the saved source archive and Git-status hashes first, then includes final versions of changed/new source files selected from the saved status. `review-info.json` records the original and candidate commit IDs, rename/deletion metadata and included paths. It does not apply changes or execute app code.
+
+Eligible files are code, styles and Markdown under `frontend/`, `mock-backend/`, `scripts/`, `docs/`, package manifests/lockfiles, `start.sh` and the devcontainer configuration. Database/download/export directories, environment files, dependencies, dossier JSON and `works/` are excluded. This is a filtered source bundle, not a full backup or a secret scanner for credentials embedded in code. Use the status manifest to identify omissions requiring a separate review. Source files larger than 4 MiB are rejected rather than silently truncated.
+
+For the verified September 19 backup, run from the existing Codespace terminal:
+
+```bash
+git fetch origin fix/upgrade-space-estimate:refs/remotes/origin/fix/upgrade-space-estimate && reviewhelper="$(mktemp /tmp/onemonetry-review-XXXXXX.py)" && git show origin/fix/upgrade-space-estimate:scripts/export-upgrade-review.py > "$reviewhelper" && python3 "$reviewhelper" --prepared /workspaces/onemonetry-upgrades/20260919-115844-gynxspp0 --output-dir /workspaces/onemonetry/exports
+```
+
+The output prints `REVIEW BUNDLE:` with a ZIP path. Download that ZIP from the Codespace Explorer's `exports` folder and attach it in the project conversation. Do not upload the full backup directory. Exporting uses only the space for selected source files, creates a new private output file, and does not start services or modify the original project code or saved backup.
