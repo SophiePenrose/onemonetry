@@ -250,11 +250,44 @@ class UpgradeTests(unittest.TestCase):
             original(*args, **kwargs)
             (self.source / 'untracked.txt').write_text('edited while backing up')
         with patch.object(upgrade, 'snapshot_database', side_effect=changing_snapshot):
-            with self.assertRaisesRegex(RuntimeError, 'Source changed'):
+            with self.assertRaisesRegex(RuntimeError, 'Source changed during backup: "untracked.txt"'):
                 self.prepare()
         result = next((self.base / 'backups').iterdir())
         self.assertTrue((result / 'INCOMPLETE').exists())
         self.assertFalse((result / 'candidate').exists())
+
+    def test_mutation_during_archive_reports_filename_and_keeps_source(self):
+        original = upgrade.tarfile.TarFile.add
+        def changing_add(archive, path, *args, **kwargs):
+            result = original(archive, path, *args, **kwargs)
+            if Path(path).name == 'untracked.txt':
+                Path(path).write_text('new live data: never include this content in errors')
+            return result
+        with patch.object(upgrade.tarfile.TarFile, 'add', new=changing_add):
+            with self.assertRaisesRegex(RuntimeError, '"untracked.txt"') as error:
+                self.prepare()
+        self.assertNotIn('new live data', str(error.exception))
+        result = next((self.base / 'backups').iterdir())
+        self.assertTrue((result / 'INCOMPLETE').exists())
+        self.assertFalse((result / 'candidate').exists())
+        self.assertEqual((self.source / 'untracked.txt').read_text(),
+                         'new live data: never include this content in errors')
+
+    def test_removed_file_reports_filename(self):
+        path = self.source / 'untracked.txt'
+        before = upgrade.signature(path)
+        path.unlink()
+        with self.assertRaisesRegex(RuntimeError, '"untracked.txt"'):
+            upgrade.assert_source_unchanged(path, before, self.source)
+
+    def test_new_file_during_backup_is_reported(self):
+        original = upgrade.snapshot_database
+        def changing_snapshot(*args, **kwargs):
+            original(*args, **kwargs)
+            (self.source / 'new-background-file.log').write_text('private fixture contents')
+        with patch.object(upgrade, 'snapshot_database', side_effect=changing_snapshot):
+            with self.assertRaisesRegex(RuntimeError, 'new file "new-background-file.log"'):
+                self.prepare()
 
     def test_additional_sqlite_is_snapshotted_instead_of_raw_copied(self):
         extra = self.source / 'another.db'

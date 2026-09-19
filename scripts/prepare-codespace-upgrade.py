@@ -42,6 +42,16 @@ def signature(path):
     return stat.st_size, stat.st_mtime_ns, stat.st_ino
 
 
+def assert_source_unchanged(path, expected, source):
+    try:
+        unchanged = signature(path) == expected
+    except FileNotFoundError:
+        unchanged = False
+    if not unchanged:
+        name = json.dumps(str(path.relative_to(source)))
+        raise RuntimeError(f'Source changed during backup: {name}. Pause the app/background writers and edits, then retry.')
+
+
 def inventory(source):
     files, databases = [], []
     for root, dirs, names in os.walk(source, followlinks=False):
@@ -201,19 +211,19 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
     (backups / 'git-status.z').write_bytes(status)
     download_records = []
     for index, path in enumerate(left_in_place):
+        assert_source_unchanged(path, signatures[path], source)
         print(f'Recording checksum for download left in place {index + 1}/{len(left_in_place)}.', flush=True)
         download_records.append({'path': str(path.relative_to(source)), 'bytes': signatures[path][0],
                                  'sha256': digest(path), 'backed_up': False})
-        if signatures[path] != signature(path):
-            raise RuntimeError('A download changed while recording its checksum; pause downloads and retry.')
+        assert_source_unchanged(path, signatures[path], source)
     if download_records:
         (backups / 'left-in-place-downloads.json').write_text(json.dumps(download_records, indent=2) + '\n')
     print('Saving source files and unfinished work (including private local configuration).', flush=True)
     with tarfile.open(backups / 'source.tar', 'w') as archive:
         for path in archive_files:
+            assert_source_unchanged(path, signatures[path], source)
             archive.add(path, arcname=str(path.relative_to(source)), recursive=False)
-            if signatures[path] != signature(path):
-                raise RuntimeError('Source changed during backup; pause edits and retry.')
+            assert_source_unchanged(path, signatures[path], source)
     stable_copy(companies, backups / 'companies.json')
     database_records = []
     for index, path in enumerate(databases):
@@ -222,13 +232,18 @@ def prepare(source, target_ref, database, companies, output_base, check_space=Fa
         snapshot_database(path, backup)
         database_records.append({'source': str(path), 'backup': backup.name, 'sha256': digest(backup)})
     current_files, current_databases = inventory(source)
+    for path, stamp in signatures.items():
+        assert_source_unchanged(path, stamp, source)
+    added_files = sorted(set(current_files) - set(files))
+    if added_files:
+        name = json.dumps(str(added_files[0].relative_to(source)))
+        raise RuntimeError(f'Source changed during backup: new file {name}. Pause the app/background writers and edits, then retry.')
     if (git(source, 'rev-parse', 'HEAD').decode().strip() != head
             or git(source, 'status', '--porcelain=v1', '-z') != status
             or git(source, 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv') != index_diff
             or current_files != files
-            or sorted(set(current_databases + [database])) != databases
-            or any(signature(p) != stamp for p, stamp in signatures.items())):
-        raise RuntimeError('Source changed during preparation; pause edits and retry.')
+            or sorted(set(current_databases + [database])) != databases):
+        raise RuntimeError('Git state or database inventory changed during preparation; pause writers and edits, then retry.')
     print('Preparing the selected commit in a separate, stopped checkout.', flush=True)
     candidate = destination / 'candidate'
     git(source, 'clone', '--no-hardlinks', '--no-checkout', str(source), str(candidate))

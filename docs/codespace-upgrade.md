@@ -6,7 +6,15 @@ The preparation script makes a private backup and a separate candidate checkout.
 
 ## Run in the existing Codespace terminal
 
-Pause source-file editing while this runs. SQLite can remain open: the online backup API includes committed WAL data. Confirm the paths below are the actual runtime data paths. If startup configuration overrides `DATABASE_PATH` or `COMPANIES_PATH`, pass those resolved paths instead. The script does not infer a running process's environment.
+Pause source-file editing while this runs. The SQLite online backup API includes committed WAL data, but it cannot freeze ordinary files written by the app, download jobs or development tooling. For this Codespace, stop the app before preparing the backup:
+
+```bash
+npm run stop:dev
+```
+
+This uses the existing development stop command: it stops the configured backend/frontend processes and ports (force-stopping if they do not exit). It temporarily takes the app offline; keep the Codespace and its terminal open. Stop any separately launched import/download job as well. Do not restart the app while preparation is running.
+
+Confirm the paths below are the actual runtime data paths. If startup configuration overrides `DATABASE_PATH` or `COMPANIES_PATH`, pass those resolved paths instead. The script does not infer a running process's environment.
 
 This command fetches both refs, reads the reviewed helper directly from its branch, and stages the latest fetched `main`. It does not merge or check out either branch over your work:
 
@@ -26,6 +34,8 @@ python3 "$upgrade_script" \
 Run from `/workspaces/onemonetry`. Once this PR is merged and the helper branch is deleted, use `git fetch origin main` and `git show origin/main:scripts/prepare-codespace-upgrade.py` instead.
 
 The last line should say `PREPARED: /workspaces/onemonetry-upgrades/...`. Only share that result or an error message; do not upload the backup or paste configuration contents. Nothing is deployed by this command.
+
+If a regular file is modified, removed or added during preparation, the helper reports its relative filename, without printing contents. The consistency gate remains in place: the failure is not ignored and the incomplete copy is not usable. Do not repeatedly retry while a writer remains active. An existing incomplete backup also consumes disk space; leave it untouched until its identity and contents have been reviewed. Preparation always rechecks free space before making a fresh backup. Restarting the original app later is a separate action from starting the candidate.
 
 The command above opts into `--leave-downloads` for the space-constrained Codespace. This leaves existing Companies House account ZIPs in their original locations instead of copying them into the source backup. It never deletes, moves or changes those files. Only valid ZIPs named `Accounts_Bulk_Data-*.zip` or `Accounts_Monthly_Data-*.zip`, directly inside `mock-backend/data/` or `mock-backend/mock-backend/data/`, and ignored/untracked by Git, qualify. Other local data, exports, code, configuration and all detected SQLite databases remain covered. Remove the option for the original full source backup.
 
