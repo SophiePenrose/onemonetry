@@ -2,11 +2,14 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('review', Path(__file__).parents[1] / 'export-upgrade-review.py')
 review = importlib.util.module_from_spec(SPEC)
@@ -43,9 +46,98 @@ class ReviewTests(unittest.TestCase):
                          'backup_sha256': {name: review.digest(backup / name) for name in ('source.tar', 'git-status.z')}}
         (self.prepared / 'manifest.json').write_text(json.dumps(self.manifest))
 
-    def export(self):
+    def export(self, **options):
         with contextlib.redirect_stdout(io.StringIO()):
-            return review.export_review(self.prepared, self.root / 'exports')
+            return review.export_review(self.prepared, self.root / 'exports', **options)
+
+    def make_baseline(self):
+        candidate = self.prepared / 'candidate'
+        candidate.mkdir()
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(candidate), *args], stderr=subprocess.DEVNULL)
+        git('init', '-b', 'fixture')
+        git('config', 'user.name', 'Fixture')
+        git('config', 'user.email', 'fixture@example.invalid')
+        contents = {
+            'frontend/App.jsx': 'original committed app',
+            'frontend/Deleted.jsx': 'deleted locally',
+            'mock-backend/db.js': 'unchanged file not requested',
+            'frontend/pages/CustomGemHandoff.jsx': 'unchanged dependency',
+            'prompts/email.txt': 'calibrated instructions',
+            '.env': 'PRIVATE_SECRET=baseline-fixture',
+            'mock-backend/data/private.js': 'private download',
+            'exports/private.json': 'private contacts',
+        }
+        for name, content in contents.items():
+            path = candidate / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        git('add', '.')
+        git('commit', '-qm', 'source baseline')
+        commit = git('rev-parse', 'HEAD').decode().strip()
+        self.manifest['source_head'] = commit
+        (self.prepared / 'manifest.json').write_text(json.dumps(self.manifest))
+        # Candidate is checked out at a different target, just like real preparation.
+        (candidate / 'frontend/App.jsx').write_text('current main app')
+        git('commit', '-qam', 'candidate target')
+        return candidate, git
+
+    def test_baseline_includes_original_commit_and_unchanged_saved_dependencies(self):
+        candidate, git = self.make_baseline()
+        before = git('rev-parse', 'HEAD')
+        output = self.export(include_baseline=True)
+        with zipfile.ZipFile(output) as archive:
+            self.assertEqual(archive.read('base/frontend/App.jsx'), b'original committed app')
+            self.assertEqual(archive.read('source/frontend/App.jsx'), b'updated code')
+            self.assertEqual(archive.read('source/mock-backend/db.js'), b'unchanged file not requested')
+            self.assertEqual(archive.read('base/frontend/pages/CustomGemHandoff.jsx'), b'unchanged dependency')
+            self.assertIn('base/frontend/Deleted.jsx', archive.namelist())
+            self.assertNotIn('source/frontend/Deleted.jsx', archive.namelist())
+            self.assertIn('base/prompts/email.txt', archive.namelist())
+            for name in archive.namelist():
+                self.assertNotIn('/.env', name)
+                self.assertNotIn('/data/', name)
+                self.assertNotIn('/exports/', name)
+                self.assertNotIn('/works/', name)
+            info = json.loads(archive.read('review-info.json'))
+            self.assertTrue(info['includes_baseline'])
+            self.assertEqual(info['source_scope'], 'all_allowed_saved_source')
+        self.assertEqual(git('rev-parse', 'HEAD'), before)
+        self.assertEqual(git('status', '--porcelain'), b'')
+        self.assertEqual(review.digest(self.prepared / 'backup/source.tar'), self.manifest['backup_sha256']['source.tar'])
+
+    def test_baseline_ignores_inherited_git_object_and_worktree_overrides(self):
+        self.make_baseline()
+        with patch.dict(os.environ, {'GIT_OBJECT_DIRECTORY': '/missing-fixture-objects',
+                                     'GIT_WORK_TREE': '/missing-fixture-worktree'}):
+            self.assertTrue(self.export(include_baseline=True).is_file())
+
+    def test_missing_baseline_fails_without_creating_output(self):
+        self.make_baseline()
+        self.manifest['source_head'] = 'c' * 40
+        (self.prepared / 'manifest.json').write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(RuntimeError, 'saved source commit'):
+            self.export(include_baseline=True)
+        self.assertFalse((self.root / 'exports').exists())
+
+    def test_symlink_in_baseline_is_rejected_without_reading_target(self):
+        candidate, git = self.make_baseline()
+        (candidate / 'frontend/linked.js').symlink_to(self.root / 'private-file')
+        git('add', '.')
+        git('commit', '-qm', 'unsafe baseline')
+        self.manifest['source_head'] = git('rev-parse', 'HEAD').decode().strip()
+        (self.prepared / 'manifest.json').write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(RuntimeError, 'regular file'):
+            self.export(include_baseline=True)
+        self.assertFalse((self.root / 'exports').exists())
+
+    def test_total_size_limit_removes_partial_output(self):
+        self.make_baseline()
+        baseline_size = sum(size for _, _, size in review.baseline_entries(self.prepared, self.manifest['source_head']))
+        with patch.object(review, 'MAX_TOTAL_BYTES', baseline_size + 1):
+            with self.assertRaisesRegex(RuntimeError, '100 MiB'):
+                self.export(include_baseline=True)
+        self.assertEqual(list((self.root / 'exports').glob('*.zip')), [])
 
     def test_exports_changed_and_new_code_without_unrelated_or_private_files(self):
         output = self.export()
