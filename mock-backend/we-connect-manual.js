@@ -85,7 +85,7 @@ export function normalizeWeConnectWebhook(payload = {}) {
   } else if (/positive.*reply|reply.*positive|marked.*lead|lead.*marked/.test(token)) {
     eventCategory = "positive_reply";
     stopOtherChannels = true;
-  } else if (/reply|message.*received/.test(token)) eventCategory = "reply_received";
+  } else if (/reply|message.*received/.test(token)) { eventCategory = "reply_received"; stopOtherChannels = true; }
   else if (/accept|connect/.test(token)) eventCategory = "connection_accepted";
   else if (/sent|invite/.test(token)) eventCategory = "invite_sent";
   else if (/fail|error/.test(token)) eventCategory = "failed";

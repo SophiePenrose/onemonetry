@@ -11,6 +11,8 @@ function setup(turnover = 50000000) {
     contacts: [{ person_id: "person-1", full_name: "Jane Example", company_number: "00123456", company_name: "Example Ltd", company_turnover_gbp: 50000000, linkedin_url: "https://linkedin.com/in/example", phone_dnc: true }],
   } };
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((url, options = {}) => {
+    if (url === "/api/outreach/capacity") return json({ used: 0, remaining: 90 });
+    if (url === "/api/outreach/handoffs/pending") return json({ handoffs: [] });
     if (url === "/api/outreach/draft") {
       if (options.method === "PUT") { const body = JSON.parse(options.body); saved = { ...saved, revision: saved.revision + 1, draft: body.draft }; }
       return json(saved);
@@ -38,19 +40,20 @@ describe("Saved outreach review", () => {
   it("excludes contacts when their company is removed and invalidates any previous plan", async () => {
     setup(); render(<WeeklyOutreach draftClient={createOutreachDraftClient()} />);
     await screen.findByLabelText("Include Jane Example");
-    expect(screen.getByRole("button", { name: "Generate weekly plan" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Generate weekly plan" }));
+    expect(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" }));
     expect(await screen.findByRole("button", { name: "Prepare manual fallback" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: /Example Ltd/ }));
     expect(screen.queryByRole("button", { name: "Prepare manual fallback" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Generate weekly plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" })).toBeDisabled();
     expect(screen.getByLabelText("Include Jane Example")).toBeDisabled();
     expect(screen.getByLabelText("Include Jane Example")).not.toBeChecked();
   });
   it.each([15000000, null])("rechecks current turnover (%s) instead of trusting the saved contact's old value", async turnover => {
     setup(turnover); render(<WeeklyOutreach draftClient={createOutreachDraftClient()} />);
     await screen.findByLabelText("Include Jane Example");
-    expect(screen.getByRole("button", { name: "Generate weekly plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" })).toBeDisabled();
     expect(screen.getByLabelText("Include Jane Example")).toBeDisabled();
   });
 });

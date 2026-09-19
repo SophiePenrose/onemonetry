@@ -21,6 +21,8 @@ describe("WeeklyOutreach", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((url, options = {}) => {
+    if (url === "/api/outreach/capacity") return jsonResponse({ used: 0, remaining: 90 });
+    if (url === "/api/outreach/handoffs/pending") return jsonResponse({ handoffs: [] });
       if (url === "/api/outreach/draft") {
         if (options.method === "PUT") return jsonResponse({ revision: JSON.parse(options.body).expected_revision + 1 });
         return jsonResponse({ revision: 0, week_start: "2026-09-14", draft: { selected_company_numbers: [], contacts: [], selected_contact_keys: [], campaign_name: "" } });
@@ -39,6 +41,7 @@ describe("WeeklyOutreach", () => {
       }
       if (url === "/api/contacts/weekly-plan") {
         return jsonResponse({
+          plan_id: "reviewed-plan-1",
           summary: { linkedin_automated_selected: 1, email_ready: 1, phone_tasks_ready: 0, overflow_contacts: 0, active_companies_this_week: 1 },
           assignments: [{ person_id: "apollo-1", full_name: "Jane Doe", role: "Finance Director", company_name: "Example Ltd", priority: 92, routes: { linkedin: "awaiting_human_approval", email: "ready" } }],
         });
@@ -72,7 +75,8 @@ describe("WeeklyOutreach", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find contacts for 1 companies" }));
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate weekly plan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm CRM clearance and generate plan" }));
     expect(await screen.findByText("Ready for approval")).toBeInTheDocument();
     expect(screen.getByText("Human approval stays mandatory.")).toBeInTheDocument();
 
@@ -81,15 +85,16 @@ describe("WeeklyOutreach", () => {
 
     const planCall = fetchMock.mock.calls.find(([url]) => url === "/api/contacts/weekly-plan");
     const planRequest = JSON.parse(planCall[1].body);
-    expect(planRequest.linkedin_automated_target).toBe(90);
-    expect(planRequest.linkedin_manual_reserve).toBe(10);
-    expect(planRequest.contacts[0]).toMatchObject({ crm_approved: true, company_turnover_gbp: 50000000 });
+    expect(planRequest.crm_confirmed).toBe(true);
+    expect(planRequest.week_start).toBe("2026-09-14");
+    expect(planRequest.draft_revision).toBeGreaterThan(0);
+    expect(planRequest.contacts).toBeUndefined();
 
     fireEvent.change(screen.getByLabelText("Campaign name"), { target: { value: "Weekly Finance Leaders" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm and add 1 contacts" }));
     expect(await screen.findByText("Added to Weekly Finance Leaders")).toBeInTheDocument();
     const importCall = fetchMock.mock.calls.find(([url]) => url === "/api/linkedin/we-connect/import");
-    expect(JSON.parse(importCall[1].body)).toMatchObject({ approved: true, campaign_name: "Weekly Finance Leaders" });
+    expect(JSON.parse(importCall[1].body)).toMatchObject({ approved: true, campaign_name: "Weekly Finance Leaders", plan_id: "reviewed-plan-1" });
     await waitFor(() => expect(fetchMock.mock.calls.filter(([, options]) => options.method === "POST")).toHaveLength(3));
   });
 });

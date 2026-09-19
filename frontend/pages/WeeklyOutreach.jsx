@@ -1,9 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import HandoffReviews from "../components/HandoffReviews";
 import useOutreachDraft from "../hooks/useOutreachDraft";
 
-const LINKEDIN_TARGET = 90;
 const COMPANY_REVIEW_TARGET = 35;
+
+function outreachError(code) {
+  return ({ reviewed_plan_required: "Generate a fresh reviewed plan first.", outreach_draft_changed: "Your selections changed. Save the draft and generate a new plan.",
+    outreach_week_changed: "A new week has started. Reload the planner.", weekly_capacity_changed: "Another plan used some slots. Generate a fresh plan for the remaining capacity.",
+    outreach_contacts_already_reserved: "Some contacts are already reserved or handed over. Generate a new plan.",
+    outreach_eligibility_changed: "A company or contact is no longer eligible. Generate a new plan.",
+    we_connect_import_needs_reconciliation: "We-Connect’s response was uncertain. Check the campaign before retrying; these slots remain reserved.",
+    we_connect_import_rejected: "We-Connect rejected the import. Fix the configuration, then generate a new plan; its slots were released.",
+    handoff_requires_review: "Check the previous handoff in We-Connect before continuing.",
+    handoff_in_progress: "This handoff is already in progress. Do not submit it again.",
+    product_fit_research_required: "Product-fit research is required.", turnover_outside_scope: "Turnover is missing or outside the target range.",
+    company_suppressed_or_in_research: "Company is excluded, held or still in research.", contact_stopped_or_suppressed: "Contact has replied or is suppressed.",
+  })[code] || code;
+}
 
 function companyName(company) {
   return String(company?.name || company?.company_name || company?.legal_name || "Unnamed company").trim();
@@ -74,7 +88,7 @@ Metric.propTypes = {
 
 export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
   const [companies, setCompanies] = useState([]);
-  const { draft, status: draftStatus, loaded: draftLoaded, error: draftError, week_start: draftWeek, updateDraft, retrySave, reloadDraft } = useOutreachDraft(draftClient);
+  const { draft, status: draftStatus, loaded: draftLoaded, error: draftError, week_start: draftWeek, revision: draftRevision, updateDraft, retrySave, reloadDraft } = useOutreachDraft(draftClient);
   const selectedCompanies = useMemo(() => new Set(draft.selected_company_numbers), [draft.selected_company_numbers]);
   const selectedContacts = useMemo(() => new Set(draft.selected_contact_keys), [draft.selected_contact_keys]);
   const contacts = draft.contacts;
@@ -88,6 +102,8 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
   }
   function setCampaignName(value) { updateDraft(current => ({ ...current, campaign_name: value })); }
   const [plan, setPlan] = useState(null);
+  const [capacity, setCapacity] = useState(null);
+  const [handoffRefresh, setHandoffRefresh] = useState(0);
   const [weConnectStatus, setWeConnectStatus] = useState({ configured: false, loading: true });
   const [weConnectExport, setWeConnectExport] = useState(null);
   const [companySearch, setCompanySearch] = useState(initialSearch);
@@ -122,6 +138,11 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
         if (statusError?.name !== "AbortError") setWeConnectStatus({ configured: false, loading: false });
       });
     return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/outreach/capacity", { cache: "no-store" }).then(response => response.ok ? response.json() : null)
+      .then(setCapacity).catch(() => setCapacity(null));
   }, []);
 
   useEffect(() => { setPlan(null); setWeConnectExport(null); }, [draft.selected_company_numbers, draft.selected_contact_keys, draft.contacts]);
@@ -231,15 +252,15 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contacts: approvedContacts,
-          linkedin_weekly_cap: 100,
-          linkedin_automated_target: LINKEDIN_TARGET,
-          linkedin_manual_reserve: 10,
+          crm_confirmed: true,
+          draft_revision: draftRevision,
+          week_start: draftWeek,
         }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.detail || payload?.error || "Weekly planning failed");
+      if (!response.ok) throw new Error(outreachError(payload?.error) || "Weekly planning failed");
       setPlan(payload);
+      setCapacity(payload.capacity || null);
     } catch (planError) {
       setError(planError.message || "Weekly planning failed");
     } finally {
@@ -255,11 +276,12 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
       const response = await fetch("/api/linkedin/we-connect/manual-export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contacts: plan.assignments, campaign_name: campaignName.trim() || undefined }),
+        body: JSON.stringify({ plan_id: plan.plan_id, campaign_name: campaignName.trim() || undefined }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.detail || payload?.error || "Could not prepare the We-Connect list");
+      if (!response.ok) throw new Error(outreachError(payload?.error) || "Could not prepare the We-Connect list");
       setWeConnectExport(payload);
+      if (payload.capacity) setCapacity(payload.capacity);
     } catch (exportError) {
       setError(exportError.message || "Could not prepare the We-Connect list");
     } finally {
@@ -278,21 +300,28 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
       const response = await fetch("/api/linkedin/we-connect/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved: true, campaign_name: campaignName.trim(), contacts: plan.assignments }),
+        body: JSON.stringify({ approved: true, campaign_name: campaignName.trim(), plan_id: plan.plan_id }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.detail || payload?.error || "Could not add contacts to We-Connect");
+      if (!response.ok) throw new Error(outreachError(payload?.error) || "Could not add contacts to We-Connect");
       setWeConnectExport(payload);
+      if (payload.capacity) setCapacity(payload.capacity);
     } catch (importError) {
       setError(importError.message || "Could not add contacts to We-Connect");
     } finally {
       setExporting(false);
+      setHandoffRefresh(current => current + 1);
     }
   }
 
   async function copyWeConnectUrls() {
     if (!weConnectExport?.url_text) return;
-    await navigator.clipboard.writeText(weConnectExport.url_text);
+    try {
+      const response = await fetch(`/api/linkedin/we-connect/manual-export/${encodeURIComponent(weConnectExport.batch.id)}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(outreachError(payload.error) || "Could not recheck this handoff.");
+      await navigator.clipboard.writeText(payload.items.map(item => item.linkedin_url).join("\n"));
+    } catch (copyError) { setError(copyError.message); }
   }
 
   async function confirmWeConnectPaste() {
@@ -300,7 +329,7 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
     if (!batchId) return;
     setExporting(true);
     try {
-      const response = await fetch(`/api/linkedin/we-connect/manual-export/${encodeURIComponent(batchId)}/confirm`, { method: "POST" });
+      const response = await fetch(`/api/linkedin/we-connect/manual-export/${encodeURIComponent(batchId)}/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const batch = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(batch?.detail || batch?.error || "Could not confirm the handoff");
       setWeConnectExport((current) => ({ ...current, batch }));
@@ -319,16 +348,18 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
           <h1>Outreach Planner</h1>
           <p>Select companies only after checking the CRM, find stakeholders with Apollo, then review the channel allocation before anything enters We-Connect.</p>
         </div>
-        <div className="outreach-capacity-pill"><strong>90</strong><span>automated LinkedIn slots</span><small>10 kept for manual outreach</small></div>
+        <div className="outreach-capacity-pill"><strong>{capacity ? capacity.remaining : "—"}</strong><span>of 90 weekly slots remaining</span><small>10 kept for manual outreach</small></div>
       </header>
 
       <div className="outreach-alert" role="status">
         {draftStatus === "loading" ? "Loading weekly draft…" : draftStatus === "saving" ? "Saving draft…" : draftStatus === "saved" ? `Draft saved · week of ${draftWeek}` : "Draft needs attention"}
         <span> · Saved choices do not enrol contacts. Generate a fresh plan before confirming an import.</span>
       </div>
+      {capacity && <div className="outreach-alert">{capacity.used} slots reserved or handed over this week across all plans. Manual exports reserve slots too.</div>}
       {draftError && <div className="outreach-alert outreach-alert-error" role="alert">{draftError} {draftStatus === "save_error"
         ? <button type="button" onClick={retrySave}>Retry save</button>
         : <button type="button" onClick={reloadDraft}>Reload saved draft</button>}</div>}
+      <HandoffReviews refreshToken={handoffRefresh} onResolved={updatedCapacity => { setCapacity(updatedCapacity); setPlan(null); setWeConnectExport(null); }} />
       <fieldset disabled={draftBlocked || discovering || planning || exporting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       {error && <div className="outreach-alert outreach-alert-error" role="alert">{error}</div>}
       {discoveryNotes.length > 0 && <div className="outreach-alert">{discoveryNotes.slice(0, 5).join(" ")}</div>}
@@ -367,7 +398,7 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
 
       <section className="outreach-step-card">
         <div className="outreach-step-heading">
-          <div><span>2</span><div><h2>Review the stakeholders</h2><p>Remove anyone unsuitable before calculating the weekly channel plan.</p></div></div>
+          <div><span>2</span><div><h2>Review the stakeholders</h2><p>Remove anyone unsuitable. Generating the plan confirms you have checked the selected companies in the CRM; that clearance is dated and recorded.</p></div></div>
           <strong>{approvedContacts.length} of {contacts.length} included</strong>
         </div>
         {contacts.length === 0 ? <div className="outreach-empty">Run Apollo discovery to populate this review queue.</div> : (
@@ -389,12 +420,13 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
           </div>
         )}
         <div className="outreach-plan-controls">
-          <button type="button" className="outreach-primary-button" onClick={generatePlan} disabled={planning || approvedContacts.length === 0}>{planning ? "Calculating…" : "Generate weekly plan"}</button>
+          <button type="button" className="outreach-primary-button" onClick={generatePlan} disabled={planning || draftStatus !== "saved" || approvedContacts.length === 0}>{planning ? "Calculating…" : "Confirm CRM clearance and generate plan"}</button>
         </div>
       </section>
 
       <section className="outreach-step-card">
         <div className="outreach-step-heading"><div><span>3</span><div><h2>Approval queue</h2><p>Review the allocation, then explicitly confirm any We-Connect import below.</p></div></div>{plan && <strong>{plan.summary?.active_companies_this_week || 0} active companies</strong>}</div>
+        {plan?.rejected?.length > 0 && <div className="outreach-alert">{plan.rejected.length} contacts excluded by current company, product-fit or contact checks. {plan.rejected.slice(0, 3).map(row => `${row.full_name || row.candidate?.full_name || "Contact"}: ${outreachError(row.reason)}`).join(" ")}</div>}
         {!plan ? <div className="outreach-empty">Generate the weekly plan to see capacity and channel assignments.</div> : <>
           <div className="outreach-metrics">
             <Metric value={plan.summary?.linkedin_automated_selected || 0} label="LinkedIn selected" detail="of 90 automated slots" />
@@ -417,9 +449,9 @@ export default function WeeklyOutreach({ initialSearch = "", draftClient }) {
             <div><h3>Send approved contacts to We-Connect</h3><p>Enter the campaign name exactly as it appears in We-Connect, then confirm the import. Only the LinkedIn contacts selected for this week are sent.</p></div>
             <label>Campaign name <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Exact We-Connect campaign name" /></label>
             <div className="outreach-step-actions">
-              {weConnectStatus.configured && <button type="button" className="outreach-primary-button" onClick={importToWeConnect} disabled={exporting || !campaignName.trim()}>{exporting ? "Adding…" : `Confirm and add ${plan.summary?.linkedin_automated_selected || 0} contacts`}</button>}
-              <button type="button" className="outreach-secondary-button" onClick={prepareWeConnectExport} disabled={exporting}>{exporting ? "Preparing…" : "Prepare manual fallback"}</button>
-              {weConnectExport?.summary?.ready_to_paste > 0 && <button type="button" className="outreach-secondary-button" onClick={copyWeConnectUrls}>Copy {weConnectExport.summary.ready_to_paste} LinkedIn URLs</button>}
+              {weConnectStatus.configured && <button type="button" className="outreach-primary-button" onClick={importToWeConnect} disabled={exporting || !campaignName.trim() || !(plan.summary?.linkedin_automated_selected > 0)}>{exporting ? "Adding…" : `Confirm and add ${plan.summary?.linkedin_automated_selected || 0} contacts`}</button>}
+              <button type="button" className="outreach-secondary-button" onClick={prepareWeConnectExport} disabled={exporting || !(plan.summary?.linkedin_automated_selected > 0)}>{exporting ? "Preparing…" : "Prepare manual fallback"}</button>
+              {weConnectExport?.batch?.status === "prepared" && weConnectExport?.summary?.ready_to_paste > 0 && <button type="button" className="outreach-secondary-button" onClick={copyWeConnectUrls}>Copy {weConnectExport.summary.ready_to_paste} LinkedIn URLs</button>}
               {weConnectExport?.batch?.status === "prepared" && <button type="button" className="outreach-secondary-button" onClick={confirmWeConnectPaste} disabled={exporting}>I’ve pasted the fallback list</button>}
             </div>
             {weConnectExport && <div className="outreach-export-summary" role="status">

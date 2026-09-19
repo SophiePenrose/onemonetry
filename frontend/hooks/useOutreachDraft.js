@@ -5,7 +5,7 @@ const emptyDraft = () => ({ selected_company_numbers: [], contacts: [], selected
 // Lives beyond the planner component so navigation cannot discard an in-flight save.
 // The server revision prevents another tab from silently replacing this draft.
 export function createOutreachDraftClient(fetcher = (...args) => fetch(...args)) {
-  let state = { draft: emptyDraft(), status: "loading", loaded: false, error: null, week_start: null };
+  let state = { draft: emptyDraft(), status: "loading", loaded: false, error: null, week_start: null, revision: 0 };
   let revision = 0, generation = 0, savedGeneration = 0, loading = null, saving = null;
   const listeners = new Set();
   function publish(patch) { state = { ...state, ...patch }; listeners.forEach(listener => listener()); }
@@ -20,7 +20,7 @@ export function createOutreachDraftClient(fetcher = (...args) => fetch(...args))
         const payload = await response.json();
         if (!Number.isInteger(payload.revision) || !payload.week_start || !payload.draft) throw new Error("The saved draft could not be read.");
         revision = payload.revision; generation = 0; savedGeneration = 0;
-        publish({ draft: payload.draft, week_start: payload.week_start, loaded: true, status: "saved", error: null });
+        publish({ draft: payload.draft, revision: payload.revision, week_start: payload.week_start, loaded: true, status: "saved", error: null });
       } catch (error) { publish({ status: "load_error", loaded: false, error: error.message }); }
       finally { loading = null; }
     })();
@@ -52,7 +52,7 @@ export function createOutreachDraftClient(fetcher = (...args) => fetch(...args))
           if (!Number.isInteger(result.revision)) throw new Error("Could not confirm the save. Retry before closing this page.");
           revision = result.revision; savedGeneration = version;
         }
-        publish({ status: "saved", error: null });
+        publish({ status: "saved", revision, error: null });
       } catch (error) { publish({ status: "save_error", error: error.message }); }
       finally { saving = null; }
     })();

@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { normalizeLinkedInProfileUrl } from "./we-connect-manual.js";
 import { sqliteUtcTimestamp } from "./utc-timestamp.js";
 import { createHash } from "crypto";
 import fs from "fs";
@@ -293,6 +294,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_we_connect_events_url ON we_connect_webhook_events(linkedin_url);
   CREATE INDEX IF NOT EXISTS idx_we_connect_events_category ON we_connect_webhook_events(event_category);
+
+  CREATE TABLE IF NOT EXISTS outreach_contact_identities (
+    linkedin_url TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY(linkedin_url, email)
+  );
+  CREATE INDEX IF NOT EXISTS idx_outreach_identity_email ON outreach_contact_identities(email);
+  CREATE TABLE IF NOT EXISTS outreach_contact_stops (
+    linkedin_url TEXT PRIMARY KEY, reason TEXT NOT NULL, event_key TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  INSERT OR IGNORE INTO outreach_contact_stops (linkedin_url, reason, event_key, updated_at)
+    SELECT linkedin_url, event_category, event_key, received_at FROM we_connect_webhook_events
+    WHERE stop_other_channels = 1 AND linkedin_url IS NOT NULL ORDER BY id DESC;
 
   CREATE TABLE IF NOT EXISTS gemini_handoff_requests (
     request_id TEXT PRIMARY KEY,
@@ -888,7 +900,12 @@ export function getSuppressionCount() {
   return db.prepare("SELECT COUNT(*) AS count FROM suppression_list").get().count;
 }
 
-export function isContactSuppressed({ company_number, email, domain } = {}) {
+export function isContactSuppressed({ company_number, email, domain, linkedin_url } = {}) {
+  const url = normalizeLinkedInProfileUrl(linkedin_url);
+  const stop = db.prepare(`SELECT s.* FROM outreach_contact_stops s WHERE s.linkedin_url = ? OR s.linkedin_url IN
+    (SELECT linkedin_url FROM outreach_contact_identities WHERE email = ?) LIMIT 1`)
+    .get(url || "", String(email || "").trim().toLowerCase());
+  if (stop) return { ...stop, source: "we_connect_webhook", type: "contact_stop" };
   const normalizedEmail = normalizeSuppressionValue("email", email);
   if (normalizedEmail) {
     const match = stmtGetSuppressionByTypeValue.get("email", normalizedEmail);
@@ -4168,6 +4185,11 @@ export function recordWeConnectWebhookEvent(event = {}) {
     event.stop_other_channels ? 1 : 0,
     JSON.stringify(event.received_payload || {})
   );
+  if (event.stop_other_channels && event.linkedin_url) {
+    const url = normalizeLinkedInProfileUrl(event.linkedin_url);
+    if (url) db.prepare(`INSERT INTO outreach_contact_stops VALUES (?, ?, ?, ?)
+      ON CONFLICT(linkedin_url) DO NOTHING`).run(url, event.event_category || "reply_received", event.event_key, new Date().toISOString());
+  }
   if (result.changes > 0 && event.linkedin_url) {
     db.prepare(`
       UPDATE we_connect_export_items
