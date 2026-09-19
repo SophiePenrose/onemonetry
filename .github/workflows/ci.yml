@@ -63,6 +63,9 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm run test:ci
+      - name: Verify backup and recovery tooling (local fixtures only)
+        working-directory: .
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
   frontend:
     name: Frontend (build + tests)

@@ -5,6 +5,7 @@
 
 # Dependencies and build output
 node_modules/
+__pycache__/
 frontend/node_modules
 frontend/dist
 mock-backend/node_modules
