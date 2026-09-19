@@ -112,7 +112,65 @@ class UpgradeTests(unittest.TestCase):
         with patch.object(upgrade.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 0})()):
             with self.assertRaisesRegex(RuntimeError, 'Insufficient'):
                 self.prepare()
-        self.assertEqual(list((self.base / 'backups').iterdir()), [])
+        self.assertFalse((self.base / 'backups').exists())
+
+    def test_space_report_creates_no_backup_even_when_full(self):
+        output = io.StringIO()
+        with patch.object(upgrade.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 0})()):
+            with contextlib.redirect_stdout(output):
+                result = upgrade.prepare(self.source, self.target, self.database, self.companies,
+                                         self.base / 'backups', check_space=True)
+        self.assertIsNone(result)
+        self.assertIn('SPACE CHECK: INSUFFICIENT', output.getvalue())
+        self.assertNotIn('synthetic-fixture-secret', output.getvalue())
+        self.assertFalse((self.base / 'backups').exists())
+        self.assertEqual(self.git('status', '--porcelain=v1'), self.before)
+
+    def estimate(self):
+        files, databases = upgrade.inventory(self.source)
+        return upgrade.estimate_space(self.source, self.target, files, databases,
+                                      self.database, self.companies, 0)
+
+    def test_repeated_wal_updates_do_not_inflate_snapshot_estimate(self):
+        self.live.execute('PRAGMA wal_autocheckpoint=0')
+        for index in range(100):
+            self.live.execute('UPDATE fixture SET value=?', (str(index),))
+            self.live.commit()
+        expected = self.live.execute('PRAGMA page_count').fetchone()[0] * self.live.execute('PRAGMA page_size').fetchone()[0]
+        self.assertGreater(Path(str(self.database) + '-wal').stat().st_size, expected * 20)
+        self.assertEqual(self.estimate()['SQLite snapshots and candidate database'], expected * 2)
+        backup = self.base / 'verified.db'
+        upgrade.snapshot_database(self.database, backup)
+        self.assertEqual(backup.stat().st_size, expected)
+
+    def test_new_pages_in_wal_are_included_even_before_checkpoint(self):
+        self.live.execute('PRAGMA wal_autocheckpoint=0')
+        self.live.execute('INSERT INTO fixture VALUES (?)', ('x' * 1000000,))
+        self.live.commit()
+        size = upgrade.sqlite_snapshot_size(self.database)
+        self.assertGreater(size, self.database.stat().st_size)
+        backup = self.base / 'verified.db'
+        upgrade.snapshot_database(self.database, backup)
+        self.assertEqual(size, backup.stat().st_size)
+
+    def test_local_download_is_archived_once_and_does_not_inflate_checkout(self):
+        before = self.estimate()
+        download = self.source / 'local-download.zip'
+        download.write_bytes(b'x' * 1048576)
+        after = self.estimate()
+        self.assertEqual(after['candidate tracked files'], before['candidate tracked files'])
+        self.assertEqual(after['source archive'] - before['source archive'], 1048576 + 4096)
+
+    def test_checkout_estimate_uses_target_even_if_current_checkout_is_small(self):
+        self.git('stash', 'push', '-m', 'fixture only')
+        self.git('checkout', 'main')
+        (self.source / 'new-tracked-file').write_bytes(b'x' * 1048576)
+        self.git('add', 'new-tracked-file')
+        self.git('commit', '-m', 'large target file')
+        self.target = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', 'unfinished-work')
+        self.assertFalse((self.source / 'new-tracked-file').exists())
+        self.assertGreaterEqual(self.estimate()['candidate tracked files'], 1048576)
 
     def test_source_edit_leaves_incomplete_marker_and_no_candidate(self):
         original = upgrade.snapshot_database

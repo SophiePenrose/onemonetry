@@ -78,7 +78,58 @@ def stable_copy(source, target):
         raise RuntimeError('A source file changed while copying; pause edits and retry.')
 
 
-def prepare(source, target_ref, database, companies, output_base):
+def sqlite_snapshot_size(path):
+    # The backup API copies logical database pages, not the whole WAL history.
+    # page_count includes committed pages that have not reached the main file yet.
+    with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as connection:
+        connection.execute('BEGIN')
+        pages = connection.execute('PRAGMA page_count').fetchone()[0]
+        page_size = connection.execute('PRAGMA page_size').fetchone()[0]
+        return pages * page_size
+
+
+def estimate_space(source, target, files, databases, database, companies, patch_bytes):
+    git_dir = Path(git(source, 'rev-parse', '--absolute-git-dir').decode().strip())
+    git_size = sum(p.stat().st_size for p in git_dir.rglob('*') if p.is_file())
+    # Only tracked files in the selected commit become the candidate checkout.
+    # Ignored downloads/exports are archived once, not copied into candidate.
+    checkout_size = 0
+    for entry in git(source, 'ls-tree', '-rlz', target).split(b'\0'):
+        if not entry:
+            continue
+        metadata = entry.split(b'\t', 1)[0].split()
+        if metadata[1] == b'blob':
+            checkout_size += ((int(metadata[3]) + 4095) // 4096) * 4096
+    snapshots = {path: sqlite_snapshot_size(path) for path in databases}
+    components = {
+        # Include tar block rounding and per-file headers, including PAX metadata.
+        'source archive': sum(((p.stat().st_size + 511) // 512) * 512 + 4096 for p in files) + 10240,
+        'candidate tracked files': checkout_size,
+        # Retain conservative room for bundle, independent clone and local fetch.
+        'Git history copies': 3 * git_size,
+        'SQLite snapshots and candidate database': sum(snapshots.values()) + snapshots[database],
+        'company copies and patches': 2 * companies.stat().st_size + patch_bytes,
+    }
+    components['growth and overhead reserve'] = (sum(components.values()) + 3) // 4 + 256 * 1024 * 1024
+    return components
+
+
+def space_report(output_base, components):
+    # Inspect the destination filesystem without creating any backup directories.
+    existing = output_base
+    while not existing.exists():
+        existing = existing.parent
+    available = shutil.disk_usage(existing).free
+    required = sum(components.values())
+    mib = 1024 ** 2
+    print(f'SPACE: available {available / mib:.1f} MiB; estimated required {required / mib:.1f} MiB.', flush=True)
+    for label, size in components.items():
+        print(f'  {label}: {size / mib:.1f} MiB', flush=True)
+    print('SPACE CHECK: ' + ('PASS' if available >= required else 'INSUFFICIENT'), flush=True)
+    return available, required
+
+
+def prepare(source, target_ref, database, companies, output_base, check_space=False):
     source, database, companies = (p.resolve(strict=True) for p in (source, database, companies))
     output_base = output_base.resolve()
     if output_base == source or source in output_base.parents:
@@ -103,17 +154,16 @@ def prepare(source, target_ref, database, companies, output_base):
     files, databases = inventory(source)
     databases = sorted(set(databases + [database]))
     signatures = {p: signature(p) for p in files}
-    git_dir = Path(git(source, 'rev-parse', '--absolute-git-dir').decode().strip())
-    git_size = sum(p.stat().st_size for p in git_dir.rglob('*') if p.is_file())
-    # Source archive, independent candidate checkout, bundle/clone, backup + working DB copy.
-    required = 2 * sum(p.stat().st_size for p in files) + 3 * git_size
-    required += sum(p.stat().st_size for p in databases) + database.stat().st_size
-    required += sum(Path(str(p) + '-wal').stat().st_size for p in databases if Path(str(p) + '-wal').exists()) * 2
-    required = int(required * 1.25) + 256 * 1024 * 1024
-    output_base.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(output_base).free < required:
-        raise RuntimeError(f'Insufficient free disk space; need approximately {required // (1024 ** 2)} MiB.')
+    components = estimate_space(source, target, files, databases, database, companies,
+                                len(index_diff) + len(working_diff) + len(status))
+    available, required = space_report(output_base, components)
+    if check_space:
+        print('Space report only; no backup or candidate created.', flush=True)
+        return None
+    if available < required:
+        raise RuntimeError('Insufficient free disk space. Share the SPACE report above; do not delete live data.')
     os.umask(0o077)
+    output_base.mkdir(parents=True, exist_ok=True)
     destination = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%d-%H%M%S-'), dir=output_base))
     print(f'Preparing private backup: {destination}', flush=True)
     (destination / 'INCOMPLETE').write_text('Do not use this directory until preparation finishes.\n')
@@ -194,10 +244,11 @@ def main():
     parser.add_argument('--database', type=Path, required=True, help='Actual live SQLite path')
     parser.add_argument('--companies', type=Path, required=True, help='Actual live companies JSON path')
     parser.add_argument('--output-base', type=Path, help='Private backup parent outside the repo')
+    parser.add_argument('--check-space', action='store_true', help='Only report space needs; do not create a backup or candidate')
     args = parser.parse_args()
     try:
         prepare(args.source, args.target_ref, args.database, args.companies,
-                args.output_base or args.source.resolve().parent / 'onemonetry-upgrades')
+                args.output_base or args.source.resolve().parent / 'onemonetry-upgrades', args.check_space)
     except RuntimeError as error:
         print(f'Preparation stopped: {error}', flush=True)
         print('Live files were not changed. Any INCOMPLETE folder must not be used.', flush=True)

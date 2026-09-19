@@ -12,9 +12,9 @@ This command fetches both refs, reads the reviewed helper directly from its bran
 
 ```bash
 git fetch origin main:refs/remotes/origin/main \
-  chore/safe-codespace-upgrade:refs/remotes/origin/chore/safe-codespace-upgrade && \
+  fix/upgrade-space-estimate:refs/remotes/origin/fix/upgrade-space-estimate && \
 upgrade_script="$(mktemp /tmp/onemonetry-upgrade-XXXXXX.py)" && \
-git show origin/chore/safe-codespace-upgrade:scripts/prepare-codespace-upgrade.py > "$upgrade_script" && \
+git show origin/fix/upgrade-space-estimate:scripts/prepare-codespace-upgrade.py > "$upgrade_script" && \
 python3 "$upgrade_script" \
   --source "$PWD" \
   --target-ref origin/main \
@@ -40,7 +40,11 @@ Each run creates a new directory, accessible only to your account, outside the s
 - `manifest.json`: commit identities, paths and checksums; no environment variable values.
 - `NEXT-STEPS.txt`: review and cutover requirements.
 
-The script checks available disk space conservatively. Source edits, symlinks outside excluded directories, unreadable files, invalid database/companies paths, or failed snapshots stop preparation. A failed run retains an `INCOMPLETE` marker and must not be treated as a usable prepared candidate. No cleanup deletes previous backups. The snapshots of multiple databases and JSON files are **not one cross-file transaction**; pause all writers for a final cutover snapshot.
+The script reports available space and estimated bytes for the source archive, candidate's tracked files, Git history copies, SQLite snapshots, company copies/patches, and a 25% plus 256 MiB reserve. Local downloads and exports enter the source archive once; they are not also assumed to enter the clean candidate checkout. SQLite estimates use logical page counts, including committed pages still in WAL, rather than counting repeated WAL history as additional database data. This corrects the earlier inflated estimate without omitting backup files or bypassing the free-space check. Git history retains its conservative allowance for bundle/clone/fetch copies. Live growth can still exceed an estimate.
+
+Add `--check-space` to the Python command for a report without creating a backup or candidate. The report includes no secrets or file contents. If it says `INSUFFICIENT`, share the `SPACE` line and its breakdown before deleting anything. Alternatively, `--output-base` can select an existing mounted volume with more free space; the script does not provision or resize storage. The same disk may genuinely lack capacity for all required copies.
+
+Source edits, symlinks outside excluded directories, unreadable files, invalid database/companies paths, or failed snapshots stop preparation. A failure after preparation starts retains an `INCOMPLETE` marker and must not be treated as a usable prepared candidate; a space-check failure creates no backup directory. No cleanup deletes previous backups. The snapshots of multiple databases and JSON files are **not one cross-file transaction**; pause all writers for a final cutover snapshot.
 
 These backups can contain API keys, contacts and authentication records. Keep them private. Secrets supplied only through the Codespace environment remain there and must be configured separately in any new runtime. External configuration/file paths other than the explicit database and companies file are not backed up. This is a same-disk recovery copy, not disaster recovery: transfer it to protected off-machine storage before deleting the Codespace.
 
